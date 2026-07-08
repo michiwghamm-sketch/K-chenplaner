@@ -1,0 +1,2 @@
+"""Zeltlager-Verpflegung Desktop-App."""
+

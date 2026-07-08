@@ -1,0 +1,1 @@
+"""Planning view placeholder."""

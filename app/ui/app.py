@@ -1,0 +1,1 @@
+"""CustomTkinter application placeholder."""
