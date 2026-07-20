@@ -107,3 +107,11 @@ def test_calculate_recipe_cost_uses_best_known_price_and_flags_missing_prices(se
         assert result.total_cost == Decimal("2.00")
         assert result.cost_per_portion == Decimal("0.10")
         assert result.missing_price_ingredients == ["Geheimzutat"]
+
+        assert len(result.lines) == 2
+        priced_line = next(line for line in result.lines if line.ingredient_name == "Kartoffeln")
+        assert priced_line.quantity == Decimal("2.000")
+        assert priced_line.line_cost == Decimal("2.00")
+        missing_line = next(line for line in result.lines if line.ingredient_name == "Geheimzutat")
+        assert missing_line.price_per_unit is None
+        assert missing_line.line_cost is None
