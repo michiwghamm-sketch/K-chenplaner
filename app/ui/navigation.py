@@ -5,7 +5,7 @@ from PySide6.QtWidgets import QListWidget, QListWidgetItem, QWidget
 
 NAV_ITEMS = (
     ("dashboard", "Dashboard"),
-    ("planning", "Jahresplanung"),
+    ("planning", "Wochenplan"),
     ("recipes", "Rezepte"),
     ("ingredients", "Zutaten"),
     ("prices", "Preise"),

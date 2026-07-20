@@ -165,26 +165,39 @@ class AddPriceDialog(QDialog):
 class CampYearDialog(QDialog):
     """Dialog zum Anlegen eines neuen Camp-Jahrs."""
 
-    def __init__(self, default_year: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        default_year: int,
+        parent: QWidget | None = None,
+        *,
+        initial: dict | None = None,
+        title: str | None = None,
+        allow_year_edit: bool = True,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Neues Camp-Jahr")
+        self.setWindowTitle(title or ("Zeltlagerwoche bearbeiten" if initial else "Neue Zeltlagerwoche"))
+        initial = initial or {}
 
         self.year_spin = QSpinBox(self)
         self.year_spin.setRange(2000, 2100)
-        self.year_spin.setValue(default_year)
+        self.year_spin.setValue(initial.get("year", default_year))
+        self.year_spin.setEnabled(allow_year_edit)
 
         self.name_edit = QLineEdit(self)
-        self.name_edit.setText(f"Zeltlager {default_year}")
+        self.name_edit.setText(initial.get("name") or f"Zeltlager {default_year}")
 
+        start_date = initial.get("start_date")
         self.start_date_edit = QDateEdit(self)
         self.start_date_edit.setCalendarPopup(True)
-        self.start_date_edit.setDate(QDate(default_year, 8, 1))
+        self.start_date_edit.setDate(QDate(start_date.year, start_date.month, start_date.day) if start_date else QDate(default_year, 8, 1))
 
+        end_date = initial.get("end_date")
         self.end_date_edit = QDateEdit(self)
         self.end_date_edit.setCalendarPopup(True)
-        self.end_date_edit.setDate(QDate(default_year, 8, 10))
+        self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day) if end_date else QDate(default_year, 8, 10))
 
         self.notes_edit = QTextEdit(self)
+        self.notes_edit.setPlainText(initial.get("notes") or "")
         self.notes_edit.setFixedHeight(60)
 
         form = QFormLayout()
@@ -208,5 +221,122 @@ class CampYearDialog(QDialog):
             "name": self.name_edit.text().strip() or None,
             "start_date": self.start_date_edit.date().toPython(),
             "end_date": self.end_date_edit.date().toPython(),
+            "notes": self.notes_edit.toPlainText().strip() or None,
+        }
+
+
+class DayResponsibleDialog(QDialog):
+    """Dialog zur Pflege des Tagesverantwortlichen im Wochenplan."""
+
+    def __init__(
+        self,
+        day_label: str,
+        current_person: str = "",
+        current_notes: str = "",
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Tagesverantwortlich - {day_label}")
+
+        self.person_edit = QLineEdit(self)
+        self.person_edit.setText(current_person)
+        self.person_edit.setPlaceholderText("Name der/des Verantwortlichen")
+
+        self.notes_edit = QTextEdit(self)
+        self.notes_edit.setPlainText(current_notes)
+        self.notes_edit.setFixedHeight(60)
+
+        form = QFormLayout()
+        form.addRow("Verantwortlich", self.person_edit)
+        form.addRow("Notizen", self.notes_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def result_data(self) -> dict:
+        return {
+            "responsible_person": self.person_edit.text().strip() or None,
+            "notes": self.notes_edit.toPlainText().strip() or None,
+        }
+
+
+TARGET_GROUP_OPTIONS = ("Alle", "Kinder", "Betreuer")
+NO_TARGET_GROUP_LABEL = "- keine Angabe -"
+
+
+class MealCellDialog(QDialog):
+    """Dialog zum Bearbeiten einer einzelnen Mahlzeit im Wochenplan-Raster."""
+
+    def __init__(
+        self,
+        cell_label: str,
+        recipes: list[tuple[int, str]],
+        *,
+        current_recipe_id: int | None,
+        current_portions: int,
+        current_target_group: str,
+        current_status: str,
+        current_notes: str,
+        status_options: tuple[str, ...],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(cell_label)
+
+        self.recipe_combo = QComboBox(self)
+        self.recipe_combo.addItem("- kein Rezept -", None)
+        for recipe_id, name in recipes:
+            self.recipe_combo.addItem(name, recipe_id)
+        recipe_index = self.recipe_combo.findData(current_recipe_id)
+        self.recipe_combo.setCurrentIndex(recipe_index if recipe_index >= 0 else 0)
+
+        self.portions_spin = QSpinBox(self)
+        self.portions_spin.setRange(0, 2000)
+        self.portions_spin.setValue(current_portions)
+
+        self.target_group_combo = QComboBox(self)
+        self.target_group_combo.addItem(NO_TARGET_GROUP_LABEL)
+        self.target_group_combo.addItems(TARGET_GROUP_OPTIONS)
+        if current_target_group and current_target_group not in TARGET_GROUP_OPTIONS:
+            self.target_group_combo.addItem(current_target_group)
+        target_group_index = self.target_group_combo.findText(current_target_group) if current_target_group else 0
+        self.target_group_combo.setCurrentIndex(target_group_index if target_group_index >= 0 else 0)
+
+        self.status_combo = QComboBox(self)
+        self.status_combo.addItems(status_options)
+        status_index = self.status_combo.findText(current_status)
+        self.status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
+
+        self.notes_edit = QTextEdit(self)
+        self.notes_edit.setPlainText(current_notes)
+        self.notes_edit.setFixedHeight(60)
+
+        form = QFormLayout()
+        form.addRow("Rezept", self.recipe_combo)
+        form.addRow("Portionen", self.portions_spin)
+        form.addRow("Zielgruppe", self.target_group_combo)
+        form.addRow("Status", self.status_combo)
+        form.addRow("Notizen", self.notes_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def result_data(self) -> dict:
+        target_group_text = self.target_group_combo.currentText()
+        return {
+            "recipe_id": self.recipe_combo.currentData(),
+            "planned_portions": self.portions_spin.value() or None,
+            "target_group": target_group_text if target_group_text != NO_TARGET_GROUP_LABEL else None,
+            "status": self.status_combo.currentText(),
             "notes": self.notes_edit.toPlainText().strip() or None,
         }

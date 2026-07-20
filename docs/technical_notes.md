@@ -41,3 +41,15 @@ Mausklicks per `SetCursorPos`/`mouse_event` in dieser Windows-Umgebung sind unzu
 
 Dieser Test faengt echte Konstruktions-/Refresh-Fehler zuverlaessig ab und ist reproduzierbar (kein Maus-/Fokus-Risiko). Empfehlung: bei zukuenftigen UI-Aenderungen dieses Muster wiederverwenden, bevor auf manuelle Klicktests vertraut wird.
 
+## Leichtgewichtige Schema-Migration ohne Alembic
+
+Als `recipe_feedback.meal_plan_entry_id`/`quantity_sufficient` fuers Wochenplan-Feedback ergaenzt wurden, schlug der Start gegen die bereits bestehende Produktiv-Datenbank fehl: `Base.metadata.create_all()` legt nur komplett fehlende Tabellen an, aendert aber nie Spalten einer bereits existierenden Tabelle.
+
+Geloest mit `app.db.sync_schema(engine)` (wird in `init_database` direkt nach `create_all()` aufgerufen):
+
+- vergleicht fuer jede bereits bestehende Tabelle die Modell-Spalten mit den tatsaechlich vorhandenen Spalten (`sqlalchemy.inspect`)
+- fehlende Spalten werden per `ALTER TABLE ... ADD COLUMN` ergaenzt
+- ist eine neue Spalte als `unique=True` deklariert, wird zusaetzlich ein `CREATE UNIQUE INDEX IF NOT EXISTS` nachgezogen, weil SQLites `ADD COLUMN` keine UNIQUE-Constraints mitbringen kann
+
+Das ist bewusst kein Ersatz fuer Alembic (keine Versionshistorie, keine Downgrades, keine Datentransformationen) - fuer rein additive, nullable Spalten in einer kleinen SQLite-App reicht es aber und vermeidet die zusaetzliche Abhaengigkeit. Sollte spaeter eine Spalte umbenannt, entfernt oder NOT-NULL-pflichtig werden, braucht es eine echte Migration.
+

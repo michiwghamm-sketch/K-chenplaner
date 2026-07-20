@@ -128,6 +128,25 @@ class CampYear(Base):
     meal_plan_entries: Mapped[list["MealPlanEntry"]] = relationship(back_populates="camp_year", cascade="all, delete-orphan")
     feedback_entries: Mapped[list["RecipeFeedback"]] = relationship(back_populates="camp_year", cascade="all, delete-orphan")
     shopping_lists: Mapped[list["ShoppingList"]] = relationship(back_populates="camp_year", cascade="all, delete-orphan")
+    camp_days: Mapped[list["CampDay"]] = relationship(back_populates="camp_year", cascade="all, delete-orphan")
+
+
+class CampDay(Base):
+    """Ein Tag innerhalb eines Camp-Jahrs (Zeltlager-Woche), z. B. fuer den Tagesverantwortlichen."""
+
+    __tablename__ = "camp_days"
+    __table_args__ = (UniqueConstraint("camp_year_id", "day_date", name="uq_camp_day"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    camp_year_id: Mapped[int] = mapped_column(ForeignKey("camp_years.id"), nullable=False, index=True)
+    day_date: Mapped[date] = mapped_column(Date, nullable=False, index=True)
+    weekday: Mapped[Optional[str]] = mapped_column(String(30))
+    responsible_person: Mapped[Optional[str]] = mapped_column(String(255))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    camp_year: Mapped["CampYear"] = relationship(back_populates="camp_days")
 
 
 class MealPlanEntry(Base):
@@ -150,6 +169,7 @@ class MealPlanEntry(Base):
 
     camp_year: Mapped["CampYear"] = relationship(back_populates="meal_plan_entries")
     recipe: Mapped[Optional["Recipe"]] = relationship(back_populates="meal_plan_entries")
+    feedback: Mapped[Optional["RecipeFeedback"]] = relationship(back_populates="meal_plan_entry", uselist=False)
 
 
 class RecipeFeedback(Base):
@@ -158,8 +178,14 @@ class RecipeFeedback(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     camp_year_id: Mapped[int] = mapped_column(ForeignKey("camp_years.id"), nullable=False, index=True)
     recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
+    # Verknuepft das Feedback mit einer konkreten Mahlzeit im Wochenplan (ein Feedback je Mahlzeit-Slot).
+    # Nullable, weil aus Excel importiertes Alt-Feedback keiner konkreten Mahlzeit zugeordnet werden kann.
+    meal_plan_entry_id: Mapped[Optional[int]] = mapped_column(
+        ForeignKey("meal_plan_entries.id"), unique=True, index=True
+    )
     rating: Mapped[Optional[int]] = mapped_column(Integer)
     repeat_next_time: Mapped[Optional[bool]] = mapped_column(Boolean)
+    quantity_sufficient: Mapped[Optional[str]] = mapped_column(String(50))
     planned_portions: Mapped[Optional[int]] = mapped_column(Integer)
     cooked_portions: Mapped[Optional[int]] = mapped_column(Integer)
     leftover_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
@@ -173,6 +199,7 @@ class RecipeFeedback(Base):
 
     camp_year: Mapped["CampYear"] = relationship(back_populates="feedback_entries")
     recipe: Mapped["Recipe"] = relationship(back_populates="feedback_entries")
+    meal_plan_entry: Mapped[Optional["MealPlanEntry"]] = relationship(back_populates="feedback")
 
 
 class ShoppingList(Base):

@@ -5,7 +5,7 @@ from datetime import date, timedelta
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CampYear, MealPlanEntry, Recipe
+from app.models import CampDay, CampYear, MealPlanEntry, Recipe
 
 ALLOWED_STATUSES = ("geplant", "bestellt", "gekocht", "abgesagt")
 DEFAULT_MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen")
@@ -61,6 +61,20 @@ def create_camp_year(
     return camp_year
 
 
+def update_camp_year(session: Session, camp_year: CampYear, *, year: int | None = None, **fields: object) -> CampYear:
+    if year is not None and year != camp_year.year:
+        existing = session.execute(select(CampYear).where(CampYear.year == year)).scalar_one_or_none()
+        if existing is not None:
+            raise ValueError(f"Camp-Jahr {year} existiert bereits.")
+        camp_year.year = year
+
+    for key, value in fields.items():
+        if not hasattr(camp_year, key):
+            raise AttributeError(f"Unbekanntes Camp-Jahr-Feld: {key}")
+        setattr(camp_year, key, value)
+    return camp_year
+
+
 def generate_daily_meal_slots(
     session: Session,
     camp_year: CampYear,
@@ -72,10 +86,17 @@ def generate_daily_meal_slots(
         raise ValueError("Camp-Jahr benoetigt Start- und Enddatum fuer die automatische Planung.")
 
     existing_keys = {(entry.meal_date, entry.meal_type) for entry in camp_year.meal_plan_entries}
+    existing_days = {day.day_date for day in camp_year.camp_days}
 
     created: list[MealPlanEntry] = []
     current_day = camp_year.start_date
     while current_day <= camp_year.end_date:
+        if current_day not in existing_days:
+            session.add(
+                CampDay(camp_year=camp_year, day_date=current_day, weekday=weekday_name(current_day))
+            )
+            existing_days.add(current_day)
+
         for meal_type in meal_types:
             if (current_day, meal_type) in existing_keys:
                 continue
@@ -90,6 +111,61 @@ def generate_daily_meal_slots(
             created.append(entry)
         current_day += timedelta(days=1)
     return created
+
+
+def camp_day_range(camp_year: CampYear) -> list[date]:
+    """Liste aller Tage im Camp-Zeitraum (Start- bis Enddatum, inklusive)."""
+    if camp_year.start_date is None or camp_year.end_date is None:
+        return []
+    days = []
+    current_day = camp_year.start_date
+    while current_day <= camp_year.end_date:
+        days.append(current_day)
+        current_day += timedelta(days=1)
+    return days
+
+
+def get_or_create_camp_day(session: Session, camp_year: CampYear, day_date: date) -> CampDay:
+    session.flush()
+    camp_day = session.execute(
+        select(CampDay).where(CampDay.camp_year_id == camp_year.id, CampDay.day_date == day_date)
+    ).scalar_one_or_none()
+    if camp_day is None:
+        camp_day = CampDay(camp_year=camp_year, day_date=day_date, weekday=weekday_name(day_date))
+        session.add(camp_day)
+        session.flush()
+    return camp_day
+
+
+def set_day_responsible(camp_day: CampDay, *, responsible_person: str | None = None, notes: str | None = None) -> CampDay:
+    camp_day.responsible_person = responsible_person
+    camp_day.notes = notes
+    return camp_day
+
+
+def get_or_create_meal_entry(session: Session, camp_year: CampYear, day_date: date, meal_type: str) -> MealPlanEntry:
+    # Sessions use autoflush=False (siehe app/db.py); ohne expliziten Flush wuerden
+    # noch nicht geschriebene Eintraege (z. B. aus generate_daily_meal_slots) hier
+    # nicht gefunden und faelschlich doppelt angelegt.
+    session.flush()
+    entry = session.execute(
+        select(MealPlanEntry).where(
+            MealPlanEntry.camp_year_id == camp_year.id,
+            MealPlanEntry.meal_date == day_date,
+            MealPlanEntry.meal_type == meal_type,
+        )
+    ).scalar_one_or_none()
+    if entry is None:
+        entry = MealPlanEntry(
+            camp_year=camp_year,
+            meal_date=day_date,
+            weekday=weekday_name(day_date),
+            meal_type=meal_type,
+            status="geplant",
+        )
+        session.add(entry)
+        session.flush()
+    return entry
 
 
 def set_meal_recipe(
