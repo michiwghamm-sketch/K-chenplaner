@@ -5,10 +5,12 @@ import json
 import sys
 from dataclasses import asdict, dataclass
 from datetime import date, datetime
+from decimal import Decimal
 from pathlib import Path
 from typing import Iterable
 
 from openpyxl import load_workbook
+from openpyxl.utils import range_boundaries
 from openpyxl.worksheet.worksheet import Worksheet
 from sqlalchemy import select
 
@@ -26,6 +28,7 @@ from app.models import (
     IngredientPrice,
     MealPlanEntry,
     Recipe,
+    RecipeComponent,
     RecipeFeedback,
     RecipeIngredient,
     ShoppingList,
@@ -55,6 +58,7 @@ class ImportCounters:
     ingredients: int = 0
     ingredient_prices: int = 0
     recipes: int = 0
+    recipe_components: int = 0
     recipe_ingredients: int = 0
     camp_years: int = 0
     meal_plan_entries: int = 0
@@ -183,12 +187,27 @@ def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingred
 
         source = ws.cell(row=row, column=5).value
         notes = ws.cell(row=row, column=7).value
+        source_text = str(source) if source else ws.title
+
+        # Ohne diesen Check legt jeder erneute Import-Lauf dieselbe Preiszeile ein weiteres
+        # Mal an (die Preisliste hat - anders als die Rezeptblaetter - keine Zeilennummer,
+        # an der ein spaeterer Lauf eine schon importierte Zeile wiedererkennen koennte).
+        has_matching_price = any(
+            price.price_per_unit == decimal_price
+            and price.unit == (unit_text or "")
+            and price.year == year
+            and price.source == source_text
+            for price in ingredient.prices
+        )
+        if has_matching_price:
+            continue
+
         session.add(
             IngredientPrice(
                 ingredient=ingredient,
                 price_per_unit=decimal_price,
                 unit=unit_text or "",
-                source=str(source) if source else ws.title,
+                source=source_text,
                 year=year,
                 notes=str(notes) if notes else None,
             )
@@ -196,7 +215,93 @@ def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingred
         counters.ingredient_prices += 1
 
 
-def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, ingredient_cache: dict[str, Ingredient], recipe_cache: dict[str, Recipe], counters: ImportCounters, issues: list[ImportIssueRecord]) -> None:
+def find_totals_row(ws: Worksheet, *, start_row: int = 9) -> int:
+    """Zeilenindex von 'Gesamtkosten:' in Spalte A - die Ingredienzliste endet davor."""
+    for row in range(start_row, ws.max_row + 1):
+        value = ws.cell(row=row, column=1).value
+        if isinstance(value, str) and "gesamtkosten" in value.lower():
+            return row
+    return ws.max_row + 1
+
+
+NON_COMPONENT_LABELS = {"preis pro portion", "gesamtkosten"}
+
+
+def detect_recipe_components(ws: Worksheet, recipe_name: str, end_row: int) -> list[tuple[int, int, str]]:
+    """Liest Teilstueck-Gruppen aus den ueber mehrere Zeilen zusammengefassten Zellen in Spalte G/H.
+
+    Jedes Teilstueck (z. B. 'Soße', 'Kartoffelbrei') ist im Excel als eine ueber mehrere
+    Zeilen verbundene Zelle rechts neben der Zutatentabelle formatiert; die Zeilenspanne der
+    Verbindung entspricht genau den Zutatenzeilen, die zu diesem Teilstueck gehoeren.
+    """
+    components: list[tuple[int, int, str]] = []
+    for merged_range in ws.merged_cells.ranges:
+        min_col, min_row, max_col, max_row = range_boundaries(str(merged_range))
+        if min_col not in (7, 8) or not (8 <= min_row < end_row) or max_row <= min_row:
+            continue
+        value = ws.cell(row=min_row, column=min_col).value
+        if value is None or isinstance(value, (int, float)):
+            continue
+        label = str(value).strip()
+        if not label or label.lower() in NON_COMPONENT_LABELS:
+            continue
+        components.append((min_row, min(max_row, end_row - 1), label))
+    components.sort()
+
+    if len(components) == 1:
+        start, stop, label = components[0]
+        # Leerzeichen ignorieren: Labels wiederholen den Rezeptnamen manchmal ohne
+        # Leerzeichen (z. B. "Gemüsenudeln" bei Rezept "Gemüse Nudeln").
+        label_key = normalize_name(label).replace(" ", "")
+        recipe_key = normalize_name(recipe_name).replace(" ", "")
+        if start <= 9 and stop >= end_row - 1 and label_key == recipe_key:
+            # Einzelnes Etikett, das den kompletten Zutatenblock ueberspannt und nur den
+            # Rezeptnamen wiederholt - kein echtes Teilstueck, sondern nur die Kopfzeile.
+            return []
+    return components
+
+
+def component_label_for_row(components: list[tuple[int, int, str]], row: int) -> str | None:
+    for start, stop, label in components:
+        if start <= row <= stop:
+            return label
+    return None
+
+
+def build_known_units_map(values_wb) -> dict[str, str]:
+    """Sammelt je Zutat die erste bekannte Einheit aus Preislisten und Rezeptblaettern.
+
+    Dient als Fallback fuer Rezeptzeilen, die eine Menge aber keine Einheit angeben
+    (z. B. Gewuerze wie 'Paprika Pulver geraeuchert'), damit solche Zeilen nicht mehr
+    stillschweigend uebersprungen werden.
+    """
+    known: dict[str, str] = {}
+
+    for sheet_name in ("Preisliste", "Preisliste 2024"):
+        if sheet_name not in values_wb.sheetnames:
+            continue
+        ws = values_wb[sheet_name]
+        for row in range(2, ws.max_row + 1):
+            name = ws.cell(row=row, column=1).value
+            normalized_unit = normalize_unit(ws.cell(row=row, column=3).value)
+            if isinstance(name, str) and normalized_unit:
+                known.setdefault(normalize_name(name), normalized_unit)
+
+    for sheet_name in values_wb.sheetnames:
+        if not is_recipe_sheet(sheet_name):
+            continue
+        ws = values_wb[sheet_name]
+        end_row = find_totals_row(ws)
+        for row in range(9, end_row):
+            name = ws.cell(row=row, column=1).value
+            normalized_unit = normalize_unit(ws.cell(row=row, column=3).value)
+            if isinstance(name, str) and normalized_unit:
+                known.setdefault(normalize_name(name), normalized_unit)
+
+    return known
+
+
+def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, ingredient_cache: dict[str, Ingredient], recipe_cache: dict[str, Recipe], known_units: dict[str, str], counters: ImportCounters, issues: list[ImportIssueRecord]) -> None:
     recipe_name = str(values_ws["E2"].value or formula_ws["E2"].value or values_ws.title).strip()
     normalized_recipe_name = normalize_name(recipe_name)
     recipe = session.execute(select(Recipe).where(Recipe.normalized_name == normalized_recipe_name)).scalar_one_or_none()
@@ -217,13 +322,33 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
 
     recipe_cache[normalized_recipe_name] = recipe
     recipe_cache[normalize_name(values_ws.title)] = recipe
+    session.flush()
 
-    for row in range(9, values_ws.max_row + 1):
+    end_row = find_totals_row(values_ws)
+    detected_components = detect_recipe_components(values_ws, recipe_name, end_row)
+
+    components_by_key: dict[str, RecipeComponent] = {
+        normalize_name(component.name): component for component in recipe.components
+    }
+    for _start, _stop, label in detected_components:
+        key = normalize_name(label)
+        if key in components_by_key:
+            continue
+        component = RecipeComponent(
+            recipe=recipe,
+            name=label.strip(),
+            sort_order=max((c.sort_order for c in recipe.components), default=0) + 1,
+        )
+        session.add(component)
+        session.flush()
+        components_by_key[key] = component
+        counters.recipe_components += 1
+
+    for row in range(9, end_row):
         ingredient_name = values_ws.cell(row=row, column=1).value
         quantity = values_ws.cell(row=row, column=2).value
         unit = values_ws.cell(row=row, column=3).value
         price_value = values_ws.cell(row=row, column=5).value
-        section_hint = values_ws.cell(row=row, column=7).value or formula_ws.cell(row=row, column=7).value
 
         if ingredient_name == "Schritte:":
             break
@@ -233,29 +358,52 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
             continue
         if ingredient_name.lower().startswith("zubereitung"):
             continue
-        if quantity in (None, ""):
-            if section_hint:
-                continue
-            issues.append(ImportIssueRecord("warning", values_ws.title, f"A{row}", "Rezeptzeile ohne Grundmenge.", str(ingredient_name)))
-            continue
 
+        optional = False
+        note_text = None
         decimal_quantity = parse_decimal(quantity)
-        normalized_unit = normalize_unit(unit)
-        if decimal_quantity is None or normalized_unit is None:
+        if decimal_quantity is None:
+            if quantity not in (None, ""):
+                # Ein Wert stand da, konnte aber nicht als Zahl gelesen werden - das ist ein
+                # echtes Datenproblem, kein "nach Geschmack"-Fall. Zeile ueberspringen.
+                issues.append(
+                    ImportIssueRecord(
+                        "warning", values_ws.title, f"B{row}",
+                        "Menge konnte nicht gelesen werden.", f"{ingredient_name}|{quantity}",
+                    )
+                )
+                continue
+            decimal_quantity = Decimal("0")
+            optional = True
+            note_text = "Menge nicht in Excel angegeben (nach Geschmack)"
             issues.append(
                 ImportIssueRecord(
-                    "warning",
-                    values_ws.title,
-                    f"A{row}:C{row}",
-                    "Rezeptzutat konnte nicht eindeutig gelesen werden.",
-                    f"{ingredient_name}|{quantity}|{unit}",
+                    "info", values_ws.title, f"A{row}",
+                    "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
+                    str(ingredient_name),
                 )
             )
-            continue
+
+        normalized_unit = normalize_unit(unit)
+        if normalized_unit is None:
+            fallback_unit = known_units.get(normalize_name(ingredient_name))
+            normalized_unit = fallback_unit or "kg"
+            issues.append(
+                ImportIssueRecord(
+                    "info", values_ws.title, f"C{row}",
+                    f"Keine Einheit angegeben - '{normalized_unit}' aus anderer Fundstelle uebernommen."
+                    if fallback_unit
+                    else f"Keine Einheit angegeben - Standardeinheit '{normalized_unit}' angenommen.",
+                    str(ingredient_name),
+                )
+            )
 
         ingredient, created = resolve_or_create_ingredient(session, ingredient_cache, ingredient_name, normalized_unit)
         if created:
             counters.ingredients += 1
+
+        component_label = component_label_for_row(detected_components, row)
+        component = components_by_key.get(normalize_name(component_label)) if component_label else None
 
         existing = next(
             (
@@ -266,16 +414,20 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
             None,
         )
         if existing is not None:
+            if component is not None and existing.component_id != component.id:
+                existing.component_id = component.id
             continue
 
         recipe.ingredients.append(
             RecipeIngredient(
                 ingredient=ingredient,
+                component=component,
                 quantity=decimal_quantity,
                 unit=normalized_unit,
-                price_unit=normalize_unit(values_ws.cell(row=row, column=3).value),
+                price_unit=normalize_unit(values_ws.cell(row=row, column=3).value) or normalized_unit,
+                optional=optional,
                 sort_order=row,
-                notes=str(section_hint) if section_hint else None,
+                notes=note_text,
             )
         )
         counters.recipe_ingredients += 1
@@ -296,6 +448,18 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
                     )
                 )
                 counters.ingredient_prices += 1
+
+    # Bestehende Zutaten aus frueheren Importlaeufen (noch ohne Teilstueck-Zuordnung) nachtraeglich einsortieren.
+    if detected_components:
+        for item in recipe.ingredients:
+            if item.component_id is not None:
+                continue
+            label = component_label_for_row(detected_components, item.sort_order)
+            if not label:
+                continue
+            component = components_by_key.get(normalize_name(label))
+            if component is not None:
+                item.component_id = component.id
 
 
 def parse_excel_date(value: object) -> date | None:
@@ -516,6 +680,7 @@ def run_import(excel_path: Path, config: AppConfig) -> tuple[ImportCounters, lis
         ingredient_cache: dict[str, Ingredient] = {}
         recipe_cache: dict[str, Recipe] = {}
         camp_year_cache: dict[int, CampYear] = {}
+        known_units = build_known_units_map(values_wb)
 
         for sheet_name in ["Preisliste", "Preisliste 2024"]:
             if sheet_name in formulas_wb.sheetnames:
@@ -523,7 +688,10 @@ def run_import(excel_path: Path, config: AppConfig) -> tuple[ImportCounters, lis
 
         for formula_ws in formulas_wb.worksheets:
             if is_recipe_sheet(formula_ws.title):
-                import_recipe_sheet(values_wb[formula_ws.title], formula_ws, session, ingredient_cache, recipe_cache, counters, issues)
+                import_recipe_sheet(
+                    values_wb[formula_ws.title], formula_ws, session, ingredient_cache, recipe_cache,
+                    known_units, counters, issues,
+                )
 
         camp_year = None
         if "Planung 2026" in values_wb.sheetnames:

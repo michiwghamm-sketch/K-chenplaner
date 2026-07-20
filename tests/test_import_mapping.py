@@ -72,3 +72,23 @@ def test_run_import_populates_database_and_reports(tmp_path) -> None:
         assert session.execute(select(Recipe).where(Recipe.normalized_name == "testgericht")).scalar_one()
         assert session.execute(select(Ingredient).where(Ingredient.normalized_name == "nudeln")).scalar_one()
         assert session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+
+
+def test_run_import_is_idempotent_for_price_list_rows(tmp_path) -> None:
+    """Re-running the import must not duplicate price-list rows (regression: no dedup check existed)."""
+    workbook_path = tmp_path / "test_import.xlsx"
+    build_test_workbook(workbook_path)
+    config = AppConfig.load(project_root=tmp_path, database_path=tmp_path / "instance" / "import.sqlite3")
+
+    run_import(workbook_path, config)
+    second_counters, _ = run_import(workbook_path, config)
+
+    assert second_counters.ingredient_prices == 0
+
+    engine = create_engine_from_config(config)
+    init_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        noodles = session.execute(select(Ingredient).where(Ingredient.normalized_name == "nudeln")).scalar_one()
+        # Preisliste + Preisliste 2024 + the recipe sheet's own price line - not doubled by the second run.
+        assert len(noodles.prices) == 3
