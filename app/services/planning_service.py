@@ -1,1 +1,118 @@
-"""Planning service placeholder."""
+from __future__ import annotations
+
+from datetime import date, timedelta
+
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from app.models import CampYear, MealPlanEntry, Recipe
+
+ALLOWED_STATUSES = ("geplant", "bestellt", "gekocht", "abgesagt")
+DEFAULT_MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen")
+
+WEEKDAY_NAMES_DE = (
+    "Montag",
+    "Dienstag",
+    "Mittwoch",
+    "Donnerstag",
+    "Freitag",
+    "Samstag",
+    "Sonntag",
+)
+
+
+def weekday_name(day: date) -> str:
+    return WEEKDAY_NAMES_DE[day.weekday()]
+
+
+def create_camp_year(
+    session: Session,
+    *,
+    year: int,
+    name: str | None = None,
+    start_date: date | None = None,
+    end_date: date | None = None,
+    participant_count_children: int | None = None,
+    participant_count_adults: int | None = None,
+    location: str | None = None,
+    notes: str | None = None,
+) -> CampYear:
+    existing = session.execute(select(CampYear).where(CampYear.year == year)).scalar_one_or_none()
+    if existing is not None:
+        raise ValueError(f"Camp-Jahr {year} existiert bereits.")
+
+    total = None
+    if participant_count_children is not None or participant_count_adults is not None:
+        total = (participant_count_children or 0) + (participant_count_adults or 0)
+
+    camp_year = CampYear(
+        year=year,
+        name=name or f"Zeltlager {year}",
+        start_date=start_date,
+        end_date=end_date,
+        participant_count_children=participant_count_children,
+        participant_count_adults=participant_count_adults,
+        participant_count_total=total,
+        location=location,
+        notes=notes,
+    )
+    session.add(camp_year)
+    session.flush()
+    return camp_year
+
+
+def generate_daily_meal_slots(
+    session: Session,
+    camp_year: CampYear,
+    *,
+    meal_types: tuple[str, ...] = DEFAULT_MEAL_TYPES,
+) -> list[MealPlanEntry]:
+    """Legt fuer jeden Tag im Camp-Zeitraum leere Mahlzeiten-Slots an, sofern noch keine existieren."""
+    if camp_year.start_date is None or camp_year.end_date is None:
+        raise ValueError("Camp-Jahr benoetigt Start- und Enddatum fuer die automatische Planung.")
+
+    existing_keys = {(entry.meal_date, entry.meal_type) for entry in camp_year.meal_plan_entries}
+
+    created: list[MealPlanEntry] = []
+    current_day = camp_year.start_date
+    while current_day <= camp_year.end_date:
+        for meal_type in meal_types:
+            if (current_day, meal_type) in existing_keys:
+                continue
+            entry = MealPlanEntry(
+                camp_year=camp_year,
+                meal_date=current_day,
+                weekday=weekday_name(current_day),
+                meal_type=meal_type,
+                status="geplant",
+            )
+            session.add(entry)
+            created.append(entry)
+        current_day += timedelta(days=1)
+    return created
+
+
+def set_meal_recipe(
+    entry: MealPlanEntry,
+    *,
+    recipe: Recipe | None,
+    planned_portions: int | None = None,
+    target_group: str | None = None,
+) -> MealPlanEntry:
+    entry.recipe = recipe
+    if planned_portions is not None:
+        entry.planned_portions = planned_portions
+    if target_group is not None:
+        entry.target_group = target_group
+    return entry
+
+
+def set_status(entry: MealPlanEntry, status: str) -> MealPlanEntry:
+    if status not in ALLOWED_STATUSES:
+        raise ValueError(f"Ungueltiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_STATUSES)}")
+    entry.status = status
+    return entry
+
+
+def derive_shopping_date(meal_date: date, *, days_before: int = 1) -> date:
+    return meal_date - timedelta(days=days_before)
