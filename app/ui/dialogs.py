@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.services.open_prices_service import OpenPricesSuggestion
+
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
     """Bestaetigungsdialog vor kritischen Aktionen (Loeschen, Deaktivieren, Restore)."""
@@ -186,6 +188,100 @@ class AddPriceDialog(QDialog):
             "year": self.year_spin.value(),
             "notes": self.notes_edit.text().strip() or None,
         }
+
+
+class OpenPricesImportDialog(QDialog):
+    """Dialog fuer den Import eines externen Preises ueber einen Barcode."""
+
+    def __init__(self, ingredients: list[tuple[int, str]], default_year: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Preis aus Open Prices importieren")
+
+        self.ingredient_combo = QComboBox(self)
+        for ingredient_id, name in ingredients:
+            self.ingredient_combo.addItem(name, ingredient_id)
+
+        self.barcode_edit = QLineEdit(self)
+        self.barcode_edit.setPlaceholderText("z. B. 3017620422003")
+
+        self.year_spin = QSpinBox(self)
+        self.year_spin.setRange(2000, 2100)
+        self.year_spin.setValue(default_year)
+
+        self.notes_edit = QLineEdit(self)
+        self.notes_edit.setPlaceholderText("optional, z. B. Packungsware / Testimport")
+
+        form = QFormLayout()
+        form.addRow("Zutat", self.ingredient_combo)
+        form.addRow("Barcode", self.barcode_edit)
+        form.addRow("Jahr", self.year_spin)
+        form.addRow("Notiz", self.notes_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def result_data(self) -> dict | None:
+        barcode = self.barcode_edit.text().strip()
+        if not barcode:
+            return None
+        return {
+            "ingredient_id": self.ingredient_combo.currentData(),
+            "barcode": barcode,
+            "year": self.year_spin.value(),
+            "notes": self.notes_edit.text().strip() or None,
+        }
+
+
+class OpenPricesSuggestionDialog(QDialog):
+    """Erlaubt die Auswahl eines aehnlichen Open-Prices-Produkts fuer eine Zutat."""
+
+    def __init__(
+        self,
+        ingredient_name: str,
+        suggestions: list[OpenPricesSuggestion],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Aehnliche Produkte fuer {ingredient_name}")
+        self._suggestions = suggestions
+
+        self.combo = QComboBox(self)
+        for index, suggestion in enumerate(suggestions):
+            date_text = suggestion.observation.date.isoformat() if suggestion.observation.date else "Datum unbekannt"
+            quantity_text = f" | {suggestion.product.quantity}" if suggestion.product.quantity else ""
+            label = (
+                f"{suggestion.product.name}{quantity_text} | "
+                f"{suggestion.observation.price} {suggestion.observation.currency} | "
+                f"{date_text}"
+            )
+            self.combo.addItem(label, index)
+
+        info = QLabel(
+            f"Fuer '{ingredient_name}' wurde kein eindeutiger Treffer importiert. "
+            "Du kannst einen aehnlichen Open-Prices-Eintrag auswaehlen oder abbrechen.",
+            self,
+        )
+        info.setWordWrap(True)
+
+        form = QFormLayout()
+        form.addRow(info)
+        form.addRow("Vorschlag", self.combo)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def selected_suggestion(self) -> OpenPricesSuggestion:
+        return self._suggestions[self.combo.currentData()]
 
 
 class CampYearDialog(QDialog):

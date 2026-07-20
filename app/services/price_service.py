@@ -18,6 +18,31 @@ class PriceComparisonRow:
     percent_change: Decimal | None
 
 
+UNIT_ALIASES = {
+    "kg": "kg",
+    "g": "g",
+    "gramm": "g",
+    "gr": "g",
+    "l": "l",
+    "liter": "l",
+    "lt": "l",
+    "ml": "ml",
+    "stk": "stk",
+    "stueck": "stk",
+    "stück": "stk",
+    "pcs": "stk",
+    "piece": "stk",
+}
+
+UNIT_FACTORS = {
+    "g": ("mass", Decimal("1")),
+    "kg": ("mass", Decimal("1000")),
+    "ml": ("volume", Decimal("1")),
+    "l": ("volume", Decimal("1000")),
+    "stk": ("count", Decimal("1")),
+}
+
+
 def find_best_price(session: Session, ingredient_id: int, *, year: int | None = None) -> IngredientPrice | None:
     """Bester Preis fuer eine Zutat: exakter Jahrestreffer, sonst der neueste bekannte Preis."""
     prices = session.execute(
@@ -137,3 +162,53 @@ def compare_years(session: Session, *, year_a: int, year_b: int) -> list[PriceCo
             )
         )
     return rows
+
+
+def normalize_unit(unit: str | None) -> str | None:
+    if unit is None:
+        return None
+    normalized = unit.strip().lower()
+    return UNIT_ALIASES.get(normalized, normalized or None)
+
+
+def can_convert_units(from_unit: str | None, to_unit: str | None) -> bool:
+    normalized_from = normalize_unit(from_unit)
+    normalized_to = normalize_unit(to_unit)
+    if not normalized_from or not normalized_to:
+        return False
+    if normalized_from == normalized_to:
+        return True
+    from_meta = UNIT_FACTORS.get(normalized_from)
+    to_meta = UNIT_FACTORS.get(normalized_to)
+    return bool(from_meta and to_meta and from_meta[0] == to_meta[0])
+
+
+def convert_quantity(quantity: Decimal, *, from_unit: str, to_unit: str) -> Decimal:
+    normalized_from = normalize_unit(from_unit)
+    normalized_to = normalize_unit(to_unit)
+    if normalized_from == normalized_to:
+        return quantity
+
+    from_meta = UNIT_FACTORS.get(normalized_from or "")
+    to_meta = UNIT_FACTORS.get(normalized_to or "")
+    if from_meta is None or to_meta is None or from_meta[0] != to_meta[0]:
+        raise ValueError(f"Einheiten sind nicht kompatibel: {from_unit} -> {to_unit}")
+
+    base_quantity = quantity * from_meta[1]
+    return base_quantity / to_meta[1]
+
+
+def convert_price_per_unit(price_per_unit: Decimal, *, from_unit: str, to_unit: str) -> Decimal:
+    normalized_from = normalize_unit(from_unit)
+    normalized_to = normalize_unit(to_unit)
+    if normalized_from == normalized_to:
+        return price_per_unit
+
+    from_meta = UNIT_FACTORS.get(normalized_from or "")
+    to_meta = UNIT_FACTORS.get(normalized_to or "")
+    if from_meta is None or to_meta is None or from_meta[0] != to_meta[0]:
+        raise ValueError(f"Einheiten sind nicht kompatibel: {from_unit} -> {to_unit}")
+
+    base_units_per_from_unit = from_meta[1]
+    base_units_per_to_unit = to_meta[1]
+    return price_per_unit * (base_units_per_to_unit / base_units_per_from_unit)

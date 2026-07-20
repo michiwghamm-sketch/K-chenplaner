@@ -34,6 +34,7 @@ from app.models import (
     ShoppingList,
     ShoppingListItem,
 )
+from app.services.data_cleanup_service import NON_INGREDIENT_EXACT_NAMES, is_non_ingredient_name
 from app.utils.normalization import normalize_name
 from app.utils.units import normalize_unit, parse_decimal
 from scripts.inspect_excel import find_excel_file
@@ -157,6 +158,20 @@ def resolve_or_create_ingredient(session, cache: dict[str, Ingredient], name: st
     return ingredient, created
 
 
+def should_skip_price_list_row(name: object) -> bool:
+    if not isinstance(name, str):
+        return not bool(name)
+    return is_non_ingredient_name(name)
+
+
+def should_skip_shopping_row(name: object, unit: str | None) -> bool:
+    if not isinstance(name, str):
+        return not bool(name)
+    if is_non_ingredient_name(name):
+        return True
+    return (unit or "").strip().lower() == "portionen"
+
+
 def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingredient], counters: ImportCounters, issues: list[ImportIssueRecord]) -> None:
     header = [ws.cell(row=1, column=col).value for col in range(1, 8)]
     if not header or header[0] != "Zutat":
@@ -172,7 +187,7 @@ def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingred
         name = ws.cell(row=row, column=1).value
         price = ws.cell(row=row, column=2).value
         unit = ws.cell(row=row, column=3).value
-        if not name:
+        if should_skip_price_list_row(name):
             continue
 
         unit_text = normalize_unit(unit)
@@ -587,11 +602,11 @@ def import_shopping_sheet(ws: Worksheet, session, ingredient_cache: dict[str, In
         name = ws.cell(row=row, column=1).value
         quantity = ws.cell(row=row, column=2).value
         unit = ws.cell(row=row, column=3).value
-        if not name:
+        normalized_unit = normalize_unit(unit)
+        if should_skip_shopping_row(name, normalized_unit):
             continue
 
         decimal_quantity = parse_decimal(quantity)
-        normalized_unit = normalize_unit(unit)
         if decimal_quantity is None:
             issues.append(ImportIssueRecord("warning", ws.title, f"B{row}", "Einkaufsmenge konnte nicht gelesen werden.", str(quantity)))
             continue

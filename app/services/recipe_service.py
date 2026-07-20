@@ -79,6 +79,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
         best_price = price_service.find_best_price(session, item.ingredient_id, year=year)
         scaled_quantity = (item.quantity * factor).quantize(Decimal("0.001"))
         component_name = item.component.name if item.component else UNASSIGNED_COMPONENT_LABEL
+        target_price_unit = item.price_unit or item.unit
 
         if best_price is None:
             missing.append(item.ingredient.name)
@@ -94,7 +95,26 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
             )
             continue
 
-        line_cost = (scaled_quantity * best_price.price_per_unit).quantize(Decimal("0.01"))
+        if not price_service.can_convert_units(best_price.unit, target_price_unit):
+            missing.append(item.ingredient.name)
+            lines.append(
+                IngredientCostLine(
+                    component_name=component_name,
+                    ingredient_name=item.ingredient.name,
+                    quantity=scaled_quantity,
+                    unit=item.unit,
+                    price_per_unit=None,
+                    line_cost=None,
+                )
+            )
+            continue
+
+        converted_price = price_service.convert_price_per_unit(
+            best_price.price_per_unit,
+            from_unit=best_price.unit,
+            to_unit=target_price_unit,
+        ).quantize(Decimal("0.0001"))
+        line_cost = (scaled_quantity * converted_price).quantize(Decimal("0.01"))
         total_cost += line_cost
         lines.append(
             IngredientCostLine(
@@ -102,7 +122,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
                 ingredient_name=item.ingredient.name,
                 quantity=scaled_quantity,
                 unit=item.unit,
-                price_per_unit=best_price.price_per_unit,
+                price_per_unit=converted_price,
                 line_cost=line_cost,
             )
         )
