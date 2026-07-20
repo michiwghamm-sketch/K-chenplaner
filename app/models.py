@@ -88,8 +88,33 @@ class Recipe(Base):
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
     ingredients: Mapped[list["RecipeIngredient"]] = relationship(back_populates="recipe", cascade="all, delete-orphan")
+    components: Mapped[list["RecipeComponent"]] = relationship(
+        back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeComponent.sort_order"
+    )
+    versions: Mapped[list["RecipeVersion"]] = relationship(
+        back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeVersion.version_number"
+    )
     meal_plan_entries: Mapped[list["MealPlanEntry"]] = relationship(back_populates="recipe")
     feedback_entries: Mapped[list["RecipeFeedback"]] = relationship(back_populates="recipe")
+
+
+class RecipeComponent(Base):
+    """Ein Teilstueck eines Rezepts, z. B. 'Semmelknoedel', 'Soße', 'Kartoffelbrei'."""
+
+    __tablename__ = "recipe_components"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    recipe: Mapped["Recipe"] = relationship(back_populates="components")
+    ingredients: Mapped[list["RecipeIngredient"]] = relationship(
+        back_populates="component", order_by="RecipeIngredient.sort_order"
+    )
 
 
 class RecipeIngredient(Base):
@@ -97,6 +122,8 @@ class RecipeIngredient(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
+    # Nullable: Zutaten ohne Teilstueck-Zuordnung (z. B. Altdaten aus dem Excel-Import) landen in "Sonstiges".
+    component_id: Mapped[Optional[int]] = mapped_column(ForeignKey("recipe_components.id"), index=True)
     ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), nullable=False, index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
@@ -106,7 +133,28 @@ class RecipeIngredient(Base):
     notes: Mapped[Optional[str]] = mapped_column(Text)
 
     recipe: Mapped["Recipe"] = relationship(back_populates="ingredients")
+    component: Mapped[Optional["RecipeComponent"]] = relationship(back_populates="ingredients")
     ingredient: Mapped["Ingredient"] = relationship(back_populates="recipe_links")
+
+
+class RecipeVersion(Base):
+    """Historischer Schnappschuss der Zutatenmengen eines Rezepts (Changelog)."""
+
+    __tablename__ = "recipe_versions"
+    __table_args__ = (UniqueConstraint("recipe_id", "version_number", name="uq_recipe_version_number"),)
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
+    version_number: Mapped[int] = mapped_column(Integer, nullable=False)
+    change_note: Mapped[Optional[str]] = mapped_column(Text)
+    scale_factor: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
+    default_portions: Mapped[Optional[int]] = mapped_column(Integer)
+    # JSON-Schnappschuss (Teilstueck/Zutat/Menge/Einheit) - textuell eingefroren, damit spaetere
+    # Umbenennungen/Loeschungen von Zutaten oder Teilstuecken die Historie nicht veraendern.
+    ingredients_snapshot: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = created_timestamp_column()
+
+    recipe: Mapped["Recipe"] = relationship(back_populates="versions")
 
 
 class CampYear(Base):
