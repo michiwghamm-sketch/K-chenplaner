@@ -11,6 +11,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QInputDialog,
+    QLabel,
     QLineEdit,
     QMessageBox,
     QSpinBox,
@@ -57,28 +58,52 @@ def prompt_int(parent: QWidget | None, title: str, label: str, default: int = 1,
     return value
 
 
-class AddRecipeIngredientDialog(QDialog):
-    """Dialog zum Hinzufuegen einer Zutat zu einem Rezept mit Menge und Einheit."""
+NO_COMPONENT_LABEL = "- Sonstiges -"
 
-    def __init__(self, ingredients: list[tuple[int, str]], parent: QWidget | None = None) -> None:
+
+class AddRecipeIngredientDialog(QDialog):
+    """Dialog zum Hinzufuegen oder Bearbeiten einer Rezeptzutat (Menge, Einheit, Teilstueck)."""
+
+    def __init__(
+        self,
+        ingredients: list[tuple[int, str]],
+        components: list[tuple[int, str]],
+        parent: QWidget | None = None,
+        *,
+        initial: dict | None = None,
+        title: str | None = None,
+    ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Zutat hinzufuegen")
-        self._ingredients = ingredients
+        initial = initial or {}
+        self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufuegen"))
 
         self.ingredient_combo = QComboBox(self)
         for ingredient_id, name in ingredients:
             self.ingredient_combo.addItem(name, ingredient_id)
+        ingredient_index = self.ingredient_combo.findData(initial.get("ingredient_id"))
+        if ingredient_index >= 0:
+            self.ingredient_combo.setCurrentIndex(ingredient_index)
+
+        self.component_combo = QComboBox(self)
+        self.component_combo.addItem(NO_COMPONENT_LABEL, None)
+        for component_id, name in components:
+            self.component_combo.addItem(name, component_id)
+        component_index = self.component_combo.findData(initial.get("component_id"))
+        self.component_combo.setCurrentIndex(component_index if component_index >= 0 else 0)
 
         self.quantity_spin = QDoubleSpinBox(self)
         self.quantity_spin.setDecimals(3)
         self.quantity_spin.setRange(0.001, 100000)
-        self.quantity_spin.setValue(1)
+        self.quantity_spin.setValue(float(initial.get("quantity", 1)))
 
         self.unit_edit = QLineEdit(self)
+        self.unit_edit.setText(initial.get("unit", ""))
         self.notes_edit = QLineEdit(self)
+        self.notes_edit.setText(initial.get("notes") or "")
 
         form = QFormLayout()
         form.addRow("Zutat", self.ingredient_combo)
+        form.addRow("Teilstueck", self.component_combo)
         form.addRow("Menge", self.quantity_spin)
         form.addRow("Einheit", self.unit_edit)
         form.addRow("Notizen", self.notes_edit)
@@ -96,6 +121,7 @@ class AddRecipeIngredientDialog(QDialog):
             return None
         return {
             "ingredient_id": self.ingredient_combo.currentData(),
+            "component_id": self.component_combo.currentData(),
             "quantity": Decimal(str(self.quantity_spin.value())),
             "unit": self.unit_edit.text().strip(),
             "notes": self.notes_edit.text().strip() or None,
@@ -339,4 +365,48 @@ class MealCellDialog(QDialog):
             "target_group": target_group_text if target_group_text != NO_TARGET_GROUP_LABEL else None,
             "status": self.status_combo.currentText(),
             "notes": self.notes_edit.toPlainText().strip() or None,
+        }
+
+
+class ScaleRecipeDialog(QDialog):
+    """Dialog zum Skalieren aller Zutatenmengen eines Rezepts mit einem Faktor."""
+
+    def __init__(self, suggested_factor: Decimal | None, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Mengen skalieren")
+
+        self.factor_spin = QDoubleSpinBox(self)
+        self.factor_spin.setDecimals(3)
+        self.factor_spin.setRange(0.001, 100)
+        self.factor_spin.setSingleStep(0.05)
+        self.factor_spin.setValue(float(suggested_factor) if suggested_factor else 1.0)
+
+        hint_text = (
+            f"Vorschlag aus letztem Feedback: Faktor {suggested_factor}"
+            if suggested_factor is not None
+            else "Kein Feedback-Faktor bekannt - bitte Faktor manuell eintragen."
+        )
+        self.hint_label = QLabel(hint_text, self)
+        self.hint_label.setWordWrap(True)
+
+        self.reason_edit = QLineEdit(self)
+        self.reason_edit.setPlaceholderText("z. B. 'zu viel uebrig geblieben 2026'")
+
+        form = QFormLayout()
+        form.addRow(self.hint_label)
+        form.addRow("Faktor", self.factor_spin)
+        form.addRow("Grund (optional)", self.reason_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def result_data(self) -> dict:
+        return {
+            "factor": Decimal(str(self.factor_spin.value())),
+            "reason": self.reason_edit.text().strip() or None,
         }
