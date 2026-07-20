@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import create_engine, text
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -26,6 +26,34 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 
 def init_database(engine: Engine) -> None:
     Base.metadata.create_all(engine)
+    sync_schema(engine)
+
+
+def sync_schema(engine: Engine) -> None:
+    """Ergaenzt fehlende Spalten auf bereits bestehenden Tabellen (leichtgewichtiger Ersatz fuer Alembic).
+
+    create_all() legt nur komplett neue Tabellen an; bestehende SQLite-Dateien aus
+    frueheren App-Versionen bekommen neu hinzugekommene, nullable Spalten sonst nie.
+    """
+    inspector = inspect(engine)
+    existing_tables = set(inspector.get_table_names())
+
+    with engine.begin() as connection:
+        for table in Base.metadata.sorted_tables:
+            if table.name not in existing_tables:
+                continue
+            existing_columns = {column["name"] for column in inspector.get_columns(table.name)}
+            for column in table.columns:
+                if column.name in existing_columns:
+                    continue
+                ddl_type = column.type.compile(dialect=engine.dialect)
+                connection.execute(text(f'ALTER TABLE "{table.name}" ADD COLUMN "{column.name}" {ddl_type}'))
+                if column.unique:
+                    # SQLite's ADD COLUMN kann keine UNIQUE-Constraints mitbringen - separat nachziehen.
+                    index_name = f"ux_{table.name}_{column.name}"
+                    connection.execute(
+                        text(f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" ON "{table.name}" ("{column.name}")')
+                    )
 
 
 def initialize_database(
