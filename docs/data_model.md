@@ -18,7 +18,10 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
   - Stammdaten fuer Lebensmittel und Zutaten
   - enthaelt Standardeinheit, Kategorie, Lagerart und Aktiv-Status
 - `ingredient_aliases`
-  - abweichende Schreibweisen, Tippfehler, Synonyme
+  - abweichende Schreibweisen, Tippfehler, Synonyme (z. B. "Zwiebeln" als Alias von "Zwiebel")
+  - werden auch automatisch befuellt: `ingredient_service.merge_ingredients` haengt beim
+    Zusammenfuehren zweier Zutaten den Namen der entfernten Zutat als Alias an die verbleibende
+    an, damit die urspruengliche Schreibweise auffindbar bleibt (siehe `scripts/dedupe_ingredients.py`)
 - `ingredient_prices`
   - historische oder aktuelle Preise pro Zutat
   - speichert Jahr, Gueltigkeit, Quelle, Laden und Notizen
@@ -30,6 +33,10 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
 - `recipe_components`
   - ein Teilstueck eines Rezepts, z. B. "Koettbullar", "Kartoffelbrei", "Soße"
   - rein organisatorisch: gruppiert `recipe_ingredients` fuer Anzeige, PDF-Export und Kostenaufschluesselung
+  - beim Excel-Import automatisch erkannt: Teilstuecke sind im Workbook als ueber mehrere
+    Zeilen verbundene Zellen rechts neben der Zutatentabelle formatiert (Spalte G/H), deren
+    Zeilenspanne genau die zugehoerigen Zutatenzeilen markiert (siehe
+    `detect_recipe_components` in `scripts/migrate_excel_to_sqlite.py`)
 - `recipe_ingredients`
   - Zuordnung Rezept zu Zutat, optional einem `recipe_component` zugeordnet (`component_id`, nullable)
   - Zutaten ohne Teilstueck (z. B. Altdaten aus dem Excel-Import) erscheinen als "Sonstiges"

@@ -53,3 +53,35 @@ Geloest mit `app.db.sync_schema(engine)` (wird in `init_database` direkt nach `c
 
 Das ist bewusst kein Ersatz fuer Alembic (keine Versionshistorie, keine Downgrades, keine Datentransformationen) - fuer rein additive, nullable Spalten in einer kleinen SQLite-App reicht es aber und vermeidet die zusaetzliche Abhaengigkeit. Sollte spaeter eine Spalte umbenannt, entfernt oder NOT-NULL-pflichtig werden, braucht es eine echte Migration.
 
+## Re-Extraktion: Teilstuecke, fehlende Zutaten, Preislisten-Dubletten
+
+Beim erneuten Durchlaufen des Excel-Imports (Teilstueck-Erkennung + Korrektur der zuvor
+uebersprungenen Zutatenzeilen) kamen drei echte Bugs zum Vorschein, alle ueber Tests
+abgesichert:
+
+1. **`import_price_list` hatte keinerlei Duplikatspruefung.** Jeder erneute Lauf hat saemtliche
+   Preislisten-Zeilen (anders als Rezeptzeilen, die ueber `sort_order`/`has_matching_price`
+   erkennbar sind) ein weiteres Mal eingefuegt. Erst beim zweiten Testlauf gegen die echte
+   Datenbank aufgefallen (z. B. "Butter" hatte danach 9 statt 7 Preiszeilen, exakte Duplikate
+   mit Zeitstempeln von zwei verschiedenen Importlaeufen). Fix: Preis+Einheit+Jahr+Quelle wird
+   vor dem Einfuegen geprueft (siehe `test_run_import_is_idempotent_for_price_list_rows`).
+2. **Teilstueck-Erkennung verglich Label und Rezeptname exakt.** Ein einzelnes Label, das den
+   kompletten Zutatenblock ueberspannt und nur den Rezeptnamen wiederholt, soll kein echtes
+   Teilstueck werden (siehe `detect_recipe_components`). Der Vergleich schlug fehl, wenn das
+   Label das Leerzeichen weglaesst (Rezept "Gemüse Nudeln", Label "Gemüsenudeln") - erst durch
+   Pruefung der tatsaechlich importierten Daten sichtbar geworden, nicht durch die
+   urspruengliche Testabdeckung. Fix: Vergleich ignoriert Leerzeichen.
+3. **Zutaten-Zusammenfuehrung bei mehr als zwei aehnlichen Namen.** `find_merge_candidates`
+   bildet Paare ueber eine feste Momentaufnahme; bei drei sich gegenseitig aehnlichen Namen
+   (z. B. "Champignon"/"Champignons"/"Champigons") koennen zwei Paare dieselbe Zutat als
+   "wird entfernt" markieren. Ohne Gegenmassnahme fuehrt das zweite Merge zu einem
+   `session.delete()` auf ein bereits geloeschtes bzw. (bei anderer Reihenfolge) noch nicht
+   gespeichertes Objekt. Fix in `scripts/dedupe_ingredients.py`: ein `redirect`-Dict loest jeden
+   Kandidaten auf den tatsaechlich noch existierenden Nachfolger auf, bevor gemerged wird
+   (siehe `test_apply_handles_triangle_of_similar_ingredients_without_error`).
+
+Alle drei Bugs wurden erst durch Ausfuehren gegen die echte Datenbank sichtbar, nicht durch
+die urspruengliche (synthetische) Testabdeckung - ein Hinweis darauf, Migrations-/Bereinigungs-
+Skripte nach jeder Aenderung einmal per `--dry-run` bzw. gegen eine Kopie der echten Datenbank
+laufen zu lassen, bevor sie auf die Produktivdatei angewendet werden.
+

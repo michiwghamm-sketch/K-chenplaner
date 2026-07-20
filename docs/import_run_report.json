@@ -1,151 +1,264 @@
 {
   "source_file": "D:\\Kolping\\ZelaKüche_Programm\\Rezepte_Kolping_mit_Makros.xlsm",
-  "database_path": "D:\\Kolping\\ZelaKüche_Programm\\instance\\zeltlager_kueche_reimport2.sqlite3",
-  "generated_at": "2026-07-08T17:46:51+02:00",
+  "database_path": "D:\\Kolping\\ZelaKüche_Programm\\instance\\zeltlager_kueche.sqlite3",
+  "generated_at": "2026-07-20T19:06:16+02:00",
   "counters": {
-    "ingredients": 217,
-    "ingredient_prices": 575,
-    "recipes": 35,
-    "recipe_ingredients": 367,
-    "camp_years": 1,
+    "ingredients": 1,
+    "ingredient_prices": 5,
+    "recipes": 0,
+    "recipe_components": 22,
+    "recipe_ingredients": 31,
+    "camp_years": 0,
     "meal_plan_entries": 60,
     "recipe_feedback": 35,
     "shopping_lists": 3,
     "shopping_list_items": 457,
-    "import_issues": 21
+    "import_issues": 37
   },
   "issues": [
     {
-      "severity": "warning",
+      "severity": "info",
       "sheet_name": "Chili sin Carne",
-      "cell_reference": "A20:C20",
-      "message": "Rezeptzutat konnte nicht eindeutig gelesen werden.",
-      "raw_value": "Paprika Pulver geräuchert|0.002|None"
+      "cell_reference": "C20",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Paprika Pulver geräuchert"
     },
     {
-      "severity": "warning",
+      "severity": "info",
       "sheet_name": "Chili sin Carne",
-      "cell_reference": "A21:C21",
-      "message": "Rezeptzutat konnte nicht eindeutig gelesen werden.",
-      "raw_value": "Kreuzkümmel|0.002|None"
+      "cell_reference": "C21",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Kreuzkümmel"
     },
     {
-      "severity": "warning",
+      "severity": "info",
       "sheet_name": "Chili sin Carne",
-      "cell_reference": "A22:C22",
-      "message": "Rezeptzutat konnte nicht eindeutig gelesen werden.",
-      "raw_value": "Cayennepfeffer|0.001|None"
+      "cell_reference": "C22",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Cayennepfeffer"
     },
     {
-      "severity": "warning",
+      "severity": "info",
       "sheet_name": "Fleischpflanzerl&KAPÜ",
       "cell_reference": "A21",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Muskat"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Fleischpflanzerl&KAPÜ",
+      "cell_reference": "C21",
+      "message": "Keine Einheit angegeben - Standardeinheit 'kg' angenommen.",
+      "raw_value": "Muskat"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Tiroler Gröstl",
       "cell_reference": "A18",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Öl"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Tiroler Gröstl",
+      "cell_reference": "C18",
+      "message": "Keine Einheit angegeben - '€/l' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Öl"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Tiroler Gröstl",
       "cell_reference": "A20",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Salz"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Tiroler Gröstl",
+      "cell_reference": "C20",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Salz"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Tiroler Gröstl",
       "cell_reference": "A21",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Pfeffer"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Tiroler Gröstl",
+      "cell_reference": "C21",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Pfeffer"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Tiroler Gröstl",
       "cell_reference": "A22",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Paprika rosenscharf"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Tiroler Gröstl",
+      "cell_reference": "C22",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Paprika rosenscharf"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Tiroler Gröstl",
       "cell_reference": "A23",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Majoran"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Tiroler Gröstl",
+      "cell_reference": "C23",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Majoran"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Rippchen am Grill",
       "cell_reference": "A9",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Schweinerippen"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Rippchen am Grill",
+      "cell_reference": "C9",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Schweinerippen"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika Reispfanne ",
       "cell_reference": "A22",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Gemüsebrühe "
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika Reispfanne ",
+      "cell_reference": "C22",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Gemüsebrühe "
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika Reispfanne ",
       "cell_reference": "A23",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Paprikagewürze"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika Reispfanne ",
+      "cell_reference": "C23",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Paprikagewürze"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika Reispfanne ",
       "cell_reference": "A24",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Salz"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika Reispfanne ",
+      "cell_reference": "C24",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Salz"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika Reispfanne ",
       "cell_reference": "A25",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Pfeffer "
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika Reispfanne ",
+      "cell_reference": "C25",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Pfeffer "
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika-Hackpfanne",
       "cell_reference": "A23",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Gemüsebrühe "
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika-Hackpfanne",
+      "cell_reference": "C23",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Gemüsebrühe "
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika-Hackpfanne",
       "cell_reference": "A24",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Zucker"
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika-Hackpfanne",
+      "cell_reference": "C24",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Zucker"
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika-Hackpfanne",
       "cell_reference": "A25",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Salz "
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika-Hackpfanne",
+      "cell_reference": "C25",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Salz "
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika-Hackpfanne",
       "cell_reference": "A26",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
       "raw_value": "Pfeffer "
     },
     {
-      "severity": "warning",
+      "severity": "info",
+      "sheet_name": "Paprika-Hackpfanne",
+      "cell_reference": "C26",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
+      "raw_value": "Pfeffer "
+    },
+    {
+      "severity": "info",
       "sheet_name": "Paprika-Hackpfanne",
       "cell_reference": "A27",
-      "message": "Rezeptzeile ohne Grundmenge.",
+      "message": "Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert.",
+      "raw_value": "Paprikagewürz"
+    },
+    {
+      "severity": "info",
+      "sheet_name": "Paprika-Hackpfanne",
+      "cell_reference": "C27",
+      "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
       "raw_value": "Paprikagewürz"
     },
     {

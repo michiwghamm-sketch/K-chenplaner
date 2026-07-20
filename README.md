@@ -76,6 +76,24 @@ Optional mit explizitem Pfad:
 
 Der Import ist defensiv: unklare Werte werden als Import-Issue protokolliert statt verworfen, bestehende Daten werden nicht stillschweigend ueberschrieben. Ergebnis unter [`docs/import_run_report.md`](docs/import_run_report.md) / `.json`. Kann auch aus der App heraus unter **Import/Export** erneut angestossen werden.
 
+Der Import erkennt zusaetzlich Teilstuecke (Rezept-Unterabschnitte wie "Soße") anhand der
+im Excel ueber mehrere Zeilen verbundenen Zellen neben der Zutatentabelle, und importiert
+Zutatenzeilen ohne Einheit/Menge (z. B. Gewuerze "nach Geschmack") statt sie stillschweigend
+zu ueberspringen - siehe `docs/import_run_report.md` fuer die Details je Zeile.
+
+## Zutaten-Dubletten zusammenfuehren
+
+```powershell
+.venv\Scripts\python.exe scripts\dedupe_ingredients.py --dry-run   # nur anzeigen
+.venv\Scripts\python.exe scripts\dedupe_ingredients.py             # anwenden
+```
+
+Findet hochsichere Zutaten-Dubletten (Singular/Plural wie "Zwiebel"/"Zwiebeln", eindeutige
+Tippfehler) und fuehrt sie zusammen: die zusammengefuehrte Zutat wird zum Alias, alle
+Rezepte/Preise/Einkaufslisten-Positionen werden umgehaengt. Report unter
+[`docs/ingredient_merge_report.md`](docs/ingredient_merge_report.md). Vor dem Anwenden
+empfiehlt sich ein Backup (siehe unten).
+
 ## Tests ausfuehren
 
 ```powershell
