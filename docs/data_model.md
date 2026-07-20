@@ -91,8 +91,26 @@ Die VBA-Logik aggregiert ausgewaehlte Rezepte in eine Einkaufsliste. In der Pyth
 
 Die Excel-Datei enthaelt bereits Feedback mit Bewertungs- und Erfahrungsdaten. Das wird direkt in `recipe_feedback` uebernommen.
 
-## Offene Modellfragen fuer Phase 3
+## Offene Modellfragen aus Phase 3 - Entscheidung nach Phase 4
 
-- Brauchen wir eigene Stammdatentabellen fuer `units`, `stores` und `recipe_categories`?
-- Reicht `linked_recipes_text` in `shopping_list_items` oder brauchen wir spaeter eine Normalisierung ueber Join-Tabellen?
-- Welche Einheiten muessen fachlich umgerechnet werden und welche duerfen nicht automatisch aggregiert werden?
+- **Eigene Tabellen fuer `units`/`stores`/`recipe_categories`?** Vorerst nein. Kategorie, Mahlzeitentyp und Einheit bleiben freie Textfelder (mit Normalisierung ueber `app/utils/units.py` und `app/utils/normalization.py`). Die Datenmengen sind klein genug, dass eine Freitext-Pflege mit Vorschlagslisten in der UI reicht. Falls spaeter eine feste Kategorienliste gewuenscht ist, laesst sich das nachtraeglich ergaenzen, ohne bestehende Daten zu verlieren.
+- **`linked_recipes_text` vs. Normalisierung?** Bleibt vorerst ein Textfeld. `shopping_service.generate_shopping_list()` befuellt es beim Generieren automatisch mit den Namen aller Rezepte, die zu einer aggregierten Position beigetragen haben. Eine Join-Tabelle waere nur noetig, wenn einzelne Einkaufspositionen spaeter wieder auf einzelne Mahlzeiten zurueckgefuehrt werden muessten.
+- **Einheitenumrechnung?** Nicht automatisiert. `shopping_service` aggregiert Mengen nur, wenn Zutat *und* Einheit exakt uebereinstimmen (z. B. `kg` wird nicht mit `g` zusammengefuehrt). Das vermeidet stille Rechenfehler, erfordert aber gepflegte, konsistente Einheiten je Zutat.
+
+## Phase 4: Fachlogik-Services
+
+Die Services unter `app/services/` kapseln alle Berechnungen und Validierungen, die vorher in Excel-Formeln/VBA steckten:
+
+| Service | Kernfunktionen |
+| --- | --- |
+| `price_service` | `find_best_price` (Jahrestreffer, sonst neuester Preis), `missing_price_ingredients`, `copy_prices_from_year`, `compare_years` |
+| `recipe_service` | `scale_recipe` (Mengen auf Zielportionen skalieren), `calculate_recipe_cost` (Gesamt-/Portionskosten inkl. fehlender Preise) |
+| `ingredient_service` | Suche, CRUD, Alias-Verwaltung |
+| `planning_service` | Camp-Jahr anlegen, `generate_daily_meal_slots` (idempotent), Status-Uebergaenge, Einkaufstag-Herleitung |
+| `shopping_service` | `generate_shopping_list` aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu Einkaufspositionen |
+| `feedback_service` | `calculate_quantity_factor` = gekochte / geplante Portionen |
+| `validation_service` | fehlende Preise/Einheiten, Rezepte ohne Zutaten, Planung ohne Portionen, 0-Preis-Positionen, moegliche Zutaten-Dubletten (Aehnlichkeitsvergleich via `difflib`) |
+| `backup_service` | zeitgestempeltes Backup, Restore nur mit expliziter Bestaetigung, SQLite-Integritaetspruefung |
+| `import_service` / `export_service` | UI-Wrapper fuer den Excel-Import bzw. CSV/Excel-Export |
+
+Alle Services sind reine Python-Funktionen ohne UI-Abhaengigkeit und werden in `tests/` mit pytest abgedeckt (38 Tests, Stand Phase 4/5).
