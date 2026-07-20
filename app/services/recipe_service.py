@@ -1,14 +1,17 @@
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Recipe, RecipeIngredient
+from app.models import Recipe, RecipeComponent, RecipeIngredient, RecipeVersion
 from app.services import price_service
 from app.utils.normalization import normalize_name
+
+UNASSIGNED_COMPONENT_LABEL = "Sonstiges"
 
 
 @dataclass(slots=True)
@@ -21,11 +24,22 @@ class ScaledIngredientLine:
 
 
 @dataclass(slots=True)
+class IngredientCostLine:
+    component_name: str
+    ingredient_name: str
+    quantity: Decimal
+    unit: str
+    price_per_unit: Decimal | None
+    line_cost: Decimal | None
+
+
+@dataclass(slots=True)
 class RecipeCostResult:
     total_cost: Decimal
     cost_per_portion: Decimal | None
     portions: int
     missing_price_ingredients: list[str] = field(default_factory=list)
+    lines: list[IngredientCostLine] = field(default_factory=list)
 
 
 def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientLine]:
@@ -52,21 +66,46 @@ def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientL
 
 
 def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | None = None, year: int | None = None) -> RecipeCostResult:
-    """Berechnet Gesamtkosten und Kosten pro Portion fuer ein Rezept anhand der besten bekannten Preise."""
+    """Berechnet Gesamtkosten, Kosten pro Portion und die Kosten je Zutat anhand der besten bekannten Preise."""
     target_portions = portions or recipe.default_portions or 1
     base_portions = recipe.default_portions or target_portions
     factor = Decimal(target_portions) / Decimal(base_portions) if base_portions else Decimal(1)
 
     total_cost = Decimal("0")
     missing: list[str] = []
+    lines: list[IngredientCostLine] = []
 
-    for item in recipe.ingredients:
+    for item in sorted(recipe.ingredients, key=lambda i: i.sort_order):
         best_price = price_service.find_best_price(session, item.ingredient_id, year=year)
+        scaled_quantity = (item.quantity * factor).quantize(Decimal("0.001"))
+        component_name = item.component.name if item.component else UNASSIGNED_COMPONENT_LABEL
+
         if best_price is None:
             missing.append(item.ingredient.name)
+            lines.append(
+                IngredientCostLine(
+                    component_name=component_name,
+                    ingredient_name=item.ingredient.name,
+                    quantity=scaled_quantity,
+                    unit=item.unit,
+                    price_per_unit=None,
+                    line_cost=None,
+                )
+            )
             continue
-        scaled_quantity = item.quantity * factor
-        total_cost += scaled_quantity * best_price.price_per_unit
+
+        line_cost = (scaled_quantity * best_price.price_per_unit).quantize(Decimal("0.01"))
+        total_cost += line_cost
+        lines.append(
+            IngredientCostLine(
+                component_name=component_name,
+                ingredient_name=item.ingredient.name,
+                quantity=scaled_quantity,
+                unit=item.unit,
+                price_per_unit=best_price.price_per_unit,
+                line_cost=line_cost,
+            )
+        )
 
     cost_per_portion = (total_cost / Decimal(target_portions)) if target_portions else None
     return RecipeCostResult(
@@ -74,6 +113,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
         cost_per_portion=cost_per_portion.quantize(Decimal("0.01")) if cost_per_portion is not None else None,
         portions=target_portions,
         missing_price_ingredients=missing,
+        lines=lines,
     )
 
 
@@ -142,6 +182,35 @@ def activate_recipe(recipe: Recipe) -> None:
     recipe.active = True
 
 
+# --- Teilstuecke (RecipeComponent) -------------------------------------------------
+
+
+def create_component(session: Session, recipe: Recipe, name: str, *, notes: str | None = None) -> RecipeComponent:
+    sort_order = max((c.sort_order for c in recipe.components), default=0) + 1
+    component = RecipeComponent(recipe=recipe, name=name.strip(), sort_order=sort_order, notes=notes)
+    session.add(component)
+    session.flush()
+    return component
+
+
+def update_component(component: RecipeComponent, **fields: object) -> RecipeComponent:
+    for key, value in fields.items():
+        if not hasattr(component, key):
+            raise AttributeError(f"Unbekanntes Teilstueck-Feld: {key}")
+        setattr(component, key, value)
+    return component
+
+
+def delete_component(session: Session, component: RecipeComponent) -> None:
+    """Loescht ein Teilstueck; seine Zutaten bleiben erhalten und wandern nach 'Sonstiges'."""
+    for ingredient in list(component.ingredients):
+        ingredient.component_id = None
+    session.delete(component)
+
+
+# --- Zutaten -------------------------------------------------------------------------
+
+
 def add_ingredient_to_recipe(
     session: Session,
     recipe: Recipe,
@@ -149,6 +218,7 @@ def add_ingredient_to_recipe(
     ingredient_id: int,
     quantity: Decimal,
     unit: str,
+    component_id: int | None = None,
     price_unit: str | None = None,
     optional: bool = False,
     notes: str | None = None,
@@ -157,6 +227,7 @@ def add_ingredient_to_recipe(
     link = RecipeIngredient(
         recipe=recipe,
         ingredient_id=ingredient_id,
+        component_id=component_id,
         quantity=quantity,
         unit=unit,
         price_unit=price_unit or unit,
@@ -174,3 +245,91 @@ def remove_ingredient_from_recipe(session: Session, link: RecipeIngredient) -> N
 
 def feedback_history(recipe: Recipe) -> list:
     return sorted(recipe.feedback_entries, key=lambda entry: entry.camp_year.year if entry.camp_year else 0, reverse=True)
+
+
+# --- Versionierung / Changelog ---------------------------------------------------------
+
+
+def _serialize_snapshot(recipe: Recipe) -> str:
+    components_by_id = {c.id: c.name for c in recipe.components}
+    rows = []
+    for item in sorted(recipe.ingredients, key=lambda i: i.sort_order):
+        rows.append(
+            {
+                "component_name": components_by_id.get(item.component_id, UNASSIGNED_COMPONENT_LABEL),
+                "ingredient_name": item.ingredient.name,
+                "quantity": str(item.quantity),
+                "unit": item.unit,
+                "optional": item.optional,
+                "notes": item.notes,
+            }
+        )
+    return json.dumps(rows, ensure_ascii=False)
+
+
+def parse_version_snapshot(version: RecipeVersion) -> list[dict]:
+    return json.loads(version.ingredients_snapshot)
+
+
+def create_version_snapshot(
+    session: Session, recipe: Recipe, *, change_note: str | None = None, scale_factor: Decimal | None = None
+) -> RecipeVersion:
+    """Friert den aktuellen Zutatenstand als neue Historien-Version ein."""
+    next_number = max((v.version_number for v in recipe.versions), default=0) + 1
+    version = RecipeVersion(
+        recipe=recipe,
+        version_number=next_number,
+        change_note=change_note,
+        scale_factor=scale_factor,
+        default_portions=recipe.default_portions,
+        ingredients_snapshot=_serialize_snapshot(recipe),
+    )
+    session.add(version)
+    session.flush()
+    return version
+
+
+def list_versions(recipe: Recipe) -> list[RecipeVersion]:
+    return sorted(recipe.versions, key=lambda v: v.version_number, reverse=True)
+
+
+def scale_recipe_ingredients(
+    session: Session, recipe: Recipe, factor: Decimal, *, change_note: str | None = None
+) -> RecipeVersion:
+    """Skaliert alle Zutatenmengen mit einem Faktor. Der vorherige Stand wird als Version gesichert."""
+    if factor <= 0:
+        raise ValueError("Der Faktor muss groesser als 0 sein.")
+
+    version = create_version_snapshot(
+        session, recipe, change_note=change_note or f"Mengen skaliert mit Faktor {factor}", scale_factor=factor
+    )
+    for item in recipe.ingredients:
+        item.quantity = (item.quantity * factor).quantize(Decimal("0.001"))
+    return version
+
+
+def update_ingredient_quantity(
+    session: Session,
+    recipe: Recipe,
+    link: RecipeIngredient,
+    *,
+    quantity: Decimal,
+    unit: str | None = None,
+    change_note: str | None = None,
+) -> RecipeVersion:
+    """Passt die Menge einer einzelnen Zutat an. Der vorherige Stand wird als Version gesichert."""
+    note = change_note or f"{link.ingredient.name}: {link.quantity} {link.unit} -> {quantity} {unit or link.unit}"
+    version = create_version_snapshot(session, recipe, change_note=note)
+    link.quantity = quantity
+    if unit:
+        link.unit = unit
+    return version
+
+
+def suggested_scale_factor(recipe: Recipe) -> Decimal | None:
+    """Letzter bekannter Mengenfaktor aus dem Feedback (neuestes Camp-Jahr zuerst)."""
+    history = feedback_history(recipe)
+    for entry in history:
+        if entry.quantity_factor_next_time is not None:
+            return entry.quantity_factor_next_time
+    return None

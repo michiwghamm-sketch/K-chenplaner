@@ -2,10 +2,19 @@ from __future__ import annotations
 
 import csv
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from openpyxl import Workbook
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER
+from reportlab.lib.pagesizes import A4
+from reportlab.lib.styles import ParagraphStyle, getSampleStyleSheet
+from reportlab.lib.units import mm
+from reportlab.lib.utils import ImageReader
+from reportlab.platypus import Image, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
 from app.models import Recipe, ShoppingList
+from app.services.recipe_service import RecipeCostResult, UNASSIGNED_COMPONENT_LABEL
 
 SHOPPING_LIST_COLUMNS = (
     "Zutat",
@@ -81,4 +90,148 @@ def export_recipes_to_csv(recipes: list[Recipe], path: Path) -> Path:
                     recipe.notes or "",
                 )
             )
+    return path
+
+
+# --- Rezept-PDF (druckfaehige Rezeptkarte) --------------------------------------------
+
+ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+LOGO_PATH = ASSETS_DIR / "kolping_logo.jpeg"
+
+PDF_ORANGE = colors.HexColor("#FF8C00")
+PDF_ORANGE_TINT = colors.HexColor("#FFF1E0")
+PDF_TEXT_DARK = colors.HexColor("#2F2C2A")
+PDF_TEXT_MUTED = colors.HexColor("#6B6864")
+PDF_BORDER = colors.HexColor("#E0DFDD")
+PDF_CRITICAL = colors.HexColor("#B3261E")
+
+
+def _pdf_text(value: str | None) -> str:
+    return escape(value) if value else ""
+
+
+def _group_cost_lines(recipe: Recipe, cost_result: RecipeCostResult) -> list[tuple[str, list]]:
+    """Gruppiert die Kostenzeilen in der Reihenfolge der Teilstuecke (plus 'Sonstiges' am Ende, falls noetig)."""
+    order = [component.name for component in recipe.components]
+    if any(line.component_name == UNASSIGNED_COMPONENT_LABEL for line in cost_result.lines):
+        order.append(UNASSIGNED_COMPONENT_LABEL)
+
+    grouped: dict[str, list] = {name: [] for name in order}
+    for line in cost_result.lines:
+        grouped.setdefault(line.component_name, []).append(line)
+        if line.component_name not in order:
+            order.append(line.component_name)
+    return [(name, grouped[name]) for name in order if grouped[name]]
+
+
+def export_recipe_to_pdf(recipe: Recipe, cost_result: RecipeCostResult, path: Path) -> Path:
+    """Exportiert ein Rezept als druckfaehige, nach Teilstuecken gegliederte Rezeptkarte."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+
+    doc = SimpleDocTemplate(
+        str(path),
+        pagesize=A4,
+        topMargin=14 * mm,
+        bottomMargin=14 * mm,
+        leftMargin=16 * mm,
+        rightMargin=16 * mm,
+        title=recipe.name,
+    )
+
+    styles = getSampleStyleSheet()
+    title_style = ParagraphStyle(
+        "RecipeTitle", parent=styles["Title"], textColor=PDF_TEXT_DARK, fontSize=24, alignment=TA_CENTER, spaceAfter=2
+    )
+    meta_style = ParagraphStyle("RecipeMeta", parent=styles["Normal"], textColor=PDF_TEXT_DARK, fontSize=10, leading=14)
+    heading_style = ParagraphStyle("SectionHeading", parent=styles["Heading2"], textColor=PDF_TEXT_DARK, fontSize=13, spaceBefore=10, spaceAfter=4)
+    body_style = ParagraphStyle("Body", parent=styles["Normal"], textColor=PDF_TEXT_DARK, fontSize=10, leading=15)
+    muted_style = ParagraphStyle("Muted", parent=styles["Normal"], textColor=PDF_TEXT_MUTED, fontSize=9)
+
+    story = []
+
+    # Kopfzeile: Logo links, Kategorie/Mahlzeit rechts.
+    logo_cell = ""
+    if LOGO_PATH.exists():
+        image_width, image_height = ImageReader(str(LOGO_PATH)).getSize()
+        width = 42 * mm
+        height = width * image_height / image_width
+        logo_cell = Image(str(LOGO_PATH), width=width, height=height)
+
+    meta_lines = [f"<b>Kategorie:</b> {_pdf_text(recipe.category) or '-'}", f"<b>Mahlzeit:</b> {_pdf_text(recipe.meal_type) or '-'}"]
+    meta_cell = Paragraph("<br/>".join(meta_lines), meta_style)
+
+    header_table = Table([[logo_cell, meta_cell]], colWidths=[90 * mm, None])
+    header_table.setStyle(
+        TableStyle(
+            [
+                ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                ("BOX", (1, 0), (1, 0), 0.75, PDF_BORDER),
+                ("INNERPADDING", (1, 0), (1, 0), 6),
+                ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ]
+        )
+    )
+    story.append(header_table)
+    story.append(Spacer(1, 8 * mm))
+
+    story.append(Paragraph(_pdf_text(recipe.name), title_style))
+    story.append(
+        Paragraph(
+            f"Portionen: <b>{cost_result.portions}</b>",
+            ParagraphStyle("Portions", parent=meta_style, alignment=TA_CENTER, fontSize=12, spaceAfter=6),
+        )
+    )
+    story.append(Spacer(1, 4 * mm))
+
+    column_widths = [70 * mm, 22 * mm, 22 * mm, 28 * mm, 28 * mm]
+    for component_name, lines in _group_cost_lines(recipe, cost_result):
+        band = Table([[Paragraph(_pdf_text(component_name), ParagraphStyle("Band", parent=styles["Normal"], textColor=colors.white, fontSize=11, leading=13))]], colWidths=[sum(column_widths)])
+        band.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, -1), PDF_ORANGE), ("LEFTPADDING", (0, 0), (-1, -1), 6), ("TOPPADDING", (0, 0), (-1, -1), 4), ("BOTTOMPADDING", (0, 0), (-1, -1), 4)]))
+        story.append(band)
+
+        table_data = [["Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis"]]
+        for line in lines:
+            price_text = f"{line.price_per_unit:.2f} EUR" if line.price_per_unit is not None else "fehlt"
+            cost_text = f"{line.line_cost:.2f} EUR" if line.line_cost is not None else "-"
+            table_data.append([line.ingredient_name, str(line.quantity), line.unit, price_text, cost_text])
+
+        ingredient_table = Table(table_data, colWidths=column_widths, repeatRows=1)
+        table_style_commands = [
+            ("BACKGROUND", (0, 0), (-1, 0), PDF_ORANGE_TINT),
+            ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
+            ("FONTSIZE", (0, 0), (-1, -1), 9),
+            ("TEXTCOLOR", (0, 0), (-1, -1), PDF_TEXT_DARK),
+            ("GRID", (0, 0), (-1, -1), 0.5, PDF_BORDER),
+            ("ALIGN", (1, 0), (-1, -1), "RIGHT"),
+            ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+            ("TOPPADDING", (0, 0), (-1, -1), 3),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
+        ]
+        for row_index, line in enumerate(lines, start=1):
+            if line.price_per_unit is None:
+                table_style_commands.append(("TEXTCOLOR", (3, row_index), (4, row_index), PDF_CRITICAL))
+            if row_index % 2 == 0:
+                table_style_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FCFCFB")))
+        ingredient_table.setStyle(TableStyle(table_style_commands))
+        story.append(ingredient_table)
+        story.append(Spacer(1, 4 * mm))
+
+    summary_text = f"<b>Gesamtkosten: {cost_result.total_cost:.2f} EUR</b>"
+    if cost_result.cost_per_portion is not None:
+        summary_text += f" &nbsp;|&nbsp; <b>Preis pro Portion: {cost_result.cost_per_portion:.2f} EUR</b>"
+    story.append(Paragraph(summary_text, ParagraphStyle("Summary", parent=body_style, fontSize=12, spaceBefore=2)))
+    if cost_result.missing_price_ingredients:
+        missing_text = "Achtung, fehlende Preise: " + ", ".join(_pdf_text(name) for name in cost_result.missing_price_ingredients)
+        story.append(Paragraph(missing_text, ParagraphStyle("Missing", parent=muted_style, textColor=PDF_CRITICAL, spaceBefore=2)))
+
+    if recipe.instructions:
+        story.append(Paragraph("Zubereitung", heading_style))
+        instructions_html = _pdf_text(recipe.instructions).replace("\n", "<br/>")
+        story.append(Paragraph(instructions_html, body_style))
+
+    if recipe.notes:
+        story.append(Paragraph("Notizen", heading_style))
+        story.append(Paragraph(_pdf_text(recipe.notes).replace("\n", "<br/>"), body_style))
+
+    doc.build(story)
     return path

@@ -27,9 +27,19 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
 
 - `recipes`
   - Rezeptkopf mit Kategorie, Mahlzeitentyp, Standardportionen, Anleitung und Notizen
+- `recipe_components`
+  - ein Teilstueck eines Rezepts, z. B. "Koettbullar", "Kartoffelbrei", "Soße"
+  - rein organisatorisch: gruppiert `recipe_ingredients` fuer Anzeige, PDF-Export und Kostenaufschluesselung
 - `recipe_ingredients`
-  - Zuordnung Rezept zu Zutat
+  - Zuordnung Rezept zu Zutat, optional einem `recipe_component` zugeordnet (`component_id`, nullable)
+  - Zutaten ohne Teilstueck (z. B. Altdaten aus dem Excel-Import) erscheinen als "Sonstiges"
   - speichert Menge, Einheit, Reihenfolge und optionale Zutaten
+- `recipe_versions`
+  - Changelog: ein Schnappschuss der Zutatenmengen vor jeder Mengenaenderung (einzelne Zutat oder
+    Faktor-Skalierung ueber `recipe_service.scale_recipe_ingredients`)
+  - `ingredients_snapshot` ist ein JSON-Textfeld (Teilstueck/Zutat/Menge/Einheit), damit die Historie
+    unabhaengig von spaeteren Umbenennungen/Loeschungen bleibt
+  - `version_number` zaehlt je Rezept hoch (`UniqueConstraint(recipe_id, version_number)`)
 
 ### Lagerjahr und Wochenplan
 
@@ -72,7 +82,8 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
 ## Wichtige Beziehungen
 
 - Eine `ingredient` kann mehrere `ingredient_aliases` und `ingredient_prices` haben.
-- Ein `recipe` hat viele `recipe_ingredients`.
+- Ein `recipe` hat viele `recipe_components`, `recipe_ingredients` und `recipe_versions`.
+- Ein `recipe_component` hat viele `recipe_ingredients` (optional - `component_id` ist nullable).
 - Ein `camp_year` hat viele `camp_days`, `meal_plan_entries`, `recipe_feedback`-Eintraege und `shopping_lists`.
 - Eine `shopping_list` hat viele `shopping_list_items`.
 - Ein `import_run` hat viele `import_issues`.
@@ -112,14 +123,14 @@ Die Services unter `app/services/` kapseln alle Berechnungen und Validierungen, 
 | Service | Kernfunktionen |
 | --- | --- |
 | `price_service` | `find_best_price` (Jahrestreffer, sonst neuester Preis), `missing_price_ingredients`, `copy_prices_from_year`, `compare_years` |
-| `recipe_service` | `scale_recipe` (Mengen auf Zielportionen skalieren), `calculate_recipe_cost` (Gesamt-/Portionskosten inkl. fehlender Preise) |
+| `recipe_service` | `scale_recipe` (Mengen auf Zielportionen skalieren), `calculate_recipe_cost` (Gesamt-/Portionskosten inkl. Kosten je Zutatenzeile), Teilstueck-CRUD (`create_component`/`update_component`/`delete_component`), Changelog (`create_version_snapshot`/`list_versions`/`parse_version_snapshot`), `scale_recipe_ingredients`/`update_ingredient_quantity` (versionieren automatisch vor jeder Mengenaenderung), `suggested_scale_factor` (letzter Feedback-Faktor) |
 | `ingredient_service` | Suche, CRUD, Alias-Verwaltung |
 | `planning_service` | Zeltlagerwoche anlegen, `generate_daily_meal_slots` legt pro Tag `camp_days` + bis zu drei `meal_plan_entries` an (idempotent), `get_or_create_camp_day`/`get_or_create_meal_entry` fuer die Einzelfeld-Bearbeitung im Wochenplan-Raster, `set_day_responsible`, Status-Uebergaenge, Einkaufstag-Herleitung |
 | `shopping_service` | `generate_shopping_list` aggregiert alle geplanten (nicht abgesagten) `meal_plan_entries` eines Camp-Jahrs zu Einkaufspositionen - liest also direkt aus dem Wochenplan |
 | `feedback_service` | `list_feedback_candidates` listet alle Mahlzeiten eines Camp-Jahrs mit Rezept auf; `save_meal_feedback`/`get_or_create_meal_feedback` verwalten das Feedback je Mahlzeit-Slot; `calculate_quantity_factor` = gekochte / geplante Portionen |
 | `validation_service` | fehlende Preise/Einheiten, Rezepte ohne Zutaten, Planung ohne Portionen, 0-Preis-Positionen, moegliche Zutaten-Dubletten (Aehnlichkeitsvergleich via `difflib`) |
 | `backup_service` | zeitgestempeltes Backup, Restore nur mit expliziter Bestaetigung, SQLite-Integritaetspruefung |
-| `import_service` / `export_service` | UI-Wrapper fuer den Excel-Import bzw. CSV/Excel-Export |
+| `import_service` / `export_service` | UI-Wrapper fuer den Excel-Import bzw. CSV/Excel/PDF-Export; `export_recipe_to_pdf` erzeugt eine nach Teilstuecken gegliederte, Kolping-gebrandete Rezeptkarte (reportlab) mit Logo aus `app/assets/kolping_logo.jpeg` |
 
 Alle Services sind reine Python-Funktionen ohne UI-Abhaengigkeit und werden in `tests/` mit pytest abgedeckt.
 
