@@ -3,6 +3,11 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
+from app.ui.theme import BORDER, ORANGE, TEXT_MUTED
+
+# Ampel-Farben fuer Status/Warnungen bleiben funktional (gruen/gelb/rot) und sind
+# bewusst unabhaengig von der Kolping-Markenfarbe Orange, damit "kritisch" nicht
+# mit dem Marken-Akzent verwechselt wird.
 COLOR_OK = "#1e7d34"
 COLOR_WARNING = "#b8860b"
 COLOR_CRITICAL = "#b3261e"
@@ -14,6 +19,31 @@ _STATUS_COLORS = {
     "kritisch": COLOR_CRITICAL,
     "info": COLOR_INFO,
 }
+
+
+class PageHeader(QWidget):
+    """Seitentitel im Stil der Kolpingjugend-Regensburg-Website (grosse, halbfette Ueberschrift mit Orange-Akzent)."""
+
+    def __init__(self, title: str, subtitle: str = "", parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 10)
+        layout.setSpacing(2)
+
+        title_label = QLabel(title, self)
+        title_label.setProperty("role", "pageTitle")
+        layout.addWidget(title_label)
+
+        rule = QWidget(self)
+        rule.setFixedHeight(3)
+        rule.setFixedWidth(48)
+        rule.setStyleSheet(f"background-color: {ORANGE}; border-radius: 1px;")
+        layout.addWidget(rule)
+
+        if subtitle:
+            subtitle_label = QLabel(subtitle, self)
+            subtitle_label.setProperty("role", "pageSubtitle")
+            layout.addWidget(subtitle_label)
 
 
 class StatusBadge(QLabel):
@@ -65,14 +95,12 @@ class KpiCard(QWidget):
         self.value_label.setAlignment(Qt.AlignmentFlag.AlignLeft)
 
         title_label = QLabel(title, self)
-        title_label.setStyleSheet("color: palette(mid); font-size: 12px;")
+        title_label.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
 
         layout.addWidget(self.value_label)
         layout.addWidget(title_label)
 
-        self.setStyleSheet(
-            "KpiCard { border: 1px solid palette(mid); border-radius: 6px; background: palette(base); }"
-        )
+        self.setStyleSheet(f"KpiCard {{ border: 1px solid {BORDER}; border-radius: 6px; background: white; }}")
         self.set_level(level)
 
     def set_value(self, value: str) -> None:

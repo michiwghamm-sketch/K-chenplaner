@@ -15,6 +15,7 @@ from app.context import AppContext  # noqa: E402
 from app.db import initialize_database  # noqa: E402
 from app.services.backup_service import verify_integrity  # noqa: E402
 from app.ui.app import MainWindow  # noqa: E402
+from app.ui.theme import apply_theme  # noqa: E402
 from app.utils.drive_detection import get_drive_warning  # noqa: E402
 from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
 from app.utils.paths import get_logs_dir, get_user_settings_path  # noqa: E402
@@ -72,6 +73,7 @@ def choose_database_path_first_run(default_path: Path) -> Path | None:
 
 def main() -> int:
     app = QApplication(sys.argv)
+    apply_theme(app)
 
     default_config = AppConfig.load(project_root=PROJECT_ROOT)
     setup_logging(get_logs_dir(PROJECT_ROOT))
