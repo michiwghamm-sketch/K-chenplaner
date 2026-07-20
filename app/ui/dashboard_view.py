@@ -7,7 +7,7 @@ from sqlalchemy import select
 from app.context import AppContext
 from app.models import CampYear, Recipe
 from app.services import price_service, recipe_service, validation_service
-from app.ui.widgets import COLOR_CRITICAL, COLOR_INFO, COLOR_OK, COLOR_WARNING, KpiCard
+from app.ui.widgets import COLOR_CRITICAL, COLOR_INFO, COLOR_OK, COLOR_WARNING, KpiCard, PageHeader
 
 _SEVERITY_COLORS = {"warnung": COLOR_WARNING, "kritisch": COLOR_CRITICAL, "hinweis": COLOR_INFO}
 
@@ -23,6 +23,7 @@ class DashboardView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Dashboard", "Kennzahlen und Warnungen fuer das ausgewaehlte Camp-Jahr"))
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Camp-Jahr:", self))

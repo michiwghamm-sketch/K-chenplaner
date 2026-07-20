@@ -23,6 +23,7 @@ from app.context import AppContext
 from app.models import CampYear, Recipe
 from app.services import feedback_service
 from app.ui.dialogs import error_dialog, info_dialog
+from app.ui.widgets import PageHeader
 
 REPEAT_OPTIONS = ("Unbekannt", "Ja", "Nein")
 
@@ -38,6 +39,7 @@ class FeedbackView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Feedback", "Rueckmeldungen und Erfahrungswerte je Rezept"))
 
         top_row = QHBoxLayout()
         self.recipe_combo = QComboBox(self)

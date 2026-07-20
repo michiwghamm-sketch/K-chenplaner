@@ -6,7 +6,7 @@ from PySide6.QtWidgets import QFileDialog, QFormLayout, QHBoxLayout, QLabel, QLi
 
 from app.context import AppContext
 from app.ui.dialogs import info_dialog
-from app.ui.widgets import StatusBadge
+from app.ui.widgets import PageHeader, StatusBadge
 from app.utils.drive_detection import get_drive_warning
 from app.utils.paths import get_user_settings_path
 
@@ -24,6 +24,7 @@ class SettingsView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Einstellungen", "Datenbankpfad und Systeminformationen"))
 
         form = QFormLayout()
         self.db_path_edit = QLineEdit(self)

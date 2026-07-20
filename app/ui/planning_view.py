@@ -23,7 +23,7 @@ from app.context import AppContext
 from app.models import CampYear, MealPlanEntry, Recipe
 from app.services import planning_service
 from app.ui.dialogs import CampYearDialog, confirm_dialog, error_dialog, info_dialog
-from app.ui.widgets import COLOR_CRITICAL
+from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 STATUS_OPTIONS = planning_service.ALLOWED_STATUSES
 
@@ -40,6 +40,7 @@ class PlanningView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Jahresplanung", "Camp-Jahre anlegen und Mahlzeiten planen"))
 
         top_row = QHBoxLayout()
         self.camp_year_combo = QComboBox(self)

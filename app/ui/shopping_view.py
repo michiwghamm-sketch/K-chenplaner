@@ -21,7 +21,7 @@ from app.context import AppContext
 from app.models import CampYear, ShoppingList, ShoppingListItem
 from app.services import export_service, shopping_service
 from app.ui.dialogs import error_dialog, info_dialog
-from app.ui.widgets import COLOR_CRITICAL
+from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 
 class ShoppingView(QWidget):
@@ -35,6 +35,7 @@ class ShoppingView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Einkaufsliste", "Aus der Jahresplanung generierte Einkaufsliste"))
 
         top_row = QHBoxLayout()
         self.camp_year_combo = QComboBox(self)

@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from app.context import AppContext
 from app.services import ingredient_service, price_service
 from app.ui.dialogs import AddPriceDialog, error_dialog, info_dialog, prompt_int
-from app.ui.widgets import COLOR_CRITICAL
+from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 
 class PricesView(QWidget):
@@ -33,6 +33,7 @@ class PricesView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Preise", "Zutatenpreise je Jahr erfassen und pruefen"))
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Jahr:", self))

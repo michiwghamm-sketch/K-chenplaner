@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 from app.context import AppContext
 from app.services import backup_service, export_service, import_service, recipe_service
 from app.ui.dialogs import confirm_dialog, error_dialog, info_dialog
+from app.ui.widgets import PageHeader
 
 
 class ImportExportView(QWidget):
@@ -30,6 +31,7 @@ class ImportExportView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
+        layout.addWidget(PageHeader("Import/Export", "Excel-Import, Datenexport, Backup und Restore"))
 
         import_group = QGroupBox("Excel-Import", self)
         import_layout = QVBoxLayout(import_group)
