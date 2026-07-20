@@ -31,19 +31,27 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
   - Zuordnung Rezept zu Zutat
   - speichert Menge, Einheit, Reihenfolge und optionale Zutaten
 
-### Lagerjahr und Planung
+### Lagerjahr und Wochenplan
 
 - `camp_years`
-  - ein Lagerjahr mit Zeitraum, Ort und Teilnehmerzahlen
+  - eine Zeltlagerwoche (ein "Lagerjahr") mit Zeitraum, Ort und Teilnehmerzahlen
+- `camp_days`
+  - ein Tag innerhalb der Zeltlagerwoche, primaer fuer den Tagesverantwortlichen (`responsible_person`)
+  - ein Eintrag je Datum und Camp-Jahr (`UniqueConstraint(camp_year_id, day_date)`)
 - `meal_plan_entries`
-  - konkrete geplante Mahlzeiten eines Lagerjahres
+  - konkrete geplante Mahlzeiten eines Lagerjahres (bis zu drei je Tag: Fruehstueck/Mittagessen/Abendessen)
   - verknuepft Datum, Mahlzeitentyp, Rezept, Portionen und Einkaufsinformationen
 
 ### Feedback
 
 - `recipe_feedback`
-  - Rueckmeldungen pro Rezept und Lagerjahr
-  - Bewertung, Wiederholungswunsch, Abweichungen bei Portionen und qualitative Erfahrungswerte
+  - Rueckmeldung je konkreter Mahlzeit im Wochenplan (`meal_plan_entry_id`, `unique`) - dadurch kann dasselbe
+    Rezept an zwei Tagen der Woche stehen und bekommt trotzdem je Mahlzeit ein eigenes Feedback
+  - `meal_plan_entry_id` ist nullable, da aus Excel importiertes Alt-Feedback keiner konkreten Mahlzeit
+    zugeordnet werden kann (dort bleibt nur der camp_year_id/recipe_id-Bezug)
+  - Bewertung ("wie kam es an?"), `quantity_sufficient` ("hat die Menge gereicht? Ja/Zu wenig/Zu viel"),
+    Wiederholungswunsch, geplante/gekochte Portionen, Restmenge und qualitative Erfahrungswerte
+    (Ablauf-Tipps, was lief gut, was aendern)
 
 ### Einkauf
 
@@ -65,7 +73,7 @@ Phase 2 definiert die erste relationale Zielstruktur fuer die Python-Anwendung. 
 
 - Eine `ingredient` kann mehrere `ingredient_aliases` und `ingredient_prices` haben.
 - Ein `recipe` hat viele `recipe_ingredients`.
-- Ein `camp_year` hat viele `meal_plan_entries`, `recipe_feedback`-Eintraege und `shopping_lists`.
+- Ein `camp_year` hat viele `camp_days`, `meal_plan_entries`, `recipe_feedback`-Eintraege und `shopping_lists`.
 - Eine `shopping_list` hat viele `shopping_list_items`.
 - Ein `import_run` hat viele `import_issues`.
 
@@ -106,11 +114,21 @@ Die Services unter `app/services/` kapseln alle Berechnungen und Validierungen, 
 | `price_service` | `find_best_price` (Jahrestreffer, sonst neuester Preis), `missing_price_ingredients`, `copy_prices_from_year`, `compare_years` |
 | `recipe_service` | `scale_recipe` (Mengen auf Zielportionen skalieren), `calculate_recipe_cost` (Gesamt-/Portionskosten inkl. fehlender Preise) |
 | `ingredient_service` | Suche, CRUD, Alias-Verwaltung |
-| `planning_service` | Camp-Jahr anlegen, `generate_daily_meal_slots` (idempotent), Status-Uebergaenge, Einkaufstag-Herleitung |
-| `shopping_service` | `generate_shopping_list` aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu Einkaufspositionen |
-| `feedback_service` | `calculate_quantity_factor` = gekochte / geplante Portionen |
+| `planning_service` | Zeltlagerwoche anlegen, `generate_daily_meal_slots` legt pro Tag `camp_days` + bis zu drei `meal_plan_entries` an (idempotent), `get_or_create_camp_day`/`get_or_create_meal_entry` fuer die Einzelfeld-Bearbeitung im Wochenplan-Raster, `set_day_responsible`, Status-Uebergaenge, Einkaufstag-Herleitung |
+| `shopping_service` | `generate_shopping_list` aggregiert alle geplanten (nicht abgesagten) `meal_plan_entries` eines Camp-Jahrs zu Einkaufspositionen - liest also direkt aus dem Wochenplan |
+| `feedback_service` | `list_feedback_candidates` listet alle Mahlzeiten eines Camp-Jahrs mit Rezept auf; `save_meal_feedback`/`get_or_create_meal_feedback` verwalten das Feedback je Mahlzeit-Slot; `calculate_quantity_factor` = gekochte / geplante Portionen |
 | `validation_service` | fehlende Preise/Einheiten, Rezepte ohne Zutaten, Planung ohne Portionen, 0-Preis-Positionen, moegliche Zutaten-Dubletten (Aehnlichkeitsvergleich via `difflib`) |
 | `backup_service` | zeitgestempeltes Backup, Restore nur mit expliziter Bestaetigung, SQLite-Integritaetspruefung |
 | `import_service` / `export_service` | UI-Wrapper fuer den Excel-Import bzw. CSV/Excel-Export |
 
-Alle Services sind reine Python-Funktionen ohne UI-Abhaengigkeit und werden in `tests/` mit pytest abgedeckt (38 Tests, Stand Phase 4/5).
+Alle Services sind reine Python-Funktionen ohne UI-Abhaengigkeit und werden in `tests/` mit pytest abgedeckt.
+
+### Wochenplan als zentrale Planungsquelle
+
+Der Wochenplan (`camp_days` + `meal_plan_entries` eines `camp_year`) ist die einzige Quelle fuer:
+
+- **Einkaufsliste**: `shopping_service.generate_shopping_list` liest ausschliesslich die `meal_plan_entries` des gewaehlten Camp-Jahrs.
+- **Feedback**: Die Feedback-Ansicht zeigt je Camp-Jahr direkt die Liste der geplanten Mahlzeiten (aus `meal_plan_entries`) mit Erledigt/Offen-Status; jede Rueckmeldung haengt an genau einer Mahlzeit und uebernimmt deren geplante Portionenzahl automatisch.
+- **Dashboard**: Kennzahlen (geplante Mahlzeiten/Portionen/Budget, fehlende Preise) werden direkt aus dem Wochenplan berechnet.
+
+Wird im Wochenplan ein Rezept geaendert, wirkt sich das also automatisch auf Einkaufsliste, Dashboard und den Feedback-Vorschlag aus - eine manuelle Synchronisation ist nicht noetig.

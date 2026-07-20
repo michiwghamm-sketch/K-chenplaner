@@ -17,23 +17,37 @@ Der Pfad kann spaeter jederzeit unter **Einstellungen** geaendert werden (wirksa
 
 Die Seitenleiste links schaltet zwischen den Modulen um:
 
-- **Dashboard** - Kennzahlen und Warnungen fuer das ausgewaehlte Camp-Jahr
-- **Jahresplanung** - Camp-Jahre anlegen, Mahlzeiten-Slots generieren und pflegen
+- **Dashboard** - Kennzahlen und Warnungen fuer die ausgewaehlte Zeltlagerwoche
+- **Wochenplan** - die Zeltlagerwoche als Tabelle: Tage als Spalten, Tagesverantwortlicher und die drei Mahlzeiten als Zeilen
 - **Rezepte** - Rezepte suchen, anlegen, bearbeiten, Zutaten pflegen, Kosten berechnen
 - **Zutaten** - Zutatenstammdaten und Aliasnamen (z. B. Tippfehler-Varianten)
 - **Preise** - aktuelle Preise je Zutat und Jahr, fehlende Preise, Uebernahme aus Vorjahr
 - **Einkaufsliste** - aus der Jahresplanung generierte Einkaufsliste, Status je Position, CSV-/Excel-Export
-- **Feedback** - Rueckmeldungen je Rezept und Jahr, automatische Mengenfaktor-Berechnung
+- **Feedback** - Wochenplan einer Zeltlagerwoche durchgehen und je Mahlzeit Rueckmeldung erfassen
 - **Import/Export** - Excel erneut importieren, Rezepte exportieren, Backup/Restore, Datenbankpruefung
 - **Einstellungen** - Datenbankpfad, Laufwerkswarnung, Version
 
-## Typischer Ablauf fuer ein neues Camp-Jahr
+## Der Wochenplan
 
-1. **Jahresplanung**: neues Camp-Jahr mit Zeitraum anlegen, dann "Mahlzeiten-Slots generieren" klicken (legt Fruehstueck/Mittag/Abend fuer jeden Tag an).
-2. Je Mahlzeit ein Rezept, Portionenzahl und Zielgruppe eintragen und speichern.
+Ein Zeltlager dauert typischerweise etwas mehr als eine Woche (z. B. Samstag bis zum uebernaechsten Sonntag). Der Wochenplan bildet genau das ab: pro Tag im Zeitraum eine Spalte, darunter vier Zeilen:
+
+- **Verantwortlich**: wer an diesem Tag fuer die Kueche verantwortlich ist
+- **Fruehstueck**, **Mittagessen**, **Abendessen**: das jeweils geplante Rezept (inkl. Portionenzahl in Klammern, sobald gesetzt)
+
+Ein Doppelklick auf ein Feld oeffnet den passenden Dialog:
+
+- Doppelklick auf "Verantwortlich" eines Tages -> Name und Notiz fuer den Tag eintragen
+- Doppelklick auf eine Mahlzeit -> Rezept auswaehlen, Portionen, Zielgruppe, Status (geplant/bestellt/gekocht/abgesagt) und Notizen pflegen
+
+Ein rot markiertes Mahlzeit-Feld bedeutet: Rezept ist gesetzt, aber es fehlt noch eine Portionenzahl.
+
+## Typischer Ablauf fuer eine neue Zeltlagerwoche
+
+1. **Wochenplan**: neue Zeltlagerwoche mit Start-/Enddatum anlegen, dann "Wochenplan-Raster anlegen" klicken (legt Fruehstueck/Mittag/Abend fuer jeden Tag im Zeitraum an; einzelne Felder lassen sich aber auch ohne diesen Schritt direkt per Doppelklick befuellen).
+2. Je Tag den Verantwortlichen eintragen, je Mahlzeit ein Rezept, Portionenzahl und Zielgruppe.
 3. **Preise**: fehlende Preise pruefen (rot markiert) und ergaenzen, oder Preise aus dem Vorjahr uebernehmen.
-4. **Einkaufsliste**: "Einkaufsliste generieren" klicken - aggregiert alle geplanten (nicht abgesagten) Mahlzeiten zu Einkaufspositionen mit Mengensumme und Kostenschaetzung.
-5. Nach dem Lager: **Feedback** je gekochtem Rezept erfassen (Bewertung, gekochte vs. geplante Portionen, Reste, Tipps). Der Mengenfaktor fuer naechstes Mal wird automatisch berechnet.
+4. **Einkaufsliste**: "Einkaufsliste generieren" klicken - aggregiert alle geplanten (nicht abgesagten) Mahlzeiten aus dem Wochenplan zu Einkaufspositionen mit Mengensumme und Kostenschaetzung.
+5. Nach dem Lager: **Feedback** oeffnen, Camp-Jahr auswaehlen - links erscheint der komplette Wochenplan als Liste (Datum, Mahlzeit, Rezept, Erledigt/Offen). Mahlzeit anklicken, rechts das Feedback erfassen: Wie kam es an (1-5), hat die Menge gereicht (Ja/zu wenig/zu viel), gekochte Portionen, Restmenge, Wiederholen ja/nein, sowie was beim Kochen gut oder schlecht lief. Die geplante Portionenzahl kommt automatisch aus dem Wochenplan, der Mengenfaktor fuer naechstes Mal wird automatisch berechnet.
 
 ## Farben und Warnungen
 
