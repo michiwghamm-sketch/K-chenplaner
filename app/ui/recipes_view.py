@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from app.context import AppContext
 from app.services import ingredient_service, recipe_service
 from app.ui.dialogs import AddRecipeIngredientDialog, confirm_dialog, error_dialog
-from app.ui.widgets import SearchBar
+from app.ui.widgets import PageHeader, SearchBar
 
 MEAL_TYPES = ("Fruehstueck", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
 
@@ -45,6 +45,8 @@ class RecipesView(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        outer.addWidget(PageHeader("Rezepte", "Rezepte verwalten, Zutaten pflegen, Kosten berechnen"))
+
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         outer.addWidget(splitter)
 

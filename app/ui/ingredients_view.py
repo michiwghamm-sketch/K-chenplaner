@@ -19,7 +19,7 @@ from PySide6.QtWidgets import (
 from app.context import AppContext
 from app.services import ingredient_service
 from app.ui.dialogs import confirm_dialog, error_dialog, prompt_text
-from app.ui.widgets import SearchBar
+from app.ui.widgets import PageHeader, SearchBar
 
 
 class IngredientsView(QWidget):
@@ -34,6 +34,8 @@ class IngredientsView(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
+        outer.addWidget(PageHeader("Zutaten", "Zutatenstammdaten und Aliasnamen pflegen"))
+
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         outer.addWidget(splitter)
 
