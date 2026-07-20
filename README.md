@@ -23,11 +23,14 @@ Das Projekt ueberfuehrt eine bestehende Excel-Arbeitsmappe in eine installierbar
   - [`scripts/migrate_excel_to_sqlite.py`](scripts/migrate_excel_to_sqlite.py), Report unter [`docs/import_run_report.md`](docs/import_run_report.md)
 - Phase 4 (Fachlogik-Services) abgeschlossen:
   - Services unter [`app/services/`](app/services) (Rezeptskalierung/-kosten, Preisermittlung, Einkaufsaggregation, Feedback, Validierung, Backup/Restore, Import/Export)
-  - 38 pytest-Tests unter [`tests/`](tests)
 - Phase 5 (UI-Prototyp) abgeschlossen:
-  - Desktop-UI mit **PySide6 (Qt 6)** unter [`app/ui/`](app/ui) - alle neun Module (Dashboard, Jahresplanung, Rezepte, Zutaten, Preise, Einkaufsliste, Feedback, Import/Export, Einstellungen)
+  - Desktop-UI mit **PySide6 (Qt 6)** unter [`app/ui/`](app/ui) - alle neun Module (Dashboard, Wochenplan, Rezepte, Zutaten, Preise, Einkaufsliste, Feedback, Import/Export, Einstellungen)
+  - Design angelehnt an [kolpingjugend-regensburg.de](https://www.kolpingjugend-regensburg.de/) (Farben, Typografie), siehe [`app/ui/theme.py`](app/ui/theme.py)
+  - Wochenplan-Raster statt Jahresplanung (ein Camp-Jahr = eine Zeltlagerwoche), Tagesverantwortliche, meal-genaues Feedback
+  - Rezepte mit Teilstuecken, Kosten je Zutat, Mengen-Historie/Skalierung und PDF-Export ([`app/assets/kolping_logo.jpeg`](app/assets/kolping_logo.jpeg))
   - siehe [`docs/user_guide.md`](docs/user_guide.md)
 - Phase 6 (Installer/Build) noch offen.
+- Testsuite: `pytest` unter [`tests/`](tests) (siehe "Tests ausfuehren").
 
 ## Entwickler-Setup
 

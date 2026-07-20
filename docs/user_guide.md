@@ -19,7 +19,7 @@ Die Seitenleiste links schaltet zwischen den Modulen um:
 
 - **Dashboard** - Kennzahlen und Warnungen fuer die ausgewaehlte Zeltlagerwoche
 - **Wochenplan** - die Zeltlagerwoche als Tabelle: Tage als Spalten, Tagesverantwortlicher und die drei Mahlzeiten als Zeilen
-- **Rezepte** - Rezepte suchen, anlegen, bearbeiten, Zutaten pflegen, Kosten berechnen
+- **Rezepte** - Rezepte mit Teilstuecken (z. B. "Soße", "Beilage") und Zutaten pflegen, Kosten je Zutat, Mengen-Historie, verknuepftes Feedback, PDF-Export
 - **Zutaten** - Zutatenstammdaten und Aliasnamen (z. B. Tippfehler-Varianten)
 - **Preise** - aktuelle Preise je Zutat und Jahr, fehlende Preise, Uebernahme aus Vorjahr
 - **Einkaufsliste** - aus der Jahresplanung generierte Einkaufsliste, Status je Position, CSV-/Excel-Export
@@ -40,6 +40,28 @@ Ein Doppelklick auf ein Feld oeffnet den passenden Dialog:
 - Doppelklick auf eine Mahlzeit -> Rezept auswaehlen, Portionen, Zielgruppe, Status (geplant/bestellt/gekocht/abgesagt) und Notizen pflegen
 
 Ein rot markiertes Mahlzeit-Feld bedeutet: Rezept ist gesetzt, aber es fehlt noch eine Portionenzahl.
+
+## Rezepte: Teilstuecke, Kosten, Historie, Feedback, PDF
+
+Ein Rezept besteht aus einem oder mehreren **Teilstuecken** (z. B. bei "Semmelknoedel mit Schweinebraten": Semmelknoedel, Soße, Schweinebraten). Jedes Teilstueck hat seine eigene Zutatenliste. Zutaten ohne Teilstueck (z. B. Altdaten aus dem Excel-Import) erscheinen unter "Sonstiges".
+
+Im Reiter **Zutaten** eines Rezepts:
+
+- "Teilstueck hinzufuegen" legt eine neue Gruppe an; "Teilstueck loeschen" entfernt nur die Gruppe, die Zutaten bleiben erhalten und wandern nach "Sonstiges".
+- "Zutat hinzufuegen" (je Teilstueck) fuegt eine Zutat mit Menge, Einheit und optionalen Notizen hinzu.
+- Doppelklick auf eine Zutatenzeile oeffnet sie zum Bearbeiten.
+- Jede Zeile zeigt Preis pro Einheit und Gesamtpreis (rot, wenn kein Preis hinterlegt ist).
+- "Kosten berechnen" mit einer beliebigen Portionenzahl aktualisiert Zeilen- und Gesamtkosten.
+
+Im Reiter **Historie**:
+
+- Jede Mengenaenderung (einzelne Zutat oder "Mengen skalieren") sichert automatisch den vorherigen Stand als neue Version.
+- "Mengen skalieren" multipliziert alle Zutatenmengen mit einem Faktor - schlaegt automatisch den zuletzt aus dem Feedback berechneten Mengenfaktor vor, kann aber auch manuell eingegeben werden.
+- Eine Version in der Liste anklicken zeigt darunter, wie die Zutatenmengen zu diesem Zeitpunkt waren.
+
+Im Reiter **Feedback**: alle Rueckmeldungen zu diesem Rezept aus allen Camp-Jahren (Bewertung, geplante/gekochte Portionen, Mengenfaktor, Tipps) - siehe auch das Feedback-Modul selbst.
+
+"Als PDF exportieren" erzeugt eine druckfertige, nach Teilstuecken gegliederte Rezeptkarte mit Kolping-Logo, Zutatenkosten, Zubereitung und Notizen.
 
 ## Typischer Ablauf fuer eine neue Zeltlagerwoche
 
