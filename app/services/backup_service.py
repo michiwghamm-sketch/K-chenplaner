@@ -24,7 +24,13 @@ def create_backup(config: AppConfig) -> Path:
 
     backups_dir = get_backups_dir(config.project_root)
     timestamp = datetime.now().strftime(BACKUP_TIMESTAMP_FORMAT)
-    backup_path = backups_dir / f"{config.database_path.stem}_{timestamp}{config.database_path.suffix}"
+    base_name = f"{config.database_path.stem}_{timestamp}"
+    backup_path = backups_dir / f"{base_name}{config.database_path.suffix}"
+    # Zwei Backups innerhalb derselben Sekunde duerfen sich niemals gegenseitig ueberschreiben.
+    suffix_counter = 1
+    while backup_path.exists():
+        backup_path = backups_dir / f"{base_name}_{suffix_counter}{config.database_path.suffix}"
+        suffix_counter += 1
     shutil.copy2(config.database_path, backup_path)
     return backup_path
 

@@ -3,17 +3,9 @@ from decimal import Decimal
 import pytest
 from sqlalchemy import select
 
-from app.config import AppConfig
-from app.db import create_engine_from_config, create_session_factory, init_database, session_scope
+from app.db import session_scope
 from app.models import Ingredient, IngredientPrice, Recipe, RecipeIngredient
-
-
-@pytest.fixture()
-def session_factory(tmp_path):
-    config = AppConfig.load(project_root=tmp_path, database_path=tmp_path / "test.sqlite3")
-    engine = create_engine_from_config(config)
-    init_database(engine)
-    return create_session_factory(engine)
+from app.services import recipe_service
 
 
 def test_recipe_and_ingredient_relationships_can_be_persisted(session_factory) -> None:
@@ -58,3 +50,60 @@ def test_recipe_and_ingredient_relationships_can_be_persisted(session_factory) -
         assert len(stored_recipe.ingredients) == 1
         assert stored_recipe.ingredients[0].ingredient.name == "Nudeln"
         assert stored_recipe.ingredients[0].ingredient.prices[0].price_per_unit == Decimal("2.49")
+
+
+def test_scale_recipe_multiplies_quantities_by_portion_ratio(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Reis", normalized_name="reis", default_unit="kg")
+        recipe = Recipe(name="Reispfanne", normalized_name="reispfanne", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        session.add(recipe)
+        session.flush()
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        scaled = recipe_service.scale_recipe(recipe, 25)
+        assert scaled[0].quantity == Decimal("0.250")
+        assert scaled[0].unit == "kg"
+
+
+def test_scale_recipe_rejects_non_positive_portions(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = Recipe(name="Salat", normalized_name="salat", default_portions=10)
+        session.add(recipe)
+        session.flush()
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        with pytest.raises(ValueError):
+            recipe_service.scale_recipe(recipe, 0)
+
+
+def test_calculate_recipe_cost_uses_best_known_price_and_flags_missing_prices(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        priced_ingredient = Ingredient(name="Kartoffeln", normalized_name="kartoffeln", default_unit="kg")
+        priced_ingredient.prices.append(IngredientPrice(price_per_unit=Decimal("1.00"), unit="kg", year=2026))
+        unpriced_ingredient = Ingredient(name="Geheimzutat", normalized_name="geheimzutat", default_unit="kg")
+
+        recipe = Recipe(name="Eintopf", normalized_name="eintopf", default_portions=10)
+        recipe.ingredients.extend(
+            [
+                RecipeIngredient(ingredient=priced_ingredient, quantity=Decimal("1.000"), unit="kg", price_unit="kg", sort_order=1),
+                RecipeIngredient(ingredient=unpriced_ingredient, quantity=Decimal("0.500"), unit="kg", price_unit="kg", sort_order=2),
+            ]
+        )
+        session.add(recipe)
+        session.flush()
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        result = recipe_service.calculate_recipe_cost(session, recipe, portions=20, year=2026)
+        # 1.000 kg * factor 2.0 * 1.00 EUR = 2.00 EUR total; unpriced ingredient flagged as missing.
+        assert result.total_cost == Decimal("2.00")
+        assert result.cost_per_portion == Decimal("0.10")
+        assert result.missing_price_ingredients == ["Geheimzutat"]
