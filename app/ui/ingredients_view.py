@@ -37,7 +37,7 @@ class IngredientsView(QWidget):
         outer.addWidget(PageHeader("Zutaten", "Zutatenstammdaten und Aliasnamen pflegen"))
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
-        outer.addWidget(splitter)
+        outer.addWidget(splitter, stretch=1)
 
         left = QWidget(self)
         left_layout = QVBoxLayout(left)

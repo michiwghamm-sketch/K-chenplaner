@@ -77,6 +77,7 @@ class AddRecipeIngredientDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         initial = initial or {}
+        self._delete_requested = False
         self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufuegen"))
 
         self.ingredient_combo = QComboBox(self)
@@ -113,10 +114,20 @@ class AddRecipeIngredientDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        if initial:
+            delete_button = buttons.addButton("Zutat entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
+            delete_button.clicked.connect(self._request_delete)
 
         layout = QFormLayout(self)
         layout.addRow(form)
         layout.addRow(buttons)
+
+    def _request_delete(self) -> None:
+        self._delete_requested = True
+        self.accept()
+
+    def was_delete_requested(self) -> bool:
+        return self._delete_requested
 
     def result_data(self) -> dict | None:
         if not self.unit_edit.text().strip():
@@ -505,4 +516,61 @@ class ScaleRecipeDialog(QDialog):
         return {
             "factor": Decimal(str(self.factor_spin.value())),
             "reason": self.reason_edit.text().strip() or None,
+        }
+
+
+class RecipeStepDialog(QDialog):
+    """Dialog zum Anlegen oder Bearbeiten eines Arbeitsschritts der Kochanleitung."""
+
+    def __init__(self, parent: QWidget | None = None, *, initial: dict | None = None) -> None:
+        super().__init__(parent)
+        initial = initial or {}
+        self._delete_requested = False
+        self.setWindowTitle("Arbeitsschritt bearbeiten" if initial else "Arbeitsschritt hinzufuegen")
+
+        self.title_edit = QLineEdit(self)
+        self.title_edit.setText(initial.get("title") or "")
+        self.title_edit.setPlaceholderText("z. B. 'Kartoffeln vorgaren'")
+
+        self.description_edit = QTextEdit(self)
+        self.description_edit.setPlainText(initial.get("description") or "")
+        self.description_edit.setFixedHeight(90)
+
+        self.duration_spin = QSpinBox(self)
+        self.duration_spin.setRange(0, 600)
+        self.duration_spin.setSuffix(" Min.")
+        self.duration_spin.setValue(initial.get("duration_minutes") or 0)
+
+        form = QFormLayout()
+        form.addRow("Titel", self.title_edit)
+        form.addRow("Anweisung", self.description_edit)
+        form.addRow("Dauer", self.duration_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        if initial:
+            delete_button = buttons.addButton("Schritt entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
+            delete_button.clicked.connect(self._request_delete)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def _request_delete(self) -> None:
+        self._delete_requested = True
+        self.accept()
+
+    def was_delete_requested(self) -> bool:
+        return self._delete_requested
+
+    def result_data(self) -> dict | None:
+        title = self.title_edit.text().strip()
+        description = self.description_edit.toPlainText().strip()
+        if not title and not description:
+            return None
+        return {
+            "title": title or None,
+            "description": description or None,
+            "duration_minutes": self.duration_spin.value() or None,
         }
