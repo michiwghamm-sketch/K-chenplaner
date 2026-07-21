@@ -31,6 +31,7 @@ from app.models import (
     RecipeComponent,
     RecipeFeedback,
     RecipeIngredient,
+    RecipeStep,
     ShoppingList,
     ShoppingListItem,
 )
@@ -61,6 +62,7 @@ class ImportCounters:
     recipes: int = 0
     recipe_components: int = 0
     recipe_ingredients: int = 0
+    recipe_steps: int = 0
     camp_years: int = 0
     meal_plan_entries: int = 0
     recipe_feedback: int = 0
@@ -99,7 +101,8 @@ def extract_recipe_instructions(ws: Worksheet) -> str | None:
     for row in range(1, ws.max_row + 1):
         title = ws.cell(row=row, column=1).value
         action = ws.cell(row=row, column=2).value
-        duration = ws.cell(row=row, column=3).value
+        # Spalte G ("Ungefaehre Dauer in min:"), nicht Spalte C - siehe extract_recipe_steps().
+        duration = ws.cell(row=row, column=7).value
         if title == "Schritte:":
             in_steps = True
             continue
@@ -113,6 +116,39 @@ def extract_recipe_instructions(ws: Worksheet) -> str | None:
                 part = f"{part} ({duration} min)"
             lines.append(part)
     return "\n".join(lines) if lines else None
+
+
+def extract_recipe_steps(ws: Worksheet) -> list[dict]:
+    """Liest die Arbeitsschritte (Titel/Anweisung/Dauer) strukturiert aus dem 'Schritte:'-Block.
+
+    Layout im Workbook: Spalte A = Titel, Spalte B = Anweisung, Spalte G = Dauer in Minuten.
+    Die Zeilennummer dient als stabiler sort_order/Idempotenz-Schluessel, analog zu den
+    Rezeptzutaten (siehe import_recipe_sheet).
+    """
+    steps: list[dict] = []
+    in_steps = False
+    for row in range(1, ws.max_row + 1):
+        title = ws.cell(row=row, column=1).value
+        action = ws.cell(row=row, column=2).value
+        duration = ws.cell(row=row, column=7).value
+        if title == "Schritte:":
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if title == "Gesamtdauer:":
+            break
+        if not title and not action:
+            continue
+        steps.append(
+            {
+                "row": row,
+                "title": str(title).strip() if title else None,
+                "description": str(action).strip() if action else None,
+                "duration_minutes": int(duration) if isinstance(duration, (int, float)) else None,
+            }
+        )
+    return steps
 
 
 def recipe_category_from_name(name: str) -> str | None:
@@ -475,6 +511,21 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
             component = components_by_key.get(normalize_name(label))
             if component is not None:
                 item.component_id = component.id
+
+    existing_step_rows = {step.sort_order for step in recipe.steps}
+    for step_data in extract_recipe_steps(formula_ws):
+        if step_data["row"] in existing_step_rows:
+            continue
+        session.add(
+            RecipeStep(
+                recipe=recipe,
+                sort_order=step_data["row"],
+                title=step_data["title"],
+                description=step_data["description"],
+                duration_minutes=step_data["duration_minutes"],
+            )
+        )
+        counters.recipe_steps += 1
 
 
 def parse_excel_date(value: object) -> date | None:
