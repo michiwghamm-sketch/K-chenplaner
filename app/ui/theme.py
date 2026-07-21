@@ -161,6 +161,34 @@ QSplitter::handle {{
     background-color: {BORDER};
 }}
 
+/* Tabs */
+QTabWidget::pane {{
+    background-color: {BG_SURFACE};
+    border: 1px solid {BORDER};
+    border-radius: 4px;
+    top: -1px;
+}}
+QTabBar::tab {{
+    background-color: {BG_PAGE};
+    color: {TEXT_MUTED};
+    border: 1px solid {BORDER};
+    border-bottom: none;
+    border-top-left-radius: 6px;
+    border-top-right-radius: 6px;
+    padding: 8px 18px;
+    margin-right: 2px;
+    font-weight: 600;
+}}
+QTabBar::tab:hover {{
+    background-color: {ORANGE_TINT};
+    color: {ORANGE_HOVER};
+}}
+QTabBar::tab:selected {{
+    background-color: {BG_SURFACE};
+    color: {ORANGE_HOVER};
+    border-bottom: 2px solid {ORANGE};
+}}
+
 QStatusBar {{
     background-color: {BG_SURFACE};
     border-top: 1px solid {BORDER};

@@ -9,7 +9,8 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QFileDialog,
-    QGridLayout,
+    QFormLayout,
+    QGroupBox,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QTabWidget,
@@ -87,62 +89,62 @@ class RecipesView(QWidget):
         splitter.addWidget(left)
 
         right = QWidget(self)
-        right_layout = QVBoxLayout(right)
+        right_layout = QHBoxLayout(right)
+        right_layout.setContentsMargins(0, 0, 0, 0)
+        right_layout.setSpacing(14)
 
-        # Kopfbereich (Name, Kategorie, Aktionen) bleibt immer sichtbar, unabhaengig vom Tab.
-        # Bewusst kompakt (feste, begrenzte Feldbreiten statt ueber die volle Fensterbreite
-        # gestreckter Eingabefelder), damit die Tabs darunter im Vordergrund stehen.
-        self.name_edit = QLineEdit(right)
-        self.name_edit.setMaximumWidth(260)
-        self.category_edit = QLineEdit(right)
-        self.category_edit.setMaximumWidth(180)
-        self.meal_type_combo = QComboBox(right)
+        # Rezeptdetails stehen als schmale Spalte links neben den Tabs (statt als
+        # Kopfbereich darueber), damit die Tabs/Tabellen den vertikalen Platz bekommen.
+        meta_group = QGroupBox("Rezeptdetails", right)
+        meta_group.setFixedWidth(240)
+        meta_layout = QVBoxLayout(meta_group)
+        meta_layout.setSpacing(6)
+
+        self.name_edit = QLineEdit(meta_group)
+        self.category_edit = QLineEdit(meta_group)
+        self.meal_type_combo = QComboBox(meta_group)
         self.meal_type_combo.setEditable(True)
         self.meal_type_combo.addItems(MEAL_TYPES)
-        self.meal_type_combo.setMaximumWidth(180)
-        self.portions_spin = QSpinBox(right)
+        self.portions_spin = QSpinBox(meta_group)
         self.portions_spin.setRange(1, 2000)
-        self.portions_spin.setMaximumWidth(90)
-        self.active_checkbox = QCheckBox("Aktiv", right)
-        self.notes_edit = QPlainTextEdit(right)
-        self.notes_edit.setFixedHeight(40)
-        self.notes_edit.setMaximumWidth(560)
+        self.active_checkbox = QCheckBox("Aktiv", meta_group)
+        self.notes_edit = QPlainTextEdit(meta_group)
+        self.notes_edit.setFixedHeight(70)
 
-        header_grid = QGridLayout()
-        header_grid.setHorizontalSpacing(10)
-        header_grid.setVerticalSpacing(4)
-        header_grid.addWidget(QLabel("Name", right), 0, 0)
-        header_grid.addWidget(self.name_edit, 1, 0)
-        header_grid.addWidget(QLabel("Kategorie", right), 0, 1)
-        header_grid.addWidget(self.category_edit, 1, 1)
-        header_grid.addWidget(QLabel("Mahlzeit", right), 0, 2)
-        header_grid.addWidget(self.meal_type_combo, 1, 2)
-        header_grid.addWidget(QLabel("Portionen", right), 0, 3)
-        header_grid.addWidget(self.portions_spin, 1, 3)
-        header_grid.addWidget(self.active_checkbox, 1, 4)
-        header_grid.setColumnStretch(5, 1)
-        right_layout.addLayout(header_grid)
+        form = QFormLayout()
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(8)
+        form.setVerticalSpacing(6)
+        form.addRow("Name", self.name_edit)
+        form.addRow("Kategorie", self.category_edit)
+        form.addRow("Mahlzeit", self.meal_type_combo)
+        portions_row = QHBoxLayout()
+        portions_row.addWidget(self.portions_spin)
+        portions_row.addWidget(self.active_checkbox)
+        form.addRow("Portionen", portions_row)
+        meta_layout.addLayout(form)
 
-        notes_column = QVBoxLayout()
-        notes_column.addWidget(QLabel("Notizen", right))
-        notes_column.addWidget(self.notes_edit)
-        right_layout.addLayout(notes_column)
+        meta_layout.addWidget(QLabel("Notizen", meta_group))
+        meta_layout.addWidget(self.notes_edit)
+        meta_layout.addSpacing(6)
 
-        button_row = QHBoxLayout()
-        save_button = QPushButton("Speichern", right)
+        save_button = QPushButton("Speichern", meta_group)
         save_button.clicked.connect(self._save_recipe)
-        cancel_button = QPushButton("Abbrechen", right)
+        cancel_button = QPushButton("Abbrechen", meta_group)
         cancel_button.clicked.connect(self._reload_detail)
-        deactivate_button = QPushButton("Deaktivieren", right)
+        deactivate_button = QPushButton("Deaktivieren", meta_group)
         deactivate_button.clicked.connect(self._deactivate_recipe)
-        pdf_button = QPushButton("Als PDF exportieren", right)
+        deactivate_button.setProperty("role", "secondary")
+        pdf_button = QPushButton("Als PDF exportieren", meta_group)
         pdf_button.clicked.connect(self._export_pdf)
-        button_row.addWidget(save_button)
-        button_row.addWidget(cancel_button)
-        button_row.addWidget(deactivate_button)
-        button_row.addWidget(pdf_button)
-        button_row.addStretch(1)
-        right_layout.addLayout(button_row)
+        pdf_button.setProperty("role", "secondary")
+        meta_layout.addWidget(save_button)
+        meta_layout.addWidget(cancel_button)
+        meta_layout.addWidget(deactivate_button)
+        meta_layout.addWidget(pdf_button)
+        meta_layout.addStretch(1)
+
+        right_layout.addWidget(meta_group)
 
         self.tabs = QTabWidget(right)
         self.tabs.addTab(self._build_rezept_tab(right), "Rezept")
@@ -167,42 +169,63 @@ class RecipesView(QWidget):
         section_title.setStyleSheet("font-weight: 600; font-size: 15px;")
         layout.addWidget(section_title)
 
+        content_row = QHBoxLayout()
+        content_row.setSpacing(16)
+
+        table_column = QVBoxLayout()
         self.ingredients_table = QTableWidget(0, 5, tab)
         self.ingredients_table.setHorizontalHeaderLabels(["Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis"])
         self.ingredients_table.verticalHeader().setVisible(False)
         self.ingredients_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.ingredients_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self.ingredients_table.horizontalHeader()
-        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
+        self.ingredients_table.setColumnWidth(0, 200)
         for col in range(1, 5):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
+        header.setStretchLastSection(False)
         self.ingredients_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.ingredients_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.ingredients_table.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.ingredients_table.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self.ingredients_table.cellDoubleClicked.connect(self._on_ingredient_table_double_clicked)
-        layout.addWidget(self.ingredients_table)
+        table_column.addWidget(self.ingredients_table, stretch=1)
 
         add_component_row = QHBoxLayout()
         add_component_button = QPushButton("+ Teilstueck hinzufuegen", tab)
         add_component_button.clicked.connect(self._add_component)
         add_component_row.addWidget(add_component_button)
         add_component_row.addStretch(1)
-        layout.addLayout(add_component_row)
+        table_column.addLayout(add_component_row)
 
-        cost_row = QHBoxLayout()
-        cost_row.addWidget(QLabel("Portionen fuer Kostenberechnung:", tab))
+        content_row.addLayout(table_column, 1)
+
+        cost_panel = QVBoxLayout()
+        cost_panel.setSpacing(6)
+        cost_title = QLabel("Kostenberechnung", tab)
+        cost_title.setStyleSheet("font-weight: 600; font-size: 15px;")
+        cost_panel.addWidget(cost_title)
+        portions_label = QLabel("Portionen fuer Kostenberechnung", tab)
+        portions_label.setWordWrap(True)
+        cost_panel.addWidget(portions_label)
         self.cost_portions_spin = QSpinBox(tab)
         self.cost_portions_spin.setRange(1, 2000)
         self.cost_portions_spin.setValue(10)
+        cost_panel.addWidget(self.cost_portions_spin)
         calc_button = QPushButton("Kosten berechnen", tab)
         calc_button.clicked.connect(self._calculate_cost)
+        cost_panel.addWidget(calc_button)
         self.cost_label = QLabel("Kosten: -", tab)
+        self.cost_label.setWordWrap(True)
         self.cost_label.setStyleSheet("font-weight: 600;")
-        cost_row.addWidget(self.cost_portions_spin)
-        cost_row.addWidget(calc_button)
-        cost_row.addWidget(self.cost_label)
-        cost_row.addStretch(1)
-        layout.addLayout(cost_row)
-        layout.addStretch(1)
+        cost_panel.addWidget(self.cost_label)
+        cost_panel.addStretch(1)
+
+        cost_container = QWidget(tab)
+        cost_container.setLayout(cost_panel)
+        cost_container.setFixedWidth(220)
+        content_row.addWidget(cost_container)
+
+        layout.addLayout(content_row, 1)
 
         return scroll
 
@@ -395,7 +418,7 @@ class RecipesView(QWidget):
                 self._add_ingredient_row(table, item, lines_by_item_id.get(item.id), banding_index)
                 banding_index += 1
 
-        self._fit_table_height(table)
+        table.resizeRowsToContents()
 
     def _add_band_row(self, table: QTableWidget, component) -> None:
         row = table.rowCount()
