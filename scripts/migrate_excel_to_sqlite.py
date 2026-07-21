@@ -31,9 +31,11 @@ from app.models import (
     RecipeComponent,
     RecipeFeedback,
     RecipeIngredient,
+    RecipeStep,
     ShoppingList,
     ShoppingListItem,
 )
+from app.services.data_cleanup_service import NON_INGREDIENT_EXACT_NAMES, is_non_ingredient_name
 from app.utils.normalization import normalize_name
 from app.utils.units import normalize_unit, parse_decimal
 from scripts.inspect_excel import find_excel_file
@@ -60,6 +62,7 @@ class ImportCounters:
     recipes: int = 0
     recipe_components: int = 0
     recipe_ingredients: int = 0
+    recipe_steps: int = 0
     camp_years: int = 0
     meal_plan_entries: int = 0
     recipe_feedback: int = 0
@@ -98,7 +101,8 @@ def extract_recipe_instructions(ws: Worksheet) -> str | None:
     for row in range(1, ws.max_row + 1):
         title = ws.cell(row=row, column=1).value
         action = ws.cell(row=row, column=2).value
-        duration = ws.cell(row=row, column=3).value
+        # Spalte G ("Ungefaehre Dauer in min:"), nicht Spalte C - siehe extract_recipe_steps().
+        duration = ws.cell(row=row, column=7).value
         if title == "Schritte:":
             in_steps = True
             continue
@@ -112,6 +116,39 @@ def extract_recipe_instructions(ws: Worksheet) -> str | None:
                 part = f"{part} ({duration} min)"
             lines.append(part)
     return "\n".join(lines) if lines else None
+
+
+def extract_recipe_steps(ws: Worksheet) -> list[dict]:
+    """Liest die Arbeitsschritte (Titel/Anweisung/Dauer) strukturiert aus dem 'Schritte:'-Block.
+
+    Layout im Workbook: Spalte A = Titel, Spalte B = Anweisung, Spalte G = Dauer in Minuten.
+    Die Zeilennummer dient als stabiler sort_order/Idempotenz-Schluessel, analog zu den
+    Rezeptzutaten (siehe import_recipe_sheet).
+    """
+    steps: list[dict] = []
+    in_steps = False
+    for row in range(1, ws.max_row + 1):
+        title = ws.cell(row=row, column=1).value
+        action = ws.cell(row=row, column=2).value
+        duration = ws.cell(row=row, column=7).value
+        if title == "Schritte:":
+            in_steps = True
+            continue
+        if not in_steps:
+            continue
+        if title == "Gesamtdauer:":
+            break
+        if not title and not action:
+            continue
+        steps.append(
+            {
+                "row": row,
+                "title": str(title).strip() if title else None,
+                "description": str(action).strip() if action else None,
+                "duration_minutes": int(duration) if isinstance(duration, (int, float)) else None,
+            }
+        )
+    return steps
 
 
 def recipe_category_from_name(name: str) -> str | None:
@@ -157,6 +194,20 @@ def resolve_or_create_ingredient(session, cache: dict[str, Ingredient], name: st
     return ingredient, created
 
 
+def should_skip_price_list_row(name: object) -> bool:
+    if not isinstance(name, str):
+        return not bool(name)
+    return is_non_ingredient_name(name)
+
+
+def should_skip_shopping_row(name: object, unit: str | None) -> bool:
+    if not isinstance(name, str):
+        return not bool(name)
+    if is_non_ingredient_name(name):
+        return True
+    return (unit or "").strip().lower() == "portionen"
+
+
 def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingredient], counters: ImportCounters, issues: list[ImportIssueRecord]) -> None:
     header = [ws.cell(row=1, column=col).value for col in range(1, 8)]
     if not header or header[0] != "Zutat":
@@ -172,7 +223,7 @@ def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingred
         name = ws.cell(row=row, column=1).value
         price = ws.cell(row=row, column=2).value
         unit = ws.cell(row=row, column=3).value
-        if not name:
+        if should_skip_price_list_row(name):
             continue
 
         unit_text = normalize_unit(unit)
@@ -461,6 +512,21 @@ def import_recipe_sheet(values_ws: Worksheet, formula_ws: Worksheet, session, in
             if component is not None:
                 item.component_id = component.id
 
+    existing_step_rows = {step.sort_order for step in recipe.steps}
+    for step_data in extract_recipe_steps(formula_ws):
+        if step_data["row"] in existing_step_rows:
+            continue
+        session.add(
+            RecipeStep(
+                recipe=recipe,
+                sort_order=step_data["row"],
+                title=step_data["title"],
+                description=step_data["description"],
+                duration_minutes=step_data["duration_minutes"],
+            )
+        )
+        counters.recipe_steps += 1
+
 
 def parse_excel_date(value: object) -> date | None:
     if isinstance(value, datetime):
@@ -587,11 +653,11 @@ def import_shopping_sheet(ws: Worksheet, session, ingredient_cache: dict[str, In
         name = ws.cell(row=row, column=1).value
         quantity = ws.cell(row=row, column=2).value
         unit = ws.cell(row=row, column=3).value
-        if not name:
+        normalized_unit = normalize_unit(unit)
+        if should_skip_shopping_row(name, normalized_unit):
             continue
 
         decimal_quantity = parse_decimal(quantity)
-        normalized_unit = normalize_unit(unit)
         if decimal_quantity is None:
             issues.append(ImportIssueRecord("warning", ws.title, f"B{row}", "Einkaufsmenge konnte nicht gelesen werden.", str(quantity)))
             continue

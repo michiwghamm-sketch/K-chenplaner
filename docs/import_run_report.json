@@ -1,19 +1,20 @@
 {
   "source_file": "D:\\Kolping\\ZelaKüche_Programm\\Rezepte_Kolping_mit_Makros.xlsm",
   "database_path": "D:\\Kolping\\ZelaKüche_Programm\\instance\\zeltlager_kueche.sqlite3",
-  "generated_at": "2026-07-20T19:06:16+02:00",
+  "generated_at": "2026-07-21T17:35:06+02:00",
   "counters": {
-    "ingredients": 1,
-    "ingredient_prices": 5,
+    "ingredients": 17,
+    "ingredient_prices": 45,
     "recipes": 0,
-    "recipe_components": 22,
-    "recipe_ingredients": 31,
+    "recipe_components": 0,
+    "recipe_ingredients": 20,
+    "recipe_steps": 121,
     "camp_years": 0,
     "meal_plan_entries": 60,
     "recipe_feedback": 35,
     "shopping_lists": 3,
-    "shopping_list_items": 457,
-    "import_issues": 37
+    "shopping_list_items": 391,
+    "import_issues": 35
   },
   "issues": [
     {
@@ -260,20 +261,6 @@
       "cell_reference": "C27",
       "message": "Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen.",
       "raw_value": "Paprikagewürz"
-    },
-    {
-      "severity": "warning",
-      "sheet_name": "Einkaufsliste 2024",
-      "cell_reference": "B134",
-      "message": "Einkaufsmenge konnte nicht gelesen werden.",
-      "raw_value": "None"
-    },
-    {
-      "severity": "warning",
-      "sheet_name": "Einkaufsliste 2025",
-      "cell_reference": "B136",
-      "message": "Einkaufsmenge konnte nicht gelesen werden.",
-      "raw_value": "None"
     }
   ]
 }

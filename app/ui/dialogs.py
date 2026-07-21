@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app.services.open_prices_service import OpenPricesSuggestion
+
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
     """Bestaetigungsdialog vor kritischen Aktionen (Loeschen, Deaktivieren, Restore)."""
@@ -75,6 +77,7 @@ class AddRecipeIngredientDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         initial = initial or {}
+        self._delete_requested = False
         self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufuegen"))
 
         self.ingredient_combo = QComboBox(self)
@@ -111,10 +114,20 @@ class AddRecipeIngredientDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
+        if initial:
+            delete_button = buttons.addButton("Zutat entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
+            delete_button.clicked.connect(self._request_delete)
 
         layout = QFormLayout(self)
         layout.addRow(form)
         layout.addRow(buttons)
+
+    def _request_delete(self) -> None:
+        self._delete_requested = True
+        self.accept()
+
+    def was_delete_requested(self) -> bool:
+        return self._delete_requested
 
     def result_data(self) -> dict | None:
         if not self.unit_edit.text().strip():
@@ -186,6 +199,100 @@ class AddPriceDialog(QDialog):
             "year": self.year_spin.value(),
             "notes": self.notes_edit.text().strip() or None,
         }
+
+
+class OpenPricesImportDialog(QDialog):
+    """Dialog fuer den Import eines externen Preises ueber einen Barcode."""
+
+    def __init__(self, ingredients: list[tuple[int, str]], default_year: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Preis aus Open Prices importieren")
+
+        self.ingredient_combo = QComboBox(self)
+        for ingredient_id, name in ingredients:
+            self.ingredient_combo.addItem(name, ingredient_id)
+
+        self.barcode_edit = QLineEdit(self)
+        self.barcode_edit.setPlaceholderText("z. B. 3017620422003")
+
+        self.year_spin = QSpinBox(self)
+        self.year_spin.setRange(2000, 2100)
+        self.year_spin.setValue(default_year)
+
+        self.notes_edit = QLineEdit(self)
+        self.notes_edit.setPlaceholderText("optional, z. B. Packungsware / Testimport")
+
+        form = QFormLayout()
+        form.addRow("Zutat", self.ingredient_combo)
+        form.addRow("Barcode", self.barcode_edit)
+        form.addRow("Jahr", self.year_spin)
+        form.addRow("Notiz", self.notes_edit)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def result_data(self) -> dict | None:
+        barcode = self.barcode_edit.text().strip()
+        if not barcode:
+            return None
+        return {
+            "ingredient_id": self.ingredient_combo.currentData(),
+            "barcode": barcode,
+            "year": self.year_spin.value(),
+            "notes": self.notes_edit.text().strip() or None,
+        }
+
+
+class OpenPricesSuggestionDialog(QDialog):
+    """Erlaubt die Auswahl eines aehnlichen Open-Prices-Produkts fuer eine Zutat."""
+
+    def __init__(
+        self,
+        ingredient_name: str,
+        suggestions: list[OpenPricesSuggestion],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Aehnliche Produkte fuer {ingredient_name}")
+        self._suggestions = suggestions
+
+        self.combo = QComboBox(self)
+        for index, suggestion in enumerate(suggestions):
+            date_text = suggestion.observation.date.isoformat() if suggestion.observation.date else "Datum unbekannt"
+            quantity_text = f" | {suggestion.product.quantity}" if suggestion.product.quantity else ""
+            label = (
+                f"{suggestion.product.name}{quantity_text} | "
+                f"{suggestion.observation.price} {suggestion.observation.currency} | "
+                f"{date_text}"
+            )
+            self.combo.addItem(label, index)
+
+        info = QLabel(
+            f"Fuer '{ingredient_name}' wurde kein eindeutiger Treffer importiert. "
+            "Du kannst einen aehnlichen Open-Prices-Eintrag auswaehlen oder abbrechen.",
+            self,
+        )
+        info.setWordWrap(True)
+
+        form = QFormLayout()
+        form.addRow(info)
+        form.addRow("Vorschlag", self.combo)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def selected_suggestion(self) -> OpenPricesSuggestion:
+        return self._suggestions[self.combo.currentData()]
 
 
 class CampYearDialog(QDialog):
@@ -409,4 +516,61 @@ class ScaleRecipeDialog(QDialog):
         return {
             "factor": Decimal(str(self.factor_spin.value())),
             "reason": self.reason_edit.text().strip() or None,
+        }
+
+
+class RecipeStepDialog(QDialog):
+    """Dialog zum Anlegen oder Bearbeiten eines Arbeitsschritts der Kochanleitung."""
+
+    def __init__(self, parent: QWidget | None = None, *, initial: dict | None = None) -> None:
+        super().__init__(parent)
+        initial = initial or {}
+        self._delete_requested = False
+        self.setWindowTitle("Arbeitsschritt bearbeiten" if initial else "Arbeitsschritt hinzufuegen")
+
+        self.title_edit = QLineEdit(self)
+        self.title_edit.setText(initial.get("title") or "")
+        self.title_edit.setPlaceholderText("z. B. 'Kartoffeln vorgaren'")
+
+        self.description_edit = QTextEdit(self)
+        self.description_edit.setPlainText(initial.get("description") or "")
+        self.description_edit.setFixedHeight(90)
+
+        self.duration_spin = QSpinBox(self)
+        self.duration_spin.setRange(0, 600)
+        self.duration_spin.setSuffix(" Min.")
+        self.duration_spin.setValue(initial.get("duration_minutes") or 0)
+
+        form = QFormLayout()
+        form.addRow("Titel", self.title_edit)
+        form.addRow("Anweisung", self.description_edit)
+        form.addRow("Dauer", self.duration_spin)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+        if initial:
+            delete_button = buttons.addButton("Schritt entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
+            delete_button.clicked.connect(self._request_delete)
+
+        layout = QFormLayout(self)
+        layout.addRow(form)
+        layout.addRow(buttons)
+
+    def _request_delete(self) -> None:
+        self._delete_requested = True
+        self.accept()
+
+    def was_delete_requested(self) -> bool:
+        return self._delete_requested
+
+    def result_data(self) -> dict | None:
+        title = self.title_edit.text().strip()
+        description = self.description_edit.toPlainText().strip()
+        if not title and not description:
+            return None
+        return {
+            "title": title or None,
+            "description": description or None,
+            "duration_minutes": self.duration_spin.value() or None,
         }

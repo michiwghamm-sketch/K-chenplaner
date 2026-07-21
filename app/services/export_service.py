@@ -224,7 +224,20 @@ def export_recipe_to_pdf(recipe: Recipe, cost_result: RecipeCostResult, path: Pa
         missing_text = "Achtung, fehlende Preise: " + ", ".join(_pdf_text(name) for name in cost_result.missing_price_ingredients)
         story.append(Paragraph(missing_text, ParagraphStyle("Missing", parent=muted_style, textColor=PDF_CRITICAL, spaceBefore=2)))
 
-    if recipe.instructions:
+    if recipe.steps:
+        story.append(Paragraph("Zubereitung", heading_style))
+        total_minutes = sum(step.duration_minutes or 0 for step in recipe.steps)
+        if total_minutes:
+            story.append(Paragraph(f"Gesamtdauer: ca. {total_minutes} Min.", muted_style))
+        step_style = ParagraphStyle("Step", parent=body_style, spaceAfter=6)
+        for index, step in enumerate(sorted(recipe.steps, key=lambda s: s.sort_order), start=1):
+            title = _pdf_text(step.title) or f"Schritt {index}"
+            duration_text = f" ({step.duration_minutes} Min.)" if step.duration_minutes else ""
+            step_html = f"<b>{index}. {title}{duration_text}</b>"
+            if step.description:
+                step_html += f"<br/>{_pdf_text(step.description)}"
+            story.append(Paragraph(step_html, step_style))
+    elif recipe.instructions:
         story.append(Paragraph("Zubereitung", heading_style))
         instructions_html = _pdf_text(recipe.instructions).replace("\n", "<br/>")
         story.append(Paragraph(instructions_html, body_style))

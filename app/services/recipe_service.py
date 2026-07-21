@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Recipe, RecipeComponent, RecipeIngredient, RecipeVersion
+from app.models import Recipe, RecipeComponent, RecipeIngredient, RecipeStep, RecipeVersion
 from app.services import price_service
 from app.utils.normalization import normalize_name
 
@@ -79,6 +79,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
         best_price = price_service.find_best_price(session, item.ingredient_id, year=year)
         scaled_quantity = (item.quantity * factor).quantize(Decimal("0.001"))
         component_name = item.component.name if item.component else UNASSIGNED_COMPONENT_LABEL
+        target_price_unit = item.price_unit or item.unit
 
         if best_price is None:
             missing.append(item.ingredient.name)
@@ -94,7 +95,26 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
             )
             continue
 
-        line_cost = (scaled_quantity * best_price.price_per_unit).quantize(Decimal("0.01"))
+        if not price_service.can_convert_units(best_price.unit, target_price_unit):
+            missing.append(item.ingredient.name)
+            lines.append(
+                IngredientCostLine(
+                    component_name=component_name,
+                    ingredient_name=item.ingredient.name,
+                    quantity=scaled_quantity,
+                    unit=item.unit,
+                    price_per_unit=None,
+                    line_cost=None,
+                )
+            )
+            continue
+
+        converted_price = price_service.convert_price_per_unit(
+            best_price.price_per_unit,
+            from_unit=best_price.unit,
+            to_unit=target_price_unit,
+        ).quantize(Decimal("0.0001"))
+        line_cost = (scaled_quantity * converted_price).quantize(Decimal("0.01"))
         total_cost += line_cost
         lines.append(
             IngredientCostLine(
@@ -102,7 +122,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
                 ingredient_name=item.ingredient.name,
                 quantity=scaled_quantity,
                 unit=item.unit,
-                price_per_unit=best_price.price_per_unit,
+                price_per_unit=converted_price,
                 line_cost=line_cost,
             )
         )
@@ -245,6 +265,58 @@ def remove_ingredient_from_recipe(session: Session, link: RecipeIngredient) -> N
 
 def feedback_history(recipe: Recipe) -> list:
     return sorted(recipe.feedback_entries, key=lambda entry: entry.camp_year.year if entry.camp_year else 0, reverse=True)
+
+
+# --- Kochanleitung (RecipeStep) --------------------------------------------------------
+
+
+def create_step(
+    session: Session,
+    recipe: Recipe,
+    *,
+    title: str | None = None,
+    description: str | None = None,
+    duration_minutes: int | None = None,
+) -> RecipeStep:
+    sort_order = max((s.sort_order for s in recipe.steps), default=0) + 1
+    step = RecipeStep(
+        recipe=recipe,
+        sort_order=sort_order,
+        title=title,
+        description=description,
+        duration_minutes=duration_minutes,
+    )
+    session.add(step)
+    session.flush()
+    return step
+
+
+def update_step(step: RecipeStep, **fields: object) -> RecipeStep:
+    for key, value in fields.items():
+        if not hasattr(step, key):
+            raise AttributeError(f"Unbekanntes Schritt-Feld: {key}")
+        setattr(step, key, value)
+    return step
+
+
+def delete_step(session: Session, step: RecipeStep) -> None:
+    session.delete(step)
+
+
+def move_step(session: Session, recipe: Recipe, step: RecipeStep, *, direction: int) -> None:
+    """Vertauscht die Reihenfolge mit dem direkten Nachbarn (direction: -1 = nach oben, +1 = nach unten)."""
+    ordered_steps = sorted(recipe.steps, key=lambda s: s.sort_order)
+    index = ordered_steps.index(step)
+    neighbor_index = index + direction
+    if not (0 <= neighbor_index < len(ordered_steps)):
+        return
+    neighbor = ordered_steps[neighbor_index]
+    step.sort_order, neighbor.sort_order = neighbor.sort_order, step.sort_order
+    session.flush()
+
+
+def total_step_duration_minutes(recipe: Recipe) -> int:
+    return sum(step.duration_minutes or 0 for step in recipe.steps)
 
 
 # --- Versionierung / Changelog ---------------------------------------------------------

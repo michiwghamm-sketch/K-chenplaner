@@ -58,7 +58,7 @@ class FeedbackView(QWidget):
         layout.addLayout(top_row)
 
         splitter = QSplitter(self)
-        layout.addWidget(splitter)
+        layout.addWidget(splitter, stretch=1)
 
         left = QWidget(self)
         left_layout = QVBoxLayout(left)

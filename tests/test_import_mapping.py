@@ -92,3 +92,32 @@ def test_run_import_is_idempotent_for_price_list_rows(tmp_path) -> None:
         noodles = session.execute(select(Ingredient).where(Ingredient.normalized_name == "nudeln")).scalar_one()
         # Preisliste + Preisliste 2024 + the recipe sheet's own price line - not doubled by the second run.
         assert len(noodles.prices) == 3
+
+
+def test_run_import_skips_non_ingredient_price_and_shopping_summary_rows(tmp_path) -> None:
+    workbook_path = tmp_path / "test_import_noise.xlsx"
+    build_test_workbook(workbook_path)
+
+    from openpyxl import load_workbook
+
+    wb = load_workbook(workbook_path)
+    ws_price = wb["Preisliste"]
+    ws_price.append(["Schnell-Check Preisliste", 0, None, None, None, None, None])
+    ws_price.append(["Artikel gesamt", 0, None, None, None, None, None])
+    ws_shop = wb["Einkaufsliste 2025"]
+    ws_shop.append(["Gerichte:", None, None, None, None, None])
+    ws_shop.append(["Testgericht", 95, "Portionen", 2.5, 237.5, None])
+    wb.save(workbook_path)
+
+    config = AppConfig.load(project_root=tmp_path, database_path=tmp_path / "instance" / "import.sqlite3")
+    run_import(workbook_path, config)
+
+    engine = create_engine_from_config(config)
+    init_database(engine)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        ingredient_names = {ingredient.name for ingredient in session.execute(select(Ingredient)).scalars()}
+        assert "Schnell-Check Preisliste" not in ingredient_names
+        assert "Artikel gesamt" not in ingredient_names
+        assert "Gerichte:" not in ingredient_names
+        assert "Testgericht" not in ingredient_names

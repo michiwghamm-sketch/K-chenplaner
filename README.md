@@ -54,6 +54,12 @@ Die Schritt-fuer-Schritt-Anleitung steht in [`docs/git_setup.md`](docs/git_setup
 .venv\Scripts\python.exe app\main.py
 ```
 
+Oder unter Windows einfach per Doppelklick / Terminal:
+
+```powershell
+.\start_app.bat
+```
+
 Beim ersten Start fragt die App nach einem Datenbankpfad (siehe [`docs/user_guide.md`](docs/user_guide.md)). Der Pfad wird unter `%APPDATA%\ZelaKueche\settings.json` gespeichert und beim naechsten Start wiederverwendet.
 
 ## Excel inspizieren

@@ -5,17 +5,18 @@
 
 ## Importierte Datensaetze
 
-- `ingredients`: `1`
-- `ingredient_prices`: `5`
+- `ingredients`: `17`
+- `ingredient_prices`: `45`
 - `recipes`: `0`
-- `recipe_components`: `22`
-- `recipe_ingredients`: `31`
+- `recipe_components`: `0`
+- `recipe_ingredients`: `20`
+- `recipe_steps`: `121`
 - `camp_years`: `0`
 - `meal_plan_entries`: `60`
 - `recipe_feedback`: `35`
 - `shopping_lists`: `3`
-- `shopping_list_items`: `457`
-- `import_issues`: `37`
+- `shopping_list_items`: `391`
+- `import_issues`: `35`
 
 ## Import-Issues
 
@@ -54,5 +55,3 @@
 - `info` in `Paprika-Hackpfanne C26`: Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen. Pfeffer
 - `info` in `Paprika-Hackpfanne A27`: Keine Menge angegeben - als optionale Zutat (nach Geschmack) importiert. Paprikagewürz
 - `info` in `Paprika-Hackpfanne C27`: Keine Einheit angegeben - '€/kg' aus anderer Fundstelle uebernommen. Paprikagewürz
-- `warning` in `Einkaufsliste 2024 B134`: Einkaufsmenge konnte nicht gelesen werden. None
-- `warning` in `Einkaufsliste 2025 B136`: Einkaufsmenge konnte nicht gelesen werden. None

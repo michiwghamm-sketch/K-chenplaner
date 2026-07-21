@@ -91,11 +91,31 @@ class Recipe(Base):
     components: Mapped[list["RecipeComponent"]] = relationship(
         back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeComponent.sort_order"
     )
+    steps: Mapped[list["RecipeStep"]] = relationship(
+        back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeStep.sort_order"
+    )
     versions: Mapped[list["RecipeVersion"]] = relationship(
         back_populates="recipe", cascade="all, delete-orphan", order_by="RecipeVersion.version_number"
     )
     meal_plan_entries: Mapped[list["MealPlanEntry"]] = relationship(back_populates="recipe")
     feedback_entries: Mapped[list["RecipeFeedback"]] = relationship(back_populates="recipe")
+
+
+class RecipeStep(Base):
+    """Ein Arbeitsschritt der Kochanleitung (Titel, Beschreibung, ungefaehre Dauer in Minuten)."""
+
+    __tablename__ = "recipe_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    title: Mapped[Optional[str]] = mapped_column(String(255))
+    description: Mapped[Optional[str]] = mapped_column(Text)
+    duration_minutes: Mapped[Optional[int]] = mapped_column(Integer)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    recipe: Mapped["Recipe"] = relationship(back_populates="steps")
 
 
 class RecipeComponent(Base):
