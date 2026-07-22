@@ -96,9 +96,13 @@ class IngredientsView(QWidget):
         cancel_button.clicked.connect(self._reload_detail)
         deactivate_button = QPushButton("Deaktivieren", right)
         deactivate_button.clicked.connect(self._deactivate_ingredient)
+        delete_button = QPushButton("Löschen", right)
+        delete_button.setProperty("role", "secondary")
+        delete_button.clicked.connect(self._delete_ingredient)
         button_row.addWidget(save_button)
         button_row.addWidget(cancel_button)
         button_row.addWidget(deactivate_button)
+        button_row.addWidget(delete_button)
         button_row.addStretch(1)
         right_layout.addLayout(button_row)
 
@@ -214,6 +218,23 @@ class IngredientsView(QWidget):
             ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
             if ingredient is not None:
                 ingredient_service.deactivate_ingredient(ingredient)
+        self._reload_list()
+
+    def _delete_ingredient(self) -> None:
+        if self._current_ingredient_id is None:
+            return
+        if not confirm_dialog(self, "Zutat löschen", "Diese Zutat wirklich unwiderruflich löschen?"):
+            return
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is None:
+                return
+            try:
+                ingredient_service.delete_ingredient(session, ingredient)
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+        self._current_ingredient_id = None
         self._reload_list()
 
     def _add_alias(self) -> None:
