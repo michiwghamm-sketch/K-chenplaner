@@ -36,6 +36,8 @@ class OpenPricesProduct:
     name: str
     quantity: str | None
     price_count: int
+    image_url: str | None = None
+    brands: str | None = None
 
 
 @dataclass(slots=True)
@@ -224,8 +226,47 @@ def import_price_for_ingredient(
     year: int,
     currency: str | None = "EUR",
     notes_prefix: str | None = None,
+    barcode: str | None = None,
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> OpenPricesImportResult:
+    if barcode:
+        # Die Zutat ist bereits einem konkreten Produkt zugeordnet - direkter, eindeutiger Treffer
+        # statt Namens-Fuzzy-Suche. Schlaegt der Barcode fehl (z. B. Produkt ohne Preisdaten),
+        # faellt die Funktion unten auf die normale Namenssuche zurueck statt komplett zu scheitern.
+        try:
+            lookup = lookup_product_prices(barcode, currency=currency, size=1, timeout=timeout)
+            observation = lookup.latest_observation
+        except OpenPricesError:
+            observation = None
+        if observation is not None:
+            price_record = build_ingredient_price_from_observation(
+                ingredient_id,
+                observation,
+                product_quantity=lookup.product.quantity,
+                target_unit=target_unit,
+                notes_prefix=_merge_notes(
+                    notes_prefix,
+                    "Ueber verknuepften Barcode gefunden",
+                    f"Produkt: {lookup.product.name}",
+                    f"Barcode: {barcode}",
+                ),
+            )
+            price_record.year = year
+            return OpenPricesImportResult(
+                ingredient_id=ingredient_id,
+                ingredient_name=ingredient_name,
+                year=year,
+                status="imported",
+                message=f"{lookup.product.name} ({barcode})",
+                query_used=f"Barcode {barcode}",
+                matched_product_name=lookup.product.name,
+                matched_product_code=barcode,
+                matched_price=observation.price,
+                matched_currency=observation.currency,
+                matched_date=observation.date,
+                price_record=price_record,
+            )
+
     try:
         match = find_best_match_for_query(
             ingredient_name,
@@ -378,7 +419,19 @@ def _parse_product(payload: dict[str, Any]) -> OpenPricesProduct:
         name=str(payload.get("product_name") or payload.get("name") or "Unbekanntes Produkt"),
         quantity=quantity,
         price_count=int(payload.get("price_count") or 0),
+        image_url=str(payload.get("image_url")) if payload.get("image_url") else None,
+        brands=str(payload.get("brands")) if payload.get("brands") else None,
     )
+
+
+def fetch_image_bytes(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> bytes | None:
+    """Laedt ein Vorschaubild fuer die Produktauswahl. Gibt bei jedem Fehler None zurueck - ein
+    einzelnes fehlendes Thumbnail darf die Produktauswahl nie blockieren."""
+    try:
+        with urlopen(url, timeout=timeout) as response:
+            return response.read()
+    except (HTTPError, URLError, TimeoutError, ValueError):
+        return None
 
 
 def parse_quantity_string(value: str | None) -> tuple[Decimal, str] | None:

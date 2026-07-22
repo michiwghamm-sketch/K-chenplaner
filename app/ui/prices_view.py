@@ -38,7 +38,7 @@ class _OpenPricesAutoImportWorker(QObject):
     finished = Signal(list)
     failed = Signal(str)
 
-    def __init__(self, ingredients: list[tuple[int, str, str | None]], year: int) -> None:
+    def __init__(self, ingredients: list[tuple[int, str, str | None, str | None]], year: int) -> None:
         super().__init__()
         self.ingredients = ingredients
         self.year = year
@@ -47,13 +47,14 @@ class _OpenPricesAutoImportWorker(QObject):
         results: list[open_prices_service.OpenPricesImportResult] = []
         total = len(self.ingredients)
         try:
-            for index, (ingredient_id, ingredient_name, default_unit) in enumerate(self.ingredients, start=1):
+            for index, (ingredient_id, ingredient_name, default_unit, barcode) in enumerate(self.ingredients, start=1):
                 self.progress.emit(index, total, ingredient_name)
                 result = open_prices_service.import_price_for_ingredient(
                     ingredient_id,
                     ingredient_name,
                     target_unit=default_unit,
                     year=self.year,
+                    barcode=barcode,
                 )
                 results.append(result)
                 self.item_finished.emit(index, total, result)
@@ -260,7 +261,10 @@ class PricesView(QWidget):
 
         with self.context.session() as session:
             missing_ingredients = price_service.missing_price_ingredients(session, year=year)
-            ingredients_to_import = [(ingredient.id, ingredient.name, ingredient.default_unit) for ingredient in missing_ingredients]
+            ingredients_to_import = [
+                (ingredient.id, ingredient.name, ingredient.default_unit, ingredient.barcode)
+                for ingredient in missing_ingredients
+            ]
 
         if not ingredients_to_import:
             info_dialog(self, f"Es fehlen keine Preise fuer {year}.")

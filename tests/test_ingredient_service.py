@@ -121,3 +121,76 @@ def test_merge_ingredients_rejects_self_merge(session_factory) -> None:
         session.flush()
         with pytest.raises(ValueError):
             ingredient_service.merge_ingredients(session, keep=ingredient, remove=ingredient)
+
+
+def test_find_similar_ingredients_detects_typo_below_auto_merge_threshold(session_factory) -> None:
+    """'Ketchup'/'Ketschup' liegt unter dem 93%-Schwellwert fuer find_merge_candidates, soll aber
+    beim Dublettenschutz (niedrigerer Schwellwert) trotzdem als Warnung auftauchen."""
+    with session_scope(session_factory) as session:
+        session.add(Ingredient(name="Ketchup", normalized_name="ketchup"))
+        session.add(Ingredient(name="Ketschup", normalized_name="ketschup"))
+
+    with session_scope(session_factory) as session:
+        matches = ingredient_service.find_similar_ingredients(session, "Ketschup", threshold=0.85)
+        assert [m[0].name for m in matches] == ["Ketchup"]
+
+
+def test_find_similar_ingredients_excludes_given_id_and_exact_name(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Zwiebel", normalized_name="zwiebel")
+        session.add(ingredient)
+        session.flush()
+        ingredient_id = ingredient.id
+
+    with session_scope(session_factory) as session:
+        # Same name, excluded by id -> no self-match.
+        assert ingredient_service.find_similar_ingredients(session, "Zwiebel", exclude_id=ingredient_id) == []
+        # Same name, not excluded -> exact matches are not reported as "similar" (that's a rename onto
+        # an existing name, a different concern than typo/plural detection).
+        assert ingredient_service.find_similar_ingredients(session, "Zwiebel") == []
+
+
+def test_find_alias_orphan_candidates_detects_undeleted_duplicate(session_factory) -> None:
+    """Regression fuer einen realen Datenzustand: ein frueherer Merge-Lauf hat einen Alias gesetzt,
+    die eigentliche Dublette wurde aber (z. B. durch einen Reimport) nie geloescht."""
+    with session_scope(session_factory) as session:
+        keep = Ingredient(name="Zwiebel", normalized_name="zwiebel")
+        session.add(keep)
+        session.flush()
+        ingredient_service.add_alias(session, keep, "Zwiebeln")
+        # The alias says "Zwiebeln" is handled, but a live duplicate row still exists.
+        session.add(Ingredient(name="Zwiebeln", normalized_name="zwiebeln"))
+
+    with session_scope(session_factory) as session:
+        candidates = ingredient_service.find_alias_orphan_candidates(session)
+        assert len(candidates) == 1
+        assert candidates[0].keep.name == "Zwiebel"
+        assert candidates[0].remove.name == "Zwiebeln"
+        assert candidates[0].similarity == 1.0
+
+
+def test_find_alias_orphan_candidates_ignores_alias_without_live_duplicate(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        keep = Ingredient(name="Zwiebel", normalized_name="zwiebel")
+        session.add(keep)
+        session.flush()
+        ingredient_service.add_alias(session, keep, "Zwiebeln")
+
+    with session_scope(session_factory) as session:
+        assert ingredient_service.find_alias_orphan_candidates(session) == []
+
+
+def test_describe_recipe_usage_lists_recipe_name_quantity_and_unit(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = Recipe(name="Testgericht", normalized_name="testgericht")
+        ingredient = Ingredient(name="Zwiebel", normalized_name="zwiebel")
+        session.add_all([recipe, ingredient])
+        session.flush()
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.500"), unit="kg", sort_order=1)
+        )
+        ingredient_id = ingredient.id
+
+    with session_scope(session_factory) as session:
+        ingredient = session.get(Ingredient, ingredient_id)
+        assert ingredient_service.describe_recipe_usage(ingredient) == ["Testgericht (0.500 kg)"]

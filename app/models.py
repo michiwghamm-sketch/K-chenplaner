@@ -31,6 +31,10 @@ class Ingredient(Base):
     storage_type: Mapped[Optional[str]] = mapped_column(String(100))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    barcode: Mapped[Optional[str]] = mapped_column(String(64))
+    # Gecachte Anzeige des verknuepften Produkts (z. B. "Ketchup (Jardin bio, 560 g)"), damit die UI
+    # das nicht bei jedem Laden erneut ueber die API nachschlagen muss.
+    barcode_product_label: Mapped[Optional[str]] = mapped_column(String(255))
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
