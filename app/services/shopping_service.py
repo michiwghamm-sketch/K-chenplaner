@@ -15,6 +15,7 @@ class _Aggregate:
     unit: str
     quantity: Decimal = Decimal("0")
     recipe_names: set[str] = field(default_factory=set)
+    needed_dates: set[date] = field(default_factory=set)
     shopping_dates: set[date] = field(default_factory=set)
 
 
@@ -50,11 +51,14 @@ def generate_shopping_list(
     *,
     name: str | None = None,
     price_year: int | None = None,
+    assign_shopping_dates: bool = True,
 ) -> ShoppingList:
     """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu einer Einkaufsliste.
 
     Der Einkaufstag je Position wird automatisch hergeleitet (siehe _derive_item_shopping_date),
-    sofern am Mahlzeit-Slot im Wochenplan kein Einkaufstag manuell gesetzt wurde.
+    sofern am Mahlzeit-Slot im Wochenplan kein Einkaufstag manuell gesetzt wurde. Mit
+    assign_shopping_dates=False entsteht stattdessen eine Gesamtliste ohne Einkaufstage
+    (das Bedarfsdatum - wann die Zutat fuer eine Mahlzeit gebraucht wird - wird trotzdem gefuellt).
     """
     price_year = price_year or camp_year.year
     aggregates: dict[tuple[int, str], _Aggregate] = {}
@@ -73,9 +77,12 @@ def generate_shopping_list(
             aggregate = aggregates.setdefault(key, _Aggregate(ingredient_id=item.ingredient_id, unit=item.unit))
             aggregate.quantity += item.quantity * factor
             aggregate.recipe_names.add(entry.recipe.name)
-            shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
-            if shopping_date:
-                aggregate.shopping_dates.add(shopping_date)
+            if entry.meal_date is not None:
+                aggregate.needed_dates.add(entry.meal_date)
+            if assign_shopping_dates:
+                shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
+                if shopping_date:
+                    aggregate.shopping_dates.add(shopping_date)
 
     shopping_list = ShoppingList(camp_year=camp_year, name=name or f"Einkaufsliste {camp_year.year}")
     session.add(shopping_list)
@@ -95,6 +102,7 @@ def generate_shopping_list(
                 estimated_total_price=estimated_total,
                 category=ingredient.category if ingredient else None,
                 storage_type=ingredient.storage_type if ingredient else None,
+                needed_date=min(aggregate.needed_dates) if aggregate.needed_dates else None,
                 shopping_date=min(aggregate.shopping_dates) if aggregate.shopping_dates else None,
                 status="offen",
                 linked_recipes_text=", ".join(sorted(aggregate.recipe_names)),
@@ -148,6 +156,10 @@ def format_shopping_day_label(shopping_date: date | None) -> str:
     if shopping_date is None:
         return "Ohne Einkaufstag"
     return f"{GERMAN_WEEKDAYS[shopping_date.weekday()]}, {shopping_date.strftime('%d.%m.%Y')}"
+
+
+def format_date_de(value: date | None) -> str:
+    return value.strftime("%d.%m.%Y") if value else ""
 
 
 def set_item_store(item: ShoppingListItem, store: str | None) -> ShoppingListItem:

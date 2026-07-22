@@ -295,6 +295,7 @@ class ShoppingListItem(Base):
     estimated_total_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
     category: Mapped[Optional[str]] = mapped_column(String(100))
     storage_type: Mapped[Optional[str]] = mapped_column(String(100))
+    needed_date: Mapped[Optional[date]] = mapped_column(Date)
     shopping_date: Mapped[Optional[date]] = mapped_column(Date)
     store: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[Optional[str]] = mapped_column(String(50))

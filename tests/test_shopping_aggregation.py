@@ -107,8 +107,47 @@ def test_generate_shopping_list_aggregates_quantities_across_meals(session_facto
         assert item.quantity == Decimal("0.300")
         assert item.estimated_total_price == Decimal("0.60")
         assert item.category == "Trockenware"
+        assert item.needed_date == date(2026, 8, 2)
         assert item.shopping_date == date(2026, 8, 1)
         assert item.status == "offen"
+
+
+def test_generate_shopping_list_total_list_skips_shopping_dates_but_keeps_needed_date(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+
+        recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026", start_date=date(2026, 8, 1), end_date=date(2026, 8, 10))
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(
+                meal_date=date(2026, 8, 5),
+                meal_type="Mittagessen",
+                recipe=recipe,
+                planned_portions=10,
+                status="geplant",
+            )
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+
+        assert len(shopping_list.items) == 1
+        item = shopping_list.items[0]
+        assert item.needed_date == date(2026, 8, 5)
+        assert item.shopping_date is None
+
+
+def test_format_date_de() -> None:
+    assert shopping_service.format_date_de(None) == ""
+    assert shopping_service.format_date_de(date(2026, 8, 5)) == "05.08.2026"
 
 
 def test_generate_shopping_list_derives_shopping_date_one_day_before_meal(session_factory) -> None:

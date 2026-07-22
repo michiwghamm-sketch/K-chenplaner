@@ -4,6 +4,7 @@ from pathlib import Path
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -26,7 +27,8 @@ from app.ui.theme import ORANGE
 from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 SHOPPING_TABLE_COLUMNS = (
-    "Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis", "Kategorie", "Händler", "Einkaufstag", "Status", "Rezepte",
+    "Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis", "Kategorie", "Händler",
+    "Bedarfsdatum", "Einkaufstag", "Status", "Rezepte",
 )
 GROUP_MODES = (("Keine Gruppierung", "none"), ("Nach Einkaufstag", "day"), ("Nach Händler", "store"))
 
@@ -52,6 +54,13 @@ class ShoppingView(QWidget):
         generate_button = QPushButton("Einkaufsliste generieren", self)
         generate_button.clicked.connect(self._generate_list)
         top_row.addWidget(generate_button)
+
+        self.total_list_checkbox = QCheckBox("Gesamtliste (ohne Einkaufstage)", self)
+        self.total_list_checkbox.setToolTip(
+            "Erzeugt eine Gesamtliste ohne Aufteilung nach Einkaufstagen - "
+            "das Bedarfsdatum je Zutat wird trotzdem angezeigt."
+        )
+        top_row.addWidget(self.total_list_checkbox)
 
         self.list_combo = QComboBox(self)
         self.list_combo.currentIndexChanged.connect(self._reload_table)
@@ -125,7 +134,7 @@ class ShoppingView(QWidget):
                 camp_year = session.get(CampYear, camp_year_id)
                 if camp_year is not None:
                     for shopping_list in sorted(camp_year.shopping_lists, key=lambda s: s.generated_at, reverse=True):
-                        label = f"{shopping_list.name} ({shopping_list.generated_at:%Y-%m-%d %H:%M})"
+                        label = f"{shopping_list.name} ({shopping_list.generated_at:%d.%m.%Y %H:%M})"
                         self.list_combo.addItem(label, shopping_list.id)
         self.list_combo.blockSignals(False)
         self._reload_table()
@@ -191,15 +200,16 @@ class ShoppingView(QWidget):
         store_edit.editingFinished.connect(lambda item_id=item.id, edit=store_edit: self._update_store(item_id, edit.text()))
         self.table.setCellWidget(row, 6, store_edit)
 
-        self.table.setItem(row, 7, QTableWidgetItem(item.shopping_date.isoformat() if item.shopping_date else ""))
+        self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
+        self.table.setItem(row, 8, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
 
         status_combo = QComboBox()
         status_combo.addItems(shopping_service.ALLOWED_ITEM_STATUSES)
         status_combo.setCurrentText(item.status or "offen")
         status_combo.currentTextChanged.connect(lambda status, item_id=item.id: self._update_status(item_id, status))
-        self.table.setCellWidget(row, 8, status_combo)
+        self.table.setCellWidget(row, 9, status_combo)
 
-        self.table.setItem(row, 9, QTableWidgetItem(item.linked_recipes_text or ""))
+        self.table.setItem(row, 10, QTableWidgetItem(item.linked_recipes_text or ""))
 
     def _update_status(self, item_id: int, status: str) -> None:
         with self.context.session() as session:
@@ -218,9 +228,12 @@ class ShoppingView(QWidget):
         if camp_year_id is None:
             error_dialog(self, "Bitte zuerst ein Camp-Jahr in der Jahresplanung auswählen.")
             return
+        assign_shopping_dates = not self.total_list_checkbox.isChecked()
         with self.context.session() as session:
             camp_year = session.get(CampYear, camp_year_id)
-            shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+            shopping_list = shopping_service.generate_shopping_list(
+                session, camp_year, assign_shopping_dates=assign_shopping_dates
+            )
             session.flush()
             item_count = len(shopping_list.items)
         info_dialog(self, f"Einkaufsliste mit {item_count} Positionen erstellt.")
