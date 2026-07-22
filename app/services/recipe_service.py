@@ -160,6 +160,16 @@ def search_recipes(
     return recipes
 
 
+def generate_unique_recipe_name(session: Session, base_name: str = "Neues Rezept") -> str:
+    """Findet einen freien Namen für ein neues Rezept (z. B. wenn 'Neues Rezept' bereits existiert)."""
+    candidate = base_name
+    counter = 2
+    while session.execute(select(Recipe).where(Recipe.normalized_name == normalize_name(candidate))).scalar_one_or_none() is not None:
+        candidate = f"{base_name} {counter}"
+        counter += 1
+    return candidate
+
+
 def create_recipe(
     session: Session,
     *,

@@ -121,3 +121,16 @@ def test_merge_ingredients_rejects_self_merge(session_factory) -> None:
         session.flush()
         with pytest.raises(ValueError):
             ingredient_service.merge_ingredients(session, keep=ingredient, remove=ingredient)
+
+
+def test_generate_unique_ingredient_name_avoids_collision(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        assert ingredient_service.generate_unique_ingredient_name(session) == "Neue Zutat"
+        ingredient_service.create_ingredient(session, name="Neue Zutat")
+
+        second_name = ingredient_service.generate_unique_ingredient_name(session)
+        assert second_name == "Neue Zutat 2"
+        ingredient_service.create_ingredient(session, name=second_name)
+
+        third_name = ingredient_service.generate_unique_ingredient_name(session)
+        assert third_name == "Neue Zutat 3"

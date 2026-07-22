@@ -820,7 +820,8 @@ class RecipesView(QWidget):
 
     def _create_recipe(self) -> None:
         with self.context.session() as session:
-            recipe = recipe_service.create_recipe(session, name="Neues Rezept")
+            name = recipe_service.generate_unique_recipe_name(session)
+            recipe = recipe_service.create_recipe(session, name=name)
             self._current_recipe_id = recipe.id
         self._reload_list()
         self._select_recipe_by_id(self._current_recipe_id)

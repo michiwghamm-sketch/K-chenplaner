@@ -170,7 +170,8 @@ class IngredientsView(QWidget):
 
     def _create_ingredient(self) -> None:
         with self.context.session() as session:
-            ingredient = ingredient_service.create_ingredient(session, name="Neue Zutat")
+            name = ingredient_service.generate_unique_ingredient_name(session)
+            ingredient = ingredient_service.create_ingredient(session, name=name)
             self._current_ingredient_id = ingredient.id
         self._reload_list()
         self._select_ingredient_by_id(self._current_ingredient_id)
