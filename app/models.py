@@ -79,6 +79,7 @@ class Recipe(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     category: Mapped[Optional[str]] = mapped_column(String(100))
+    diet_type: Mapped[Optional[str]] = mapped_column(String(20), index=True)
     meal_type: Mapped[Optional[str]] = mapped_column(String(100), index=True)
     default_portions: Mapped[Optional[int]] = mapped_column(Integer)
     instructions: Mapped[Optional[str]] = mapped_column(Text)

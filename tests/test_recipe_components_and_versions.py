@@ -259,3 +259,62 @@ def test_delete_recipe_blocks_when_it_has_feedback(session_factory) -> None:
 
     with session_scope(session_factory) as session:
         assert session.get(Recipe, recipe_id) is not None
+
+
+def test_duplicate_recipe_copies_components_ingredients_and_steps(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = _build_recipe(session)
+        component = recipe_service.create_component(session, recipe, "Fleischbaellchen")
+        beef = Ingredient(name="Rinderhack", normalized_name="rinderhack", default_unit="kg")
+        session.add(beef)
+        session.flush()
+        recipe_service.add_ingredient_to_recipe(
+            session, recipe, ingredient_id=beef.id, quantity=Decimal("1.000"), unit="kg", component_id=component.id
+        )
+        recipe_service.create_step(session, recipe, title="Anbraten", duration_minutes=10)
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        source = session.get(Recipe, recipe_id)
+        variant = recipe_service.duplicate_recipe(session, source, name="Semmelknoedel Veggi", diet_type="Vegetarisch")
+        variant_id = variant.id
+
+    with session_scope(session_factory) as session:
+        source = session.get(Recipe, recipe_id)
+        variant = session.get(Recipe, variant_id)
+
+        assert variant.diet_type == "Vegetarisch"
+        assert variant.default_portions == source.default_portions
+        assert len(variant.components) == 1
+        assert variant.components[0].name == "Fleischbaellchen"
+        assert len(variant.ingredients) == 1
+        assert variant.ingredients[0].ingredient.name == "Rinderhack"
+        assert variant.ingredients[0].component_id == variant.components[0].id
+        assert len(variant.steps) == 1
+        assert variant.steps[0].title == "Anbraten"
+
+        # Das Original bleibt unveraendert und eigenstaendig (keine geteilten Zeilen).
+        assert len(source.ingredients) == 1
+        assert source.ingredients[0].id != variant.ingredients[0].id
+        assert source.diet_type is None
+
+
+def test_duplicate_recipe_does_not_copy_feedback_or_meal_plan_entries(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = _build_recipe(session)
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.append(MealPlanEntry(meal_type="Mittagessen", recipe=recipe, status="geplant"))
+        session.add(camp_year)
+        session.flush()
+        feedback_service.record_feedback(session, camp_year=camp_year, recipe=recipe, planned_portions=10)
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        source = session.get(Recipe, recipe_id)
+        variant = recipe_service.duplicate_recipe(session, source, name="Semmelknoedel Vegan", diet_type="Vegan")
+        variant_id = variant.id
+
+    with session_scope(session_factory) as session:
+        variant = session.get(Recipe, variant_id)
+        assert variant.meal_plan_entries == []
+        assert variant.feedback_entries == []

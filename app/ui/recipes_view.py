@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -40,13 +40,17 @@ from app.ui.dialogs import (
     confirm_dialog,
     error_dialog,
     info_dialog,
+    prompt_choice,
     prompt_text,
 )
 from app.ui.theme import ORANGE, ORANGE_TINT, TEXT_MUTED
-from app.ui.widgets import COLOR_CRITICAL, PageHeader, SearchBar
+from app.ui.widgets import COLOR_CRITICAL, COLOR_OK, COLOR_WARNING, PageHeader, SearchBar
 
 MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
 AUTO_OPTIONAL_NOTE = "Menge nicht in Excel angegeben (nach Geschmack)"
+NO_DIET_TYPE_LABEL = "Keine Angabe"
+DIET_TYPE_LEVELS = {"Vegetarisch": "ok", "Vegan": "warnung", "Fleisch": "kritisch"}
+DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
 
 
 class RecipesView(QWidget):
@@ -102,7 +106,10 @@ class RecipesView(QWidget):
         meta_layout.setSpacing(6)
 
         self.name_edit = QLineEdit(meta_group)
-        self.category_edit = QLineEdit(meta_group)
+        self.diet_type_combo = QComboBox(meta_group)
+        self.diet_type_combo.addItem(NO_DIET_TYPE_LABEL)
+        self.diet_type_combo.addItems(recipe_service.DIET_TYPES)
+        self.diet_type_combo.currentTextChanged.connect(self._style_diet_combo)
         self.meal_type_combo = QComboBox(meta_group)
         self.meal_type_combo.setEditable(True)
         self.meal_type_combo.addItems(MEAL_TYPES)
@@ -117,7 +124,7 @@ class RecipesView(QWidget):
         form.setHorizontalSpacing(8)
         form.setVerticalSpacing(6)
         form.addRow("Name", self.name_edit)
-        form.addRow("Kategorie", self.category_edit)
+        form.addRow("Ernährung", self.diet_type_combo)
         form.addRow("Mahlzeit", self.meal_type_combo)
         portions_row = QHBoxLayout()
         portions_row.addWidget(self.portions_spin)
@@ -142,11 +149,15 @@ class RecipesView(QWidget):
         pdf_button = QPushButton("Als PDF exportieren", meta_group)
         pdf_button.clicked.connect(self._export_pdf)
         pdf_button.setProperty("role", "secondary")
+        veggie_button = QPushButton("Veggi-Variante erstellen", meta_group)
+        veggie_button.clicked.connect(self._create_veggie_variant)
+        veggie_button.setProperty("role", "secondary")
         meta_layout.addWidget(save_button)
         meta_layout.addWidget(cancel_button)
         meta_layout.addWidget(deactivate_button)
         meta_layout.addWidget(delete_button)
         meta_layout.addWidget(pdf_button)
+        meta_layout.addWidget(veggie_button)
         meta_layout.addStretch(1)
 
         right_layout.addWidget(meta_group)
@@ -328,6 +339,12 @@ class RecipesView(QWidget):
             for recipe in recipes:
                 item = QListWidgetItem(recipe.name)
                 item.setData(1000, recipe.id)
+                color = DIET_TYPE_COLORS.get(recipe.diet_type or "")
+                if color:
+                    item.setForeground(QColor(color))
+                    font = item.font()
+                    font.setWeight(QFont.Weight.DemiBold)
+                    item.setFont(font)
                 self.recipe_list.addItem(item)
         self.recipe_list.blockSignals(False)
 
@@ -354,9 +371,19 @@ class RecipesView(QWidget):
         self._current_recipe_id = current.data(1000)
         self._reload_detail()
 
+    def _style_diet_combo(self, diet_type: str) -> None:
+        color = DIET_TYPE_COLORS.get(diet_type)
+        if color:
+            self.diet_type_combo.setStyleSheet(
+                f"QComboBox {{ background-color: {color}; color: white; font-weight: 600; }}"
+            )
+        else:
+            self.diet_type_combo.setStyleSheet("")
+
     def _clear_detail(self) -> None:
         self.name_edit.clear()
-        self.category_edit.clear()
+        self.diet_type_combo.setCurrentText(NO_DIET_TYPE_LABEL)
+        self._style_diet_combo(NO_DIET_TYPE_LABEL)
         self.meal_type_combo.setCurrentText("")
         self.portions_spin.setValue(1)
         self.active_checkbox.setChecked(True)
@@ -378,7 +405,8 @@ class RecipesView(QWidget):
                 self._clear_detail()
                 return
             self.name_edit.setText(recipe.name)
-            self.category_edit.setText(recipe.category or "")
+            self.diet_type_combo.setCurrentText(recipe.diet_type or NO_DIET_TYPE_LABEL)
+            self._style_diet_combo(recipe.diet_type or NO_DIET_TYPE_LABEL)
             self.meal_type_combo.setCurrentText(recipe.meal_type or "")
             self.portions_spin.setValue(recipe.default_portions or 1)
             self.cost_portions_spin.setValue(recipe.default_portions or 10)
@@ -852,6 +880,38 @@ class RecipesView(QWidget):
         self.name_edit.setFocus()
         self.name_edit.selectAll()
 
+    def _create_veggie_variant(self) -> None:
+        if self._current_recipe_id is None:
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen.")
+            return
+        diet_type = prompt_choice(
+            self, "Veggi-Variante erstellen", "Neue Variante ist:", list(recipe_service.DIET_TYPES[:2])
+        )
+        if not diet_type:
+            return
+        with self.context.session() as session:
+            source = session.get(recipe_service.Recipe, self._current_recipe_id)
+            if source is None:
+                return
+            default_name = recipe_service.generate_unique_recipe_name(session, f"{source.name} ({diet_type})")
+        name = prompt_text(self, "Veggi-Variante erstellen", "Name der neuen Variante:", default=default_name)
+        if not name:
+            return
+        try:
+            with self.context.session() as session:
+                source = session.get(recipe_service.Recipe, self._current_recipe_id)
+                if source is None:
+                    return
+                new_recipe = recipe_service.duplicate_recipe(session, source, name=name, diet_type=diet_type)
+                new_recipe_id = new_recipe.id
+        except IntegrityError:
+            error_dialog(self, f"Ein Rezept mit dem Namen '{name}' existiert bereits. Bitte einen anderen Namen wählen.")
+            return
+        self._current_recipe_id = new_recipe_id
+        self._reload_list()
+        self._select_recipe_by_id(self._current_recipe_id)
+        info_dialog(self, f"Variante '{name}' wurde erstellt. Bitte die Zutaten anpassen.")
+
     def _select_recipe_by_id(self, recipe_id: int | None) -> None:
         for row in range(self.recipe_list.count()):
             item = self.recipe_list.item(row)
@@ -870,10 +930,11 @@ class RecipesView(QWidget):
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
             if recipe is None:
                 return
+            diet_type = self.diet_type_combo.currentText().strip()
             recipe_service.update_recipe(
                 recipe,
                 name=name,
-                category=self.category_edit.text().strip() or None,
+                diet_type=diet_type if diet_type in recipe_service.DIET_TYPES else None,
                 meal_type=self.meal_type_combo.currentText().strip() or None,
                 default_portions=self.portions_spin.value(),
                 active=self.active_checkbox.isChecked(),
