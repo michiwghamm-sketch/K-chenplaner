@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, timedelta
 from decimal import Decimal
 
-from app.models import CampYear, ShoppingList, ShoppingListItem
-from app.services import price_service
+from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem
+from app.services import planning_service, price_service
 
 
 @dataclass(slots=True)
@@ -18,6 +18,32 @@ class _Aggregate:
     shopping_dates: set[date] = field(default_factory=set)
 
 
+# Lagerarten, die sich bevorraten lassen: einmaliger Einkauf zu Lagerbeginn statt taeglich
+# frisch. Freitext-Feld (Ingredient.storage_type), daher Schluesselwort-Abgleich statt Enum.
+SHELF_STABLE_KEYWORDS = ("trocken", "tiefkuehl", "tiefkühl", "tk", "konserve", "getraenke", "getränke", "vorrat")
+
+
+def _is_shelf_stable(ingredient: Ingredient | None) -> bool:
+    storage_type = (ingredient.storage_type or "").lower() if ingredient else ""
+    return any(keyword in storage_type for keyword in SHELF_STABLE_KEYWORDS)
+
+
+def _derive_item_shopping_date(entry, ingredient: Ingredient | None, camp_year: CampYear) -> date | None:
+    """Automatischer Einkaufstag, wenn am Mahlzeit-Slot keiner manuell gesetzt wurde.
+
+    Frische Zutaten: ein Tag vor der Mahlzeit (moeglichst kurze Lagerzeit).
+    Lagerfaehige Zutaten (Trockenware, Tiefkuehlware, Getraenke, ...): ein Tag vor
+    Lagerbeginn, damit sie in einem Rutsch eingekauft werden koennen statt taeglich.
+    """
+    if entry.meal_date is None:
+        return None
+    if _is_shelf_stable(ingredient):
+        if camp_year.start_date is not None:
+            return camp_year.start_date - timedelta(days=1)
+        return entry.meal_date
+    return planning_service.derive_shopping_date(entry.meal_date, days_before=1)
+
+
 def generate_shopping_list(
     session,
     camp_year: CampYear,
@@ -25,7 +51,11 @@ def generate_shopping_list(
     name: str | None = None,
     price_year: int | None = None,
 ) -> ShoppingList:
-    """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu einer Einkaufsliste."""
+    """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu einer Einkaufsliste.
+
+    Der Einkaufstag je Position wird automatisch hergeleitet (siehe _derive_item_shopping_date),
+    sofern am Mahlzeit-Slot im Wochenplan kein Einkaufstag manuell gesetzt wurde.
+    """
     price_year = price_year or camp_year.year
     aggregates: dict[tuple[int, str], _Aggregate] = {}
 
@@ -43,8 +73,9 @@ def generate_shopping_list(
             aggregate = aggregates.setdefault(key, _Aggregate(ingredient_id=item.ingredient_id, unit=item.unit))
             aggregate.quantity += item.quantity * factor
             aggregate.recipe_names.add(entry.recipe.name)
-            if entry.shopping_date:
-                aggregate.shopping_dates.add(entry.shopping_date)
+            shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
+            if shopping_date:
+                aggregate.shopping_dates.add(shopping_date)
 
     shopping_list = ShoppingList(camp_year=camp_year, name=name or f"Einkaufsliste {camp_year.year}")
     session.add(shopping_list)
@@ -86,8 +117,42 @@ def group_by_category(shopping_list: ShoppingList) -> dict[str | None, list[Shop
     return dict(groups)
 
 
+def group_by_store(shopping_list: ShoppingList) -> dict[str | None, list[ShoppingListItem]]:
+    groups: dict[str | None, list[ShoppingListItem]] = defaultdict(list)
+    for item in shopping_list.items:
+        groups[item.store].append(item)
+    return dict(groups)
+
+
 def filter_by_store(shopping_list: ShoppingList, store: str) -> list[ShoppingListItem]:
     return [item for item in shopping_list.items if item.store == store]
+
+
+def grouped_by_day_ordered(shopping_list: ShoppingList) -> list[tuple[date | None, list[ShoppingListItem]]]:
+    """Tage aufsteigend sortiert, Positionen ohne Einkaufstag zuletzt."""
+    groups = group_by_shopping_day(shopping_list)
+    return sorted(groups.items(), key=lambda pair: (pair[0] is None, pair[0]))
+
+
+def grouped_by_store_ordered(shopping_list: ShoppingList) -> list[tuple[str | None, list[ShoppingListItem]]]:
+    """Händler alphabetisch sortiert, Positionen ohne Händler zuletzt."""
+    groups = group_by_store(shopping_list)
+    return sorted(groups.items(), key=lambda pair: (pair[0] is None, (pair[0] or "").lower()))
+
+
+UNASSIGNED_STORE_LABEL = "Ohne Händler"
+GERMAN_WEEKDAYS = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
+
+
+def format_shopping_day_label(shopping_date: date | None) -> str:
+    if shopping_date is None:
+        return "Ohne Einkaufstag"
+    return f"{GERMAN_WEEKDAYS[shopping_date.weekday()]}, {shopping_date.strftime('%d.%m.%Y')}"
+
+
+def set_item_store(item: ShoppingListItem, store: str | None) -> ShoppingListItem:
+    item.store = (store or "").strip() or None
+    return item
 
 
 ALLOWED_ITEM_STATUSES = ("offen", "bestellt", "gekauft", "erledigt", "pruefen")
@@ -95,10 +160,15 @@ ALLOWED_ITEM_STATUSES = ("offen", "bestellt", "gekauft", "erledigt", "pruefen")
 
 def set_item_status(item: ShoppingListItem, status: str) -> ShoppingListItem:
     if status not in ALLOWED_ITEM_STATUSES:
-        raise ValueError(f"Ungueltiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_ITEM_STATUSES)}")
+        raise ValueError(f"Ungültiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_ITEM_STATUSES)}")
     item.status = status
     return item
 
 
 def total_estimated_cost(shopping_list: ShoppingList) -> Decimal:
     return sum((item.estimated_total_price or Decimal("0") for item in shopping_list.items), Decimal("0"))
+
+
+def delete_shopping_list(session, shopping_list: ShoppingList) -> None:
+    session.delete(shopping_list)
+    session.flush()

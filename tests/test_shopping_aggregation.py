@@ -111,6 +111,89 @@ def test_generate_shopping_list_aggregates_quantities_across_meals(session_facto
         assert item.status == "offen"
 
 
+def test_generate_shopping_list_derives_shopping_date_one_day_before_meal(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Frische Milch", normalized_name="frische milch", default_unit="l")
+
+        recipe = Recipe(name="Kaiserschmarrn", normalized_name="kaiserschmarrn", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="l", price_unit="l", sort_order=1)
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026", start_date=date(2026, 8, 1), end_date=date(2026, 8, 10))
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 5), meal_type="Fruehstueck", recipe=recipe, planned_portions=10, status="geplant")
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+
+        assert len(shopping_list.items) == 1
+        assert shopping_list.items[0].shopping_date == date(2026, 8, 4)
+
+
+def test_generate_shopping_list_consolidates_shelf_stable_ingredients_to_camp_start(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", storage_type="Trockenware")
+
+        recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="kg", price_unit="kg", sort_order=1)
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026", start_date=date(2026, 8, 1), end_date=date(2026, 8, 10))
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 8), meal_type="Mittagessen", recipe=recipe, planned_portions=10, status="geplant")
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+
+        assert len(shopping_list.items) == 1
+        # Lagerfaehig -> ein Rutsch zu Lagerbeginn statt kurz vor der einzelnen Mahlzeit.
+        assert shopping_list.items[0].shopping_date == date(2026, 7, 31)
+
+
+def test_generate_shopping_list_respects_manual_shopping_date_override(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", storage_type="Trockenware")
+
+        recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="kg", price_unit="kg", sort_order=1)
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026", start_date=date(2026, 8, 1), end_date=date(2026, 8, 10))
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(
+                meal_date=date(2026, 8, 8),
+                meal_type="Mittagessen",
+                recipe=recipe,
+                planned_portions=10,
+                status="geplant",
+                shopping_date=date(2026, 8, 6),
+            )
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+
+        assert len(shopping_list.items) == 1
+        assert shopping_list.items[0].shopping_date == date(2026, 8, 6)
+
+
 def test_group_by_shopping_day_and_total_cost(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")
@@ -132,3 +215,90 @@ def test_group_by_shopping_day_and_total_cost(session_factory) -> None:
         groups = shopping_service.group_by_shopping_day(shopping_list)
         assert len(groups[date(2026, 8, 1)]) == 2
         assert shopping_service.total_estimated_cost(shopping_list) == Decimal("6.50")
+
+
+def test_grouped_by_day_ordered_sorts_ascending_with_none_last(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        shopping_list.items.extend(
+            [
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", shopping_date=date(2026, 8, 3)),
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", shopping_date=date(2026, 8, 1)),
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", shopping_date=None),
+            ]
+        )
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ordered = shopping_service.grouped_by_day_ordered(shopping_list)
+        assert [day for day, _ in ordered] == [date(2026, 8, 1), date(2026, 8, 3), None]
+
+
+def test_grouped_by_store_ordered_sorts_alphabetically_with_none_last(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        shopping_list.items.extend(
+            [
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", store="Rewe"),
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", store="Aldi"),
+                ShoppingListItem(quantity=Decimal("1.000"), unit="kg", store=None),
+            ]
+        )
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ordered = shopping_service.grouped_by_store_ordered(shopping_list)
+        assert [store for store, _ in ordered] == ["Aldi", "Rewe", None]
+
+
+def test_set_item_store_normalizes_blank_to_none(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        shopping_list.items.append(ShoppingListItem(quantity=Decimal("1.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        item_id = shopping_list.items[0].id
+
+    with session_scope(session_factory) as session:
+        item = session.get(ShoppingListItem, item_id)
+        shopping_service.set_item_store(item, "  Edeka  ")
+        assert item.store == "Edeka"
+        shopping_service.set_item_store(item, "   ")
+        assert item.store is None
+
+
+def test_format_shopping_day_label() -> None:
+    assert shopping_service.format_shopping_day_label(None) == "Ohne Einkaufstag"
+    assert shopping_service.format_shopping_day_label(date(2026, 8, 3)) == "Montag, 03.08.2026"
+
+
+def test_delete_shopping_list_removes_list_and_items(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        shopping_list.items.append(ShoppingListItem(quantity=Decimal("1.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+        item_id = shopping_list.items[0].id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        shopping_service.delete_shopping_list(session, shopping_list)
+
+    with session_scope(session_factory) as session:
+        assert session.get(ShoppingList, shopping_list_id) is None
+        assert session.get(ShoppingListItem, item_id) is None
