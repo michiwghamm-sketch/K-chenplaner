@@ -60,6 +60,13 @@ def prompt_int(parent: QWidget | None, title: str, label: str, default: int = 1,
     return value
 
 
+def prompt_choice(parent: QWidget | None, title: str, label: str, options: list[str], *, default_index: int = 0) -> str | None:
+    choice, ok = QInputDialog.getItem(parent, title, label, options, current=default_index, editable=False)
+    if not ok:
+        return None
+    return choice
+
+
 NO_COMPONENT_LABEL = "- Sonstiges -"
 
 

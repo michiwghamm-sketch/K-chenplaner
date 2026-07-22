@@ -12,6 +12,7 @@ from app.services import price_service
 from app.utils.normalization import normalize_name
 
 UNASSIGNED_COMPONENT_LABEL = "Sonstiges"
+DIET_TYPES = ("Vegetarisch", "Vegan", "Fleisch")
 
 
 @dataclass(slots=True)
@@ -228,6 +229,66 @@ def delete_recipe(session: Session, recipe: Recipe) -> None:
         )
     session.delete(recipe)
     session.flush()
+
+
+def duplicate_recipe(session: Session, recipe: Recipe, *, name: str, diet_type: str | None = None) -> Recipe:
+    """Dupliziert ein Rezept (Teilstücke, Zutaten, Kochanleitung) unter neuem Namen.
+
+    Gedacht z. B. für "aus einem Fleischgericht eine vegetarische/vegane Variante machen":
+    ein Duplikat mit gesetztem diet_type anlegen und danach in Ruhe die Zutaten anpassen,
+    ohne das Originalrezept zu verändern. Historie und Feedback werden bewusst NICHT
+    übernommen, da sie sich auf das Originalrezept beziehen.
+    """
+    new_recipe = Recipe(
+        name=name.strip(),
+        normalized_name=normalize_name(name),
+        category=recipe.category,
+        meal_type=recipe.meal_type,
+        default_portions=recipe.default_portions,
+        instructions=recipe.instructions,
+        notes=recipe.notes,
+        diet_type=diet_type,
+    )
+    session.add(new_recipe)
+    session.flush()
+
+    component_map: dict[int, RecipeComponent] = {}
+    for component in sorted(recipe.components, key=lambda c: c.sort_order):
+        new_component = RecipeComponent(
+            recipe=new_recipe, name=component.name, sort_order=component.sort_order, notes=component.notes
+        )
+        session.add(new_component)
+        session.flush()
+        component_map[component.id] = new_component
+
+    for item in sorted(recipe.ingredients, key=lambda i: i.sort_order):
+        session.add(
+            RecipeIngredient(
+                recipe=new_recipe,
+                component=component_map.get(item.component_id) if item.component_id is not None else None,
+                ingredient_id=item.ingredient_id,
+                quantity=item.quantity,
+                unit=item.unit,
+                price_unit=item.price_unit,
+                optional=item.optional,
+                sort_order=item.sort_order,
+                notes=item.notes,
+            )
+        )
+
+    for step in sorted(recipe.steps, key=lambda s: s.sort_order):
+        session.add(
+            RecipeStep(
+                recipe=new_recipe,
+                sort_order=step.sort_order,
+                title=step.title,
+                description=step.description,
+                duration_minutes=step.duration_minutes,
+            )
+        )
+
+    session.flush()
+    return new_recipe
 
 
 # --- Teilstuecke (RecipeComponent) -------------------------------------------------
