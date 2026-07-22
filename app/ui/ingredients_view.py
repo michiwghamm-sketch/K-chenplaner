@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
 from app.services import ingredient_service
@@ -110,6 +111,7 @@ class IngredientsView(QWidget):
         self._reload_list()
 
     def _reload_list(self) -> None:
+        target_id = self._current_ingredient_id
         self.ingredient_list.blockSignals(True)
         self.ingredient_list.clear()
         with self.context.session() as session:
@@ -123,11 +125,21 @@ class IngredientsView(QWidget):
                 item.setData(1000, ingredient.id)
                 self.ingredient_list.addItem(item)
         self.ingredient_list.blockSignals(False)
-        if self.ingredient_list.count():
-            self.ingredient_list.setCurrentRow(0)
-        else:
+
+        if not self.ingredient_list.count():
             self._current_ingredient_id = None
             self._clear_detail()
+            return
+
+        # Nach dem Neuaufbau der Liste die zuvor ausgewählte Zeile wiederfinden, statt
+        # blind auf Zeile 0 zu springen (sonst landet man z. B. nach dem Speichern oder
+        # Anlegen einer Zutat scheinbar zufällig bei einer ganz anderen Zutat).
+        if target_id is not None:
+            for row in range(self.ingredient_list.count()):
+                if self.ingredient_list.item(row).data(1000) == target_id:
+                    self.ingredient_list.setCurrentRow(row)
+                    return
+        self.ingredient_list.setCurrentRow(0)
 
     def _on_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is None:
@@ -170,11 +182,21 @@ class IngredientsView(QWidget):
 
     def _create_ingredient(self) -> None:
         with self.context.session() as session:
-            name = ingredient_service.generate_unique_ingredient_name(session)
-            ingredient = ingredient_service.create_ingredient(session, name=name)
-            self._current_ingredient_id = ingredient.id
+            default_name = ingredient_service.generate_unique_ingredient_name(session)
+        name = prompt_text(self, "Neue Zutat", "Name der Zutat:", default=default_name)
+        if not name:
+            return
+        try:
+            with self.context.session() as session:
+                ingredient = ingredient_service.create_ingredient(session, name=name)
+                self._current_ingredient_id = ingredient.id
+        except IntegrityError:
+            error_dialog(self, f"Eine Zutat mit dem Namen '{name}' existiert bereits. Bitte einen anderen Namen wählen.")
+            return
         self._reload_list()
         self._select_ingredient_by_id(self._current_ingredient_id)
+        self.name_edit.setFocus()
+        self.name_edit.selectAll()
 
     def _select_ingredient_by_id(self, ingredient_id: int | None) -> None:
         for row in range(self.ingredient_list.count()):
