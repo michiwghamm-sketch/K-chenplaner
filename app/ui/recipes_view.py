@@ -29,6 +29,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
 from app.services import export_service, ingredient_service, recipe_service
@@ -311,6 +312,7 @@ class RecipesView(QWidget):
         self._reload_list()
 
     def _reload_list(self) -> None:
+        target_id = self._current_recipe_id
         self.recipe_list.blockSignals(True)
         self.recipe_list.clear()
         with self.context.session() as session:
@@ -324,11 +326,21 @@ class RecipesView(QWidget):
                 item.setData(1000, recipe.id)
                 self.recipe_list.addItem(item)
         self.recipe_list.blockSignals(False)
-        if self.recipe_list.count():
-            self.recipe_list.setCurrentRow(0)
-        else:
+
+        if not self.recipe_list.count():
             self._current_recipe_id = None
             self._clear_detail()
+            return
+
+        # Nach dem Neuaufbau der Liste die zuvor ausgewählte Zeile wiederfinden, statt
+        # blind auf Zeile 0 zu springen (sonst landet man z. B. nach dem Speichern oder
+        # Anlegen eines Rezepts scheinbar zufällig bei einem ganz anderen Rezept).
+        if target_id is not None:
+            for row in range(self.recipe_list.count()):
+                if self.recipe_list.item(row).data(1000) == target_id:
+                    self.recipe_list.setCurrentRow(row)
+                    return
+        self.recipe_list.setCurrentRow(0)
 
     def _on_recipe_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is None:
@@ -820,10 +832,21 @@ class RecipesView(QWidget):
 
     def _create_recipe(self) -> None:
         with self.context.session() as session:
-            recipe = recipe_service.create_recipe(session, name="Neues Rezept")
-            self._current_recipe_id = recipe.id
+            default_name = recipe_service.generate_unique_recipe_name(session)
+        name = prompt_text(self, "Neues Rezept", "Name des Rezepts:", default=default_name)
+        if not name:
+            return
+        try:
+            with self.context.session() as session:
+                recipe = recipe_service.create_recipe(session, name=name)
+                self._current_recipe_id = recipe.id
+        except IntegrityError:
+            error_dialog(self, f"Ein Rezept mit dem Namen '{name}' existiert bereits. Bitte einen anderen Namen wählen.")
+            return
         self._reload_list()
         self._select_recipe_by_id(self._current_recipe_id)
+        self.name_edit.setFocus()
+        self.name_edit.selectAll()
 
     def _select_recipe_by_id(self, recipe_id: int | None) -> None:
         for row in range(self.recipe_list.count()):

@@ -185,3 +185,26 @@ def test_suggested_scale_factor_none_without_feedback(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = _build_recipe(session)
         assert recipe_service.suggested_scale_factor(recipe) is None
+
+
+def test_generate_unique_recipe_name_avoids_collision(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        assert recipe_service.generate_unique_recipe_name(session) == "Neues Rezept"
+        recipe_service.create_recipe(session, name="Neues Rezept")
+
+        second_name = recipe_service.generate_unique_recipe_name(session)
+        assert second_name == "Neues Rezept 2"
+        recipe_service.create_recipe(session, name=second_name)
+
+        third_name = recipe_service.generate_unique_recipe_name(session)
+        assert third_name == "Neues Rezept 3"
+
+
+def test_create_recipe_button_flow_never_raises_on_repeated_clicks(session_factory) -> None:
+    """Regression: das 'Neues Rezept' erzeugt sonst einen UNIQUE-Constraint-Fehler beim zweiten Klick."""
+    with session_scope(session_factory) as session:
+        for _ in range(3):
+            name = recipe_service.generate_unique_recipe_name(session)
+            recipe_service.create_recipe(session, name=name)
+        recipes = session.query(Recipe).filter(Recipe.name.like("Neues Rezept%")).all()
+        assert {r.name for r in recipes} == {"Neues Rezept", "Neues Rezept 2", "Neues Rezept 3"}

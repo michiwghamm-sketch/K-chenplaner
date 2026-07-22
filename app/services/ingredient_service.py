@@ -31,6 +31,16 @@ def search_ingredients(session: Session, *, query: str | None = None, active_onl
     return ingredients
 
 
+def generate_unique_ingredient_name(session: Session, base_name: str = "Neue Zutat") -> str:
+    """Findet einen freien Namen für eine neue Zutat (z. B. wenn 'Neue Zutat' bereits existiert)."""
+    candidate = base_name
+    counter = 2
+    while session.execute(select(Ingredient).where(Ingredient.normalized_name == normalize_name(candidate))).scalar_one_or_none() is not None:
+        candidate = f"{base_name} {counter}"
+        counter += 1
+    return candidate
+
+
 def create_ingredient(
     session: Session,
     *,
