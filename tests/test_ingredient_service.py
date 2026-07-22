@@ -134,3 +134,39 @@ def test_generate_unique_ingredient_name_avoids_collision(session_factory) -> No
 
         third_name = ingredient_service.generate_unique_ingredient_name(session)
         assert third_name == "Neue Zutat 3"
+
+
+def test_delete_ingredient_removes_it_when_unused(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Ungenutzte Zutat", normalized_name="ungenutzte zutat")
+        session.add(ingredient)
+        session.flush()
+        ingredient_id = ingredient.id
+
+    with session_scope(session_factory) as session:
+        ingredient = session.get(Ingredient, ingredient_id)
+        ingredient_service.delete_ingredient(session, ingredient)
+
+    with session_scope(session_factory) as session:
+        assert session.get(Ingredient, ingredient_id) is None
+
+
+def test_delete_ingredient_blocks_when_used_in_recipe(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = Recipe(name="Testgericht", normalized_name="testgericht")
+        ingredient = Ingredient(name="Zwiebel", normalized_name="zwiebel", default_unit="kg")
+        session.add_all([recipe, ingredient])
+        session.flush()
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        session.flush()
+        ingredient_id = ingredient.id
+
+    with session_scope(session_factory) as session:
+        ingredient = session.get(Ingredient, ingredient_id)
+        with pytest.raises(ValueError, match="Testgericht"):
+            ingredient_service.delete_ingredient(session, ingredient)
+
+    with session_scope(session_factory) as session:
+        assert session.get(Ingredient, ingredient_id) is not None

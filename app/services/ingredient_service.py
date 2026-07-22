@@ -81,6 +81,20 @@ def activate_ingredient(ingredient: Ingredient) -> None:
     ingredient.active = True
 
 
+def delete_ingredient(session: Session, ingredient: Ingredient) -> None:
+    """Löscht eine Zutat dauerhaft. Schlägt fehl, wenn sie noch in mindestens einem Rezept
+    verwendet wird (dort würden sonst verwaiste Zutatenverknüpfungen entstehen) - in dem Fall
+    stattdessen deaktivieren oder zuerst aus den betroffenen Rezepten entfernen."""
+    if ingredient.recipe_links:
+        recipe_names = sorted({link.recipe.name for link in ingredient.recipe_links})
+        raise ValueError(
+            f"'{ingredient.name}' wird noch in folgenden Rezepten verwendet und kann nicht gelöscht werden: "
+            f"{', '.join(recipe_names)}. Bitte zuerst aus den Rezepten entfernen oder stattdessen deaktivieren."
+        )
+    session.delete(ingredient)
+    session.flush()
+
+
 def add_alias(session: Session, ingredient: Ingredient, alias: str, *, notes: str | None = None) -> IngredientAlias:
     existing = session.execute(
         select(IngredientAlias).where(
