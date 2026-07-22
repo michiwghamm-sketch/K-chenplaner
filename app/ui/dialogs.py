@@ -23,7 +23,7 @@ from app.services.open_prices_service import OpenPricesSuggestion
 
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
-    """Bestaetigungsdialog vor kritischen Aktionen (Loeschen, Deaktivieren, Restore)."""
+    """Bestätigungsdialog vor kritischen Aktionen (Löschen, Deaktivieren, Restore)."""
     result = QMessageBox.question(
         parent,
         title,
@@ -64,7 +64,7 @@ NO_COMPONENT_LABEL = "- Sonstiges -"
 
 
 class AddRecipeIngredientDialog(QDialog):
-    """Dialog zum Hinzufuegen oder Bearbeiten einer Rezeptzutat (Menge, Einheit, Teilstueck)."""
+    """Dialog zum Hinzufügen oder Bearbeiten einer Rezeptzutat (Menge, Einheit, Teilstück)."""
 
     def __init__(
         self,
@@ -78,7 +78,7 @@ class AddRecipeIngredientDialog(QDialog):
         super().__init__(parent)
         initial = initial or {}
         self._delete_requested = False
-        self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufuegen"))
+        self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufügen"))
 
         self.ingredient_combo = QComboBox(self)
         for ingredient_id, name in ingredients:
@@ -106,7 +106,7 @@ class AddRecipeIngredientDialog(QDialog):
 
         form = QFormLayout()
         form.addRow("Zutat", self.ingredient_combo)
-        form.addRow("Teilstueck", self.component_combo)
+        form.addRow("Teilstück", self.component_combo)
         form.addRow("Menge", self.quantity_spin)
         form.addRow("Einheit", self.unit_edit)
         form.addRow("Notizen", self.notes_edit)
@@ -202,7 +202,7 @@ class AddPriceDialog(QDialog):
 
 
 class OpenPricesImportDialog(QDialog):
-    """Dialog fuer den Import eines externen Preises ueber einen Barcode."""
+    """Dialog für den Import eines externen Preises über einen Barcode."""
 
     def __init__(self, ingredients: list[tuple[int, str]], default_year: int, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -249,7 +249,7 @@ class OpenPricesImportDialog(QDialog):
 
 
 class OpenPricesSuggestionDialog(QDialog):
-    """Erlaubt die Auswahl eines aehnlichen Open-Prices-Produkts fuer eine Zutat."""
+    """Erlaubt die Auswahl eines ähnlichen Open-Prices-Produkts für eine Zutat."""
 
     def __init__(
         self,
@@ -258,7 +258,7 @@ class OpenPricesSuggestionDialog(QDialog):
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle(f"Aehnliche Produkte fuer {ingredient_name}")
+        self.setWindowTitle(f"Ähnliche Produkte für {ingredient_name}")
         self._suggestions = suggestions
 
         self.combo = QComboBox(self)
@@ -273,8 +273,8 @@ class OpenPricesSuggestionDialog(QDialog):
             self.combo.addItem(label, index)
 
         info = QLabel(
-            f"Fuer '{ingredient_name}' wurde kein eindeutiger Treffer importiert. "
-            "Du kannst einen aehnlichen Open-Prices-Eintrag auswaehlen oder abbrechen.",
+            f"Für '{ingredient_name}' wurde kein eindeutiger Treffer importiert. "
+            "Du kannst einen ähnlichen Open-Prices-Eintrag auswählen oder abbrechen.",
             self,
         )
         info.setWordWrap(True)
@@ -497,7 +497,7 @@ class ScaleRecipeDialog(QDialog):
         self.hint_label.setWordWrap(True)
 
         self.reason_edit = QLineEdit(self)
-        self.reason_edit.setPlaceholderText("z. B. 'zu viel uebrig geblieben 2026'")
+        self.reason_edit.setPlaceholderText("z. B. 'zu viel übrig geblieben 2026'")
 
         form = QFormLayout()
         form.addRow(self.hint_label)
@@ -526,7 +526,7 @@ class RecipeStepDialog(QDialog):
         super().__init__(parent)
         initial = initial or {}
         self._delete_requested = False
-        self.setWindowTitle("Arbeitsschritt bearbeiten" if initial else "Arbeitsschritt hinzufuegen")
+        self.setWindowTitle("Arbeitsschritt bearbeiten" if initial else "Arbeitsschritt hinzufügen")
 
         self.title_edit = QLineEdit(self)
         self.title_edit.setText(initial.get("title") or "")

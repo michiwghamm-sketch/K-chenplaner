@@ -81,7 +81,7 @@ class IngredientsView(QWidget):
         right_layout.addWidget(self.alias_list)
 
         alias_row = QHBoxLayout()
-        add_alias_button = QPushButton("Alias hinzufuegen", right)
+        add_alias_button = QPushButton("Alias hinzufügen", right)
         add_alias_button.clicked.connect(self._add_alias)
         remove_alias_button = QPushButton("Alias entfernen", right)
         remove_alias_button.clicked.connect(self._remove_alias)
@@ -219,7 +219,7 @@ class IngredientsView(QWidget):
     def _add_alias(self) -> None:
         if self._current_ingredient_id is None:
             return
-        alias = prompt_text(self, "Alias hinzufuegen", "Alternativer Name / Tippfehler-Variante:")
+        alias = prompt_text(self, "Alias hinzufügen", "Alternativer Name / Tippfehler-Variante:")
         if not alias:
             return
         with self.context.session() as session:

@@ -82,10 +82,10 @@ def run_all_checks(session: Session, *, camp_year: CampYear | None = None, year:
     report = ValidationReport()
 
     for ingredient in find_missing_prices(session, year=year):
-        report.add("preis", "warnung", f"Kein Preis fuer '{ingredient.name}' hinterlegt.", ingredient.name)
+        report.add("preis", "warnung", f"Kein Preis für '{ingredient.name}' hinterlegt.", ingredient.name)
 
     for ingredient in find_missing_units(session):
-        report.add("einheit", "warnung", f"Keine Standardeinheit fuer '{ingredient.name}' hinterlegt.", ingredient.name)
+        report.add("einheit", "warnung", f"Keine Standardeinheit für '{ingredient.name}' hinterlegt.", ingredient.name)
 
     for recipe in find_recipes_without_ingredients(session):
         report.add("rezept", "warnung", f"Rezept '{recipe.name}' hat keine Zutaten.", recipe.name)
@@ -103,7 +103,7 @@ def run_all_checks(session: Session, *, camp_year: CampYear | None = None, year:
         report.add(
             "zutat",
             "hinweis",
-            f"'{first.name}' und '{second.name}' sind sich sehr aehnlich ({ratio:.0%}) - eventuell Dubletten.",
+            f"'{first.name}' und '{second.name}' sind sich sehr ähnlich ({ratio:.0%}) - eventuell Dubletten.",
             f"{first.name} / {second.name}",
         )
 

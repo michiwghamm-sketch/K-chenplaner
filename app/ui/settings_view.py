@@ -31,7 +31,7 @@ class SettingsView(QWidget):
         self.db_path_edit.setReadOnly(True)
         change_row = QHBoxLayout()
         change_row.addWidget(self.db_path_edit)
-        change_button = QPushButton("Aendern...", self)
+        change_button = QPushButton("Ändern...", self)
         change_button.clicked.connect(self._change_database_path)
         change_row.addWidget(change_button)
         form.addRow("Datenbankpfad", change_row)
@@ -66,7 +66,7 @@ class SettingsView(QWidget):
     def _change_database_path(self) -> None:
         path, _ = QFileDialog.getSaveFileName(
             self,
-            "Neuen Datenbankpfad waehlen",
+            "Neuen Datenbankpfad wählen",
             str(self.context.config.database_path),
             "SQLite-Datenbank (*.sqlite3)",
         )
@@ -78,5 +78,5 @@ class SettingsView(QWidget):
         info_dialog(
             self,
             "Der neue Datenbankpfad wurde gespeichert. Bitte die Anwendung neu starten, "
-            "damit die Aenderung wirksam wird.",
+            "damit die Änderung wirksam wird.",
         )

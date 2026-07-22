@@ -173,7 +173,7 @@ def merge_ingredients(session: Session, *, keep: Ingredient, remove: Ingredient)
     werden vorher auf 'keep' umgehaengt, damit keine Daten verloren gehen.
     """
     if keep.id == remove.id:
-        raise ValueError("Eine Zutat kann nicht mit sich selbst zusammengefuehrt werden.")
+        raise ValueError("Eine Zutat kann nicht mit sich selbst zusammengeführt werden.")
 
     # Bei mehreren Merges in derselben Session/Transaktion kann 'remove' Aliase enthalten,
     # die ein vorheriger merge_ingredients()-Aufruf gerade erst angelegt hat und die wegen

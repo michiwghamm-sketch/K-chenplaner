@@ -13,7 +13,7 @@ _SEVERITY_COLORS = {"warnung": COLOR_WARNING, "kritisch": COLOR_CRITICAL, "hinwe
 
 
 class DashboardView(QWidget):
-    """Uebersicht: Kennzahlen und Warnungen fuer das ausgewaehlte Camp-Jahr."""
+    """Übersicht: Kennzahlen und Warnungen für das ausgewählte Camp-Jahr."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -23,7 +23,7 @@ class DashboardView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(PageHeader("Dashboard", "Kennzahlen und Warnungen fuer das ausgewaehlte Camp-Jahr"))
+        layout.addWidget(PageHeader("Dashboard", "Kennzahlen und Warnungen für das ausgewählte Camp-Jahr"))
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Camp-Jahr:", self))
@@ -39,7 +39,7 @@ class DashboardView(QWidget):
         self.kpi_meals = KpiCard("Geplante Mahlzeiten")
         self.kpi_portions = KpiCard("Geplante Portionen")
         self.kpi_budget = KpiCard("Geplantes Budget (EUR)")
-        self.kpi_open_shopping = KpiCard("Offene Einkaeufe")
+        self.kpi_open_shopping = KpiCard("Offene Einkäufe")
         self.kpi_missing_prices = KpiCard("Fehlende Preise")
         self.kpi_missing_feedback = KpiCard("Rezepte ohne Feedback")
         for index, card in enumerate(
@@ -130,7 +130,7 @@ class DashboardView(QWidget):
             report = validation_service.run_all_checks(session, camp_year=camp_year, year=camp_year.year)
             self.warnings_list.clear()
             if not report.issues:
-                item = QListWidgetItem("Keine Warnungen fuer dieses Camp-Jahr.")
+                item = QListWidgetItem("Keine Warnungen für dieses Camp-Jahr.")
                 item.setForeground(QColor(COLOR_OK))
                 self.warnings_list.addItem(item)
             for issue in report.issues:

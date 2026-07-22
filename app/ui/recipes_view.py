@@ -44,7 +44,7 @@ from app.ui.dialogs import (
 from app.ui.theme import ORANGE, ORANGE_TINT, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, PageHeader, SearchBar
 
-MEAL_TYPES = ("Fruehstueck", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
+MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
 AUTO_OPTIONAL_NOTE = "Menge nicht in Excel angegeben (nach Geschmack)"
 
 
@@ -165,7 +165,7 @@ class RecipesView(QWidget):
         layout = QVBoxLayout(tab)
         layout.setContentsMargins(0, 4, 0, 4)
 
-        section_title = QLabel("Zutaten nach Teilstueck", tab)
+        section_title = QLabel("Zutaten nach Teilstück", tab)
         section_title.setStyleSheet("font-weight: 600; font-size: 15px;")
         layout.addWidget(section_title)
 
@@ -191,7 +191,7 @@ class RecipesView(QWidget):
         table_column.addWidget(self.ingredients_table, stretch=1)
 
         add_component_row = QHBoxLayout()
-        add_component_button = QPushButton("+ Teilstueck hinzufuegen", tab)
+        add_component_button = QPushButton("+ Teilstück hinzufügen", tab)
         add_component_button.clicked.connect(self._add_component)
         add_component_row.addWidget(add_component_button)
         add_component_row.addStretch(1)
@@ -204,7 +204,7 @@ class RecipesView(QWidget):
         cost_title = QLabel("Kostenberechnung", tab)
         cost_title.setStyleSheet("font-weight: 600; font-size: 15px;")
         cost_panel.addWidget(cost_title)
-        portions_label = QLabel("Portionen fuer Kostenberechnung", tab)
+        portions_label = QLabel("Portionen für Kostenberechnung", tab)
         portions_label.setWordWrap(True)
         cost_panel.addWidget(portions_label)
         self.cost_portions_spin = QSpinBox(tab)
@@ -259,7 +259,7 @@ class RecipesView(QWidget):
         layout.addWidget(self.steps_table)
 
         button_row = QHBoxLayout()
-        add_step_button = QPushButton("+ Arbeitsschritt hinzufuegen", tab)
+        add_step_button = QPushButton("+ Arbeitsschritt hinzufügen", tab)
         add_step_button.clicked.connect(self._add_step)
         move_up_button = QPushButton("Nach oben", tab)
         move_up_button.clicked.connect(lambda: self._move_step(-1))
@@ -297,7 +297,7 @@ class RecipesView(QWidget):
 
         layout.addWidget(QLabel("Zutaten dieser Version", tab))
         self.version_detail_table = QTableWidget(0, 4, tab)
-        self.version_detail_table.setHorizontalHeaderLabels(["Teilstueck", "Zutat", "Menge", "Einheit"])
+        self.version_detail_table.setHorizontalHeaderLabels(["Teilstück", "Zutat", "Menge", "Einheit"])
         self.version_detail_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.version_detail_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         layout.addWidget(self.version_detail_table)
@@ -458,7 +458,7 @@ class RecipesView(QWidget):
         row = table.rowCount()
         table.insertRow(row)
         table.setSpan(row, 0, 1, 5)
-        empty_item = QTableWidgetItem("Noch keine Zutaten in diesem Teilstueck.")
+        empty_item = QTableWidgetItem("Noch keine Zutaten in diesem Teilstück.")
         empty_item.setForeground(QColor(TEXT_MUTED))
         font = empty_item.font()
         font.setItalic(True)
@@ -520,9 +520,9 @@ class RecipesView(QWidget):
 
     def _add_component(self) -> None:
         if self._current_recipe_id is None:
-            error_dialog(self, "Bitte zuerst ein Rezept auswaehlen oder anlegen.")
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
-        name = prompt_text(self, "Teilstueck hinzufuegen", "Name des Teilstuecks (z. B. 'Soße'):")
+        name = prompt_text(self, "Teilstück hinzufügen", "Name des Teilstücks (z. B. 'Soße'):")
         if not name:
             return
         with self.context.session() as session:
@@ -533,8 +533,8 @@ class RecipesView(QWidget):
     def _delete_component(self, component_id: int) -> None:
         if not confirm_dialog(
             self,
-            "Teilstueck loeschen",
-            "Das Teilstueck wird geloescht. Die Zutaten bleiben erhalten und wandern nach "
+            "Teilstück löschen",
+            "Das Teilstück wird gelöscht. Die Zutaten bleiben erhalten und wandern nach "
             f"'{recipe_service.UNASSIGNED_COMPONENT_LABEL}'. Fortfahren?",
         ):
             return
@@ -546,7 +546,7 @@ class RecipesView(QWidget):
 
     def _add_ingredient(self, component_id: int | None) -> None:
         if self._current_recipe_id is None:
-            error_dialog(self, "Bitte zuerst ein Rezept auswaehlen oder anlegen.")
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
         with self.context.session() as session:
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
@@ -561,7 +561,7 @@ class RecipesView(QWidget):
             components,
             self,
             initial={"component_id": component_id} if component_id is not None else None,
-            title="Zutat hinzufuegen",
+            title="Zutat hinzufügen",
         )
         if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
             return
@@ -672,7 +672,7 @@ class RecipesView(QWidget):
 
     def _add_step(self) -> None:
         if self._current_recipe_id is None:
-            error_dialog(self, "Bitte zuerst ein Rezept auswaehlen oder anlegen.")
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
         dialog = RecipeStepDialog(self)
         if dialog.exec() != RecipeStepDialog.DialogCode.Accepted:
@@ -724,7 +724,7 @@ class RecipesView(QWidget):
     def _move_step(self, direction: int) -> None:
         row = self.steps_table.currentRow()
         if row < 0:
-            error_dialog(self, "Bitte zuerst einen Arbeitsschritt auswaehlen.")
+            error_dialog(self, "Bitte zuerst einen Arbeitsschritt auswählen.")
             return
         step_id = self.steps_table.item(row, 0).data(1000)
         with self.context.session() as session:
@@ -768,7 +768,7 @@ class RecipesView(QWidget):
 
     def _scale_recipe(self) -> None:
         if self._current_recipe_id is None:
-            error_dialog(self, "Bitte zuerst ein Rezept auswaehlen.")
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen.")
             return
         with self.context.session() as session:
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
@@ -801,7 +801,7 @@ class RecipesView(QWidget):
 
     def _export_pdf(self) -> None:
         if self._current_recipe_id is None:
-            error_dialog(self, "Bitte zuerst ein Rezept auswaehlen.")
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen.")
             return
         path, _ = QFileDialog.getSaveFileName(self, "Rezept als PDF exportieren", "rezept.pdf", "PDF-Dateien (*.pdf)")
         if not path:

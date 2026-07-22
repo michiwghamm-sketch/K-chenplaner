@@ -103,7 +103,7 @@ def lookup_product_prices(
 ) -> OpenPricesLookupResult:
     normalized_barcode = barcode.strip()
     if not normalized_barcode:
-        raise ValueError("Ein Barcode wird benoetigt.")
+        raise ValueError("Ein Barcode wird benötigt.")
 
     product_payload = _get_json(f"/products/code/{normalized_barcode}", timeout=timeout)
     product = _parse_product(product_payload)
@@ -169,7 +169,7 @@ def find_best_match_for_query(
                 best_match = match
 
     if best_match is None:
-        raise OpenPricesLookupError(f"Kein passender Open-Prices-Treffer fuer '{query}' gefunden.")
+        raise OpenPricesLookupError(f"Kein passender Open-Prices-Treffer für '{query}' gefunden.")
     return best_match
 
 
@@ -436,7 +436,7 @@ def build_search_queries(ingredient_name: str) -> list[str]:
 def _parse_observation(payload: dict[str, Any]) -> OpenPriceObservation:
     price = _parse_decimal(payload.get("price"))
     if price is None:
-        raise OpenPricesLookupError("Open Prices hat einen Preiseintrag ohne gueltigen Preis geliefert.")
+        raise OpenPricesLookupError("Open Prices hat einen Preiseintrag ohne gültigen Preis geliefert.")
 
     location = payload.get("location") or {}
     proof = payload.get("proof") or {}

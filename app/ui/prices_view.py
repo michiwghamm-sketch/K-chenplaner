@@ -65,7 +65,7 @@ class _OpenPricesAutoImportWorker(QObject):
 
 
 class PricesView(QWidget):
-    """Preisverwaltung: aktuelle Preise je Zutat, fehlende Preise, Jahresuebernahme."""
+    """Preisverwaltung: aktuelle Preise je Zutat, fehlende Preise, Jahresübernahme."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -77,7 +77,7 @@ class PricesView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(PageHeader("Preise", "Zutatenpreise je Jahr erfassen und pruefen"))
+        layout.addWidget(PageHeader("Preise", "Zutatenpreise je Jahr erfassen und prüfen"))
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Jahr:", self))
@@ -93,7 +93,7 @@ class PricesView(QWidget):
         open_prices_button.clicked.connect(self._import_open_prices)
         auto_open_prices_button = QPushButton("Fehlende Preise automatisch suchen", self)
         auto_open_prices_button.clicked.connect(self._auto_import_open_prices)
-        copy_button = QPushButton("Preise aus Vorjahr uebernehmen", self)
+        copy_button = QPushButton("Preise aus Vorjahr übernehmen", self)
         copy_button.clicked.connect(self._copy_from_previous_year)
         top_row.addWidget(add_button)
         top_row.addWidget(open_prices_button)
@@ -158,10 +158,10 @@ class PricesView(QWidget):
         if missing:
             names = ", ".join(i.name for i in missing[:10])
             suffix = " ..." if len(missing) > 10 else ""
-            self.missing_label.setText(f"Fehlende Preise fuer {year} ({len(missing)}): {names}{suffix}")
+            self.missing_label.setText(f"Fehlende Preise für {year} ({len(missing)}): {names}{suffix}")
             self.missing_label.setStyleSheet(f"color: {COLOR_CRITICAL};")
         else:
-            self.missing_label.setText(f"Alle aktiven Zutaten haben einen Preis fuer {year}.")
+            self.missing_label.setText(f"Alle aktiven Zutaten haben einen Preis für {year}.")
             self.missing_label.setStyleSheet("")
 
     def _add_price(self) -> None:
@@ -176,7 +176,7 @@ class PricesView(QWidget):
             return
         data = dialog.result_data()
         if data is None:
-            error_dialog(self, "Bitte gueltige Werte angeben.")
+            error_dialog(self, "Bitte gültige Werte angeben.")
             return
 
         with self.context.session() as session:
@@ -211,7 +211,7 @@ class PricesView(QWidget):
 
         observation = lookup.latest_observation
         if observation is None:
-            error_dialog(self, "Fuer diesen Barcode wurden keine Preisbeobachtungen gefunden.")
+            error_dialog(self, "Für diesen Barcode wurden keine Preisbeobachtungen gefunden.")
             return
 
         with self.context.session() as session:
@@ -219,7 +219,7 @@ class PricesView(QWidget):
 
             ingredient = session.get(Ingredient, data["ingredient_id"])
             if ingredient is None:
-                error_dialog(self, "Die ausgewaehlte Zutat wurde nicht gefunden.")
+                error_dialog(self, "Die ausgewählte Zutat wurde nicht gefunden.")
                 return
 
             price_record = open_prices_service.build_ingredient_price_from_observation(
@@ -238,7 +238,7 @@ class PricesView(QWidget):
         info_dialog(
             self,
             (
-                f"Preis fuer {lookup.product.name}{quantity} importiert: "
+                f"Preis für {lookup.product.name}{quantity} importiert: "
                 f"{price_record.price_per_unit} {observation.currency}{imported_unit_text}{store} "
                 f"vom {observation.date.isoformat() if observation.date else 'unbekannten Datum'}."
             ),
@@ -247,14 +247,14 @@ class PricesView(QWidget):
 
     def _auto_import_open_prices(self) -> None:
         if self._auto_import_thread is not None:
-            info_dialog(self, "Der automatische Open-Prices-Import laeuft bereits.")
+            info_dialog(self, "Der automatische Open-Prices-Import läuft bereits.")
             return
 
         year = self.year_spin.value()
         if not confirm_dialog(
             self,
             "Open Prices",
-            f"Fehlende Preise fuer {year} automatisch anhand der Zutatennamen suchen und importieren?",
+            f"Fehlende Preise für {year} automatisch anhand der Zutatennamen suchen und importieren?",
         ):
             return
 
@@ -263,13 +263,13 @@ class PricesView(QWidget):
             ingredients_to_import = [(ingredient.id, ingredient.name, ingredient.default_unit) for ingredient in missing_ingredients]
 
         if not ingredients_to_import:
-            info_dialog(self, f"Es fehlen keine Preise fuer {year}.")
+            info_dialog(self, f"Es fehlen keine Preise für {year}.")
             return
 
         self._set_import_running(True)
-        self.status_label.setText(f"Open Prices sucht Preise fuer 0/{len(ingredients_to_import)} Zutaten ...")
+        self.status_label.setText(f"Open Prices sucht Preise für 0/{len(ingredients_to_import)} Zutaten ...")
         self.import_log.clear()
-        self.import_log.append(f"Starte Preisermittlung fuer Jahr {year} mit {len(ingredients_to_import)} fehlenden Zutaten.")
+        self.import_log.append(f"Starte Preisermittlung für Jahr {year} mit {len(ingredients_to_import)} fehlenden Zutaten.")
 
         self._auto_import_thread = QThread(self)
         self._auto_import_worker = _OpenPricesAutoImportWorker(ingredients_to_import, year)
@@ -305,7 +305,7 @@ class PricesView(QWidget):
             query_text = result.query_used or result.ingredient_name
             suggestion_text = ""
             if result.suggestions:
-                suggestion_text = " | Aehnliche Produkte verfuegbar"
+                suggestion_text = " | Ähnliche Produkte verfügbar"
             self.import_log.append(
                 f"[{current}/{total}] {result.ingredient_name} | Suche: {query_text} | Kein Treffer: {result.message}{suggestion_text}"
             )
@@ -333,7 +333,7 @@ class PricesView(QWidget):
         if skipped_messages:
             preview = "\n".join(skipped_messages[:8])
             more = "\n..." if len(skipped_messages) > 8 else ""
-            summary = f"{summary}\n\nNicht gefunden / uebersprungen:\n{preview}{more}"
+            summary = f"{summary}\n\nNicht gefunden / übersprungen:\n{preview}{more}"
         info_dialog(self, summary, title="Open Prices Import")
         self.refresh()
 
@@ -384,7 +384,7 @@ class PricesView(QWidget):
 
             date_text = suggestion.observation.date.isoformat() if suggestion.observation.date else "Datum unbekannt"
             self.import_log.append(
-                f"Manuell gewaehlt fuer {result.ingredient_name}: {suggestion.product.name} | "
+                f"Manuell gewählt für {result.ingredient_name}: {suggestion.product.name} | "
                 f"{suggestion.observation.price} {suggestion.observation.currency} | {date_text}"
             )
 
@@ -392,10 +392,10 @@ class PricesView(QWidget):
 
     def _copy_from_previous_year(self) -> None:
         target_year = self.year_spin.value()
-        source_year = prompt_int(self, "Preise uebernehmen", "Quelljahr:", default=target_year - 1, minimum=2000, maximum=2100)
+        source_year = prompt_int(self, "Preise übernehmen", "Quelljahr:", default=target_year - 1, minimum=2000, maximum=2100)
         if source_year is None:
             return
         with self.context.session() as session:
             copied = price_service.copy_prices_from_year(session, source_year=source_year, target_year=target_year)
-        info_dialog(self, f"{copied} Preise aus {source_year} nach {target_year} uebernommen.")
+        info_dialog(self, f"{copied} Preise aus {source_year} nach {target_year} übernommen.")
         self.refresh()

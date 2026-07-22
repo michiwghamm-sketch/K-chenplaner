@@ -83,7 +83,7 @@ def generate_daily_meal_slots(
 ) -> list[MealPlanEntry]:
     """Legt fuer jeden Tag im Camp-Zeitraum leere Mahlzeiten-Slots an, sofern noch keine existieren."""
     if camp_year.start_date is None or camp_year.end_date is None:
-        raise ValueError("Camp-Jahr benoetigt Start- und Enddatum fuer die automatische Planung.")
+        raise ValueError("Camp-Jahr benötigt Start- und Enddatum für die automatische Planung.")
 
     existing_keys = {(entry.meal_date, entry.meal_type) for entry in camp_year.meal_plan_entries}
     existing_days = {day.day_date for day in camp_year.camp_days}
@@ -185,7 +185,7 @@ def set_meal_recipe(
 
 def set_status(entry: MealPlanEntry, status: str) -> MealPlanEntry:
     if status not in ALLOWED_STATUSES:
-        raise ValueError(f"Ungueltiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_STATUSES)}")
+        raise ValueError(f"Ungültiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_STATUSES)}")
     entry.status = status
     return entry
 

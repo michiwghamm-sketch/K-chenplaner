@@ -58,7 +58,7 @@ class ImportExportView(QWidget):
         backup_row = QHBoxLayout()
         backup_button = QPushButton("Backup erstellen", backup_group)
         backup_button.clicked.connect(self._create_backup)
-        integrity_button = QPushButton("Datenbank pruefen", backup_group)
+        integrity_button = QPushButton("Datenbank prüfen", backup_group)
         integrity_button.clicked.connect(self._check_integrity)
         backup_row.addWidget(backup_button)
         backup_row.addWidget(integrity_button)
@@ -100,8 +100,8 @@ class ImportExportView(QWidget):
         if not confirm_dialog(
             self,
             "Excel importieren",
-            "Der Import liest die Excel-Datei erneut ein und ergaenzt die Datenbank. "
-            "Bestehende Daten werden dabei nicht ueberschrieben. Fortfahren?",
+            "Der Import liest die Excel-Datei erneut ein und ergänzt die Datenbank. "
+            "Bestehende Daten werden dabei nicht überschrieben. Fortfahren?",
         ):
             return
         try:
@@ -138,12 +138,12 @@ class ImportExportView(QWidget):
     def _restore_backup(self) -> None:
         backup_path_text = self.backup_combo.currentData()
         if not backup_path_text:
-            error_dialog(self, "Es ist kein Backup ausgewaehlt.")
+            error_dialog(self, "Es ist kein Backup ausgewählt.")
             return
         if not confirm_dialog(
             self,
             "Backup wiederherstellen",
-            "Die aktuelle Datenbank wird durch das ausgewaehlte Backup ersetzt. "
+            "Die aktuelle Datenbank wird durch das ausgewählte Backup ersetzt. "
             "Der aktuelle Stand wird vorher automatisch gesichert. Fortfahren?",
         ):
             return
@@ -158,6 +158,6 @@ class ImportExportView(QWidget):
     def _check_integrity(self) -> None:
         ok, result = backup_service.verify_integrity(self.context.engine)
         if ok:
-            info_dialog(self, "Datenbankintegritaet: OK")
+            info_dialog(self, "Datenbankintegrität: OK")
         else:
-            error_dialog(self, f"Datenbankintegritaet fehlgeschlagen: {result}")
+            error_dialog(self, f"Datenbankintegrität fehlgeschlagen: {result}")

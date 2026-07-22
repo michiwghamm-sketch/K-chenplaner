@@ -43,7 +43,7 @@ def list_backups(config: AppConfig) -> list[Path]:
 def restore_backup(config: AppConfig, backup_path: Path, *, confirm: bool) -> None:
     """Stellt eine Datenbank aus einem Backup wieder her. Erfordert explizite Bestaetigung durch den Aufrufer (UI-Dialog)."""
     if not confirm:
-        raise RestoreNotConfirmedError("Restore muss explizit bestaetigt werden.")
+        raise RestoreNotConfirmedError("Restore muss explizit bestätigt werden.")
     if not backup_path.exists():
         raise FileNotFoundError(f"Backup-Datei '{backup_path}' existiert nicht.")
 
