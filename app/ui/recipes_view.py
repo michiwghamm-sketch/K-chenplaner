@@ -135,12 +135,16 @@ class RecipesView(QWidget):
         deactivate_button = QPushButton("Deaktivieren", meta_group)
         deactivate_button.clicked.connect(self._deactivate_recipe)
         deactivate_button.setProperty("role", "secondary")
+        delete_button = QPushButton("Löschen", meta_group)
+        delete_button.clicked.connect(self._delete_recipe)
+        delete_button.setProperty("role", "secondary")
         pdf_button = QPushButton("Als PDF exportieren", meta_group)
         pdf_button.clicked.connect(self._export_pdf)
         pdf_button.setProperty("role", "secondary")
         meta_layout.addWidget(save_button)
         meta_layout.addWidget(cancel_button)
         meta_layout.addWidget(deactivate_button)
+        meta_layout.addWidget(delete_button)
         meta_layout.addWidget(pdf_button)
         meta_layout.addStretch(1)
 
@@ -864,4 +868,21 @@ class RecipesView(QWidget):
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
             if recipe is not None:
                 recipe_service.deactivate_recipe(recipe)
+        self._reload_list()
+
+    def _delete_recipe(self) -> None:
+        if self._current_recipe_id is None:
+            return
+        if not confirm_dialog(self, "Rezept löschen", "Dieses Rezept wirklich unwiderruflich löschen?"):
+            return
+        with self.context.session() as session:
+            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+            if recipe is None:
+                return
+            try:
+                recipe_service.delete_recipe(session, recipe)
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+        self._current_recipe_id = None
         self._reload_list()

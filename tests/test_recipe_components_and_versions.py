@@ -3,7 +3,7 @@ from decimal import Decimal
 import pytest
 
 from app.db import session_scope
-from app.models import CampYear, Ingredient, Recipe, RecipeIngredient
+from app.models import CampYear, Ingredient, MealPlanEntry, Recipe, RecipeIngredient
 from app.services import feedback_service, recipe_service
 
 
@@ -185,3 +185,54 @@ def test_suggested_scale_factor_none_without_feedback(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = _build_recipe(session)
         assert recipe_service.suggested_scale_factor(recipe) is None
+
+
+def test_delete_recipe_removes_it_when_unused(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = _build_recipe(session)
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        recipe_service.delete_recipe(session, recipe)
+
+    with session_scope(session_factory) as session:
+        assert session.get(Recipe, recipe_id) is None
+
+
+def test_delete_recipe_blocks_when_planned_in_wochenplan(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = _build_recipe(session)
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.append(MealPlanEntry(meal_type="Mittagessen", recipe=recipe, status="geplant"))
+        session.add(camp_year)
+        session.flush()
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        with pytest.raises(ValueError, match="Wochenplan"):
+            recipe_service.delete_recipe(session, recipe)
+
+    with session_scope(session_factory) as session:
+        assert session.get(Recipe, recipe_id) is not None
+
+
+def test_delete_recipe_blocks_when_it_has_feedback(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = _build_recipe(session)
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        session.add(camp_year)
+        session.flush()
+        feedback_service.record_feedback(
+            session, camp_year=camp_year, recipe=recipe, planned_portions=10, cooked_portions=10
+        )
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        recipe = session.get(Recipe, recipe_id)
+        with pytest.raises(ValueError, match="Feedback"):
+            recipe_service.delete_recipe(session, recipe)
+
+    with session_scope(session_factory) as session:
+        assert session.get(Recipe, recipe_id) is not None

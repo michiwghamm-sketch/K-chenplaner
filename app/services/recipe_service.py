@@ -202,6 +202,24 @@ def activate_recipe(recipe: Recipe) -> None:
     recipe.active = True
 
 
+def delete_recipe(session: Session, recipe: Recipe) -> None:
+    """Löscht ein Rezept dauerhaft. Schlägt fehl, wenn es noch im Wochenplan verplant ist oder
+    Feedback-Einträge hat (dort würden sonst verwaiste Verknüpfungen entstehen) - in dem Fall
+    stattdessen deaktivieren oder zuerst aus dem Wochenplan entfernen."""
+    if recipe.meal_plan_entries:
+        raise ValueError(
+            f"'{recipe.name}' ist noch im Wochenplan verplant und kann nicht gelöscht werden. "
+            "Bitte zuerst aus dem Wochenplan entfernen oder stattdessen deaktivieren."
+        )
+    if recipe.feedback_entries:
+        raise ValueError(
+            f"'{recipe.name}' hat bereits Feedback-Einträge und kann nicht gelöscht werden. "
+            "Bitte stattdessen deaktivieren."
+        )
+    session.delete(recipe)
+    session.flush()
+
+
 # --- Teilstuecke (RecipeComponent) -------------------------------------------------
 
 
