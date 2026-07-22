@@ -228,7 +228,7 @@ class PlanningView(QWidget):
     def _edit_camp_year(self) -> None:
         camp_year_id = self.context.current_camp_year_id
         if camp_year_id is None:
-            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswaehlen oder anlegen.")
+            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswählen oder anlegen.")
             return
 
         with self.context.session() as session:
@@ -257,7 +257,7 @@ class PlanningView(QWidget):
     def _generate_slots(self) -> None:
         camp_year_id = self.context.current_camp_year_id
         if camp_year_id is None:
-            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswaehlen oder anlegen.")
+            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswählen oder anlegen.")
             return
         with self.context.session() as session:
             camp_year = session.get(CampYear, camp_year_id)

@@ -45,10 +45,10 @@ class RecipeCostResult:
 def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientLine]:
     """Skaliert alle Zutatenmengen eines Rezepts auf die gewuenschte Portionenzahl."""
     if target_portions <= 0:
-        raise ValueError("Zielportionen muessen groesser als 0 sein.")
+        raise ValueError("Zielportionen müssen größer als 0 sein.")
     base_portions = recipe.default_portions or target_portions
     if base_portions <= 0:
-        raise ValueError("Rezept hat keine gueltige Standardportionenzahl.")
+        raise ValueError("Rezept hat keine gültige Standardportionenzahl.")
 
     factor = Decimal(target_portions) / Decimal(base_portions)
     lines: list[ScaledIngredientLine] = []
@@ -216,7 +216,7 @@ def create_component(session: Session, recipe: Recipe, name: str, *, notes: str 
 def update_component(component: RecipeComponent, **fields: object) -> RecipeComponent:
     for key, value in fields.items():
         if not hasattr(component, key):
-            raise AttributeError(f"Unbekanntes Teilstueck-Feld: {key}")
+            raise AttributeError(f"Unbekanntes Teilstück-Feld: {key}")
         setattr(component, key, value)
     return component
 
@@ -370,7 +370,7 @@ def scale_recipe_ingredients(
 ) -> RecipeVersion:
     """Skaliert alle Zutatenmengen mit einem Faktor. Der vorherige Stand wird als Version gesichert."""
     if factor <= 0:
-        raise ValueError("Der Faktor muss groesser als 0 sein.")
+        raise ValueError("Der Faktor muss größer als 0 sein.")
 
     version = create_version_snapshot(
         session, recipe, change_note=change_note or f"Mengen skaliert mit Faktor {factor}", scale_factor=factor

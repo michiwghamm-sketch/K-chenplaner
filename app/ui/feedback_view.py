@@ -34,7 +34,7 @@ REPEAT_OPTIONS = ("Unbekannt", "Ja", "Nein")
 
 
 class FeedbackView(QWidget):
-    """Feedback: Wochenplan eines Camp-Jahrs durchgehen und je Mahlzeit Rueckmeldung erfassen."""
+    """Feedback: Wochenplan eines Camp-Jahrs durchgehen und je Mahlzeit Rückmeldung erfassen."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -75,7 +75,7 @@ class FeedbackView(QWidget):
         right = QWidget(self)
         right_layout = QVBoxLayout(right)
 
-        self.meal_info_label = QLabel("Bitte links eine Mahlzeit auswaehlen.", right)
+        self.meal_info_label = QLabel("Bitte links eine Mahlzeit auswählen.", right)
         self.meal_info_label.setStyleSheet("font-weight: 600; font-size: 15px;")
         right_layout.addWidget(self.meal_info_label)
 
@@ -105,13 +105,13 @@ class FeedbackView(QWidget):
         form.addRow("Wie kam es an? (1-5)", self.rating_spin)
         form.addRow("Hat die Menge gereicht?", self.quantity_sufficient_combo)
         form.addRow("Portionen gekocht", self.cooked_spin)
-        form.addRow("Mengenfaktor naechstes Mal", self.factor_line)
+        form.addRow("Mengenfaktor nächstes Mal", self.factor_line)
         form.addRow("Restmenge", self.leftover_qty_spin)
         form.addRow("Einheit Rest", self.leftover_unit_edit)
         form.addRow("Wiederholen?", self.repeat_combo)
         form.addRow("Ablauf-Tipps/Tricks", self.process_tips_edit)
         form.addRow("Was lief gut?", self.what_went_well_edit)
-        form.addRow("Was aendern?", self.what_to_change_edit)
+        form.addRow("Was ändern?", self.what_to_change_edit)
         right_layout.addLayout(form)
 
         save_button = QPushButton("Feedback speichern", right)
@@ -211,7 +211,7 @@ class FeedbackView(QWidget):
         self._update_factor_preview()
 
     def _clear_form(self) -> None:
-        self.meal_info_label.setText("Bitte links eine Mahlzeit auswaehlen.")
+        self.meal_info_label.setText("Bitte links eine Mahlzeit auswählen.")
         self.rating_spin.setValue(1)
         self.quantity_sufficient_combo.setCurrentIndex(0)
         self.cooked_spin.setValue(0)
@@ -249,7 +249,7 @@ class FeedbackView(QWidget):
 
     def _save_feedback(self) -> None:
         if self._current_entry_id is None:
-            error_dialog(self, "Bitte zuerst eine Mahlzeit auswaehlen.")
+            error_dialog(self, "Bitte zuerst eine Mahlzeit auswählen.")
             return
 
         repeat_value = self.repeat_combo.currentText()
