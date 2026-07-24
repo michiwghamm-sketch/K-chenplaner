@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from app.db import session_scope
-from app.models import CampYear, MealPlanEntry, Recipe
+from app.models import CampYear, MealPlanEntry, Recipe, RecipeFeedback
 from app.services import feedback_service
 
 
@@ -139,3 +139,24 @@ def test_save_meal_feedback_rejects_invalid_rating(session_factory) -> None:
 
         with pytest.raises(ValueError):
             feedback_service.save_meal_feedback(session, entry, rating=7)
+
+
+def test_delete_feedback_removes_entry(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        recipe = Recipe(name="Ratatouille", normalized_name="ratatouille")
+        session.add_all([camp_year, recipe])
+        session.flush()
+        feedback = feedback_service.record_feedback(session, camp_year=camp_year, recipe=recipe, rating=4)
+        session.flush()
+        feedback_id = feedback.id
+        recipe_id = recipe.id
+
+    with session_scope(session_factory) as session:
+        feedback = session.get(RecipeFeedback, feedback_id)
+        feedback_service.delete_feedback(session, feedback)
+
+    with session_scope(session_factory) as session:
+        assert session.get(RecipeFeedback, feedback_id) is None
+        recipe = session.get(Recipe, recipe_id)
+        assert recipe.feedback_entries == []

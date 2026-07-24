@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor, QFont
@@ -32,7 +33,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.services import export_service, ingredient_service, recipe_service
+from app.services import export_service, feedback_service, ingredient_service, recipe_service
 from app.ui.dialogs import (
     AddRecipeIngredientDialog,
     RecipeStepDialog,
@@ -43,7 +44,7 @@ from app.ui.dialogs import (
     prompt_choice,
     prompt_text,
 )
-from app.ui.theme import ORANGE, ORANGE_TINT, TEXT_MUTED
+from app.ui.theme import BORDER, ORANGE, ORANGE_TINT, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, COLOR_OK, COLOR_WARNING, PageHeader, SearchBar
 
 MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
@@ -166,6 +167,7 @@ class RecipesView(QWidget):
         self.tabs.addTab(self._build_rezept_tab(right), "Rezept")
         self.tabs.addTab(self._build_kochanleitung_tab(right), "Kochanleitung")
         self.tabs.addTab(self._build_history_tab(right), "Historie")
+        self.tabs.addTab(self._build_feedback_tab(right), "Feedback")
         right_layout.addWidget(self.tabs, stretch=1)
 
         splitter.addWidget(right)
@@ -321,6 +323,43 @@ class RecipesView(QWidget):
 
         return tab
 
+    def _build_feedback_tab(self, parent: QWidget) -> QWidget:
+        tab = QWidget(parent)
+        layout = QVBoxLayout(tab)
+
+        layout.addWidget(QLabel("Feedback aus den Camp-Jahren (neuestes zuerst)", tab))
+        self.feedback_table = QTableWidget(0, 6, tab)
+        self.feedback_table.setHorizontalHeaderLabels(
+            ["Jahr", "Bewertung", "Reicht die Menge?", "Portionen", "Rest", "Wiederholen?"]
+        )
+        self.feedback_table.horizontalHeaderItem(3).setToolTip("Geplante / gekochte Portionen")
+        self.feedback_table.verticalHeader().setVisible(False)
+        self.feedback_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.feedback_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.feedback_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.feedback_table.itemSelectionChanged.connect(self._on_feedback_selected)
+        self.feedback_table.setMaximumHeight(160)
+        layout.addWidget(self.feedback_table)
+
+        layout.addWidget(QLabel("Anmerkungen", tab))
+        self.feedback_detail_label = QLabel("", tab)
+        self.feedback_detail_label.setWordWrap(True)
+        self.feedback_detail_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+        self.feedback_detail_label.setStyleSheet(
+            f"background-color: white; border: 1px solid {BORDER}; border-radius: 4px; padding: 8px;"
+        )
+        layout.addWidget(self.feedback_detail_label, stretch=1)
+
+        feedback_button_row = QHBoxLayout()
+        delete_feedback_button = QPushButton("Feedback löschen", tab)
+        delete_feedback_button.setProperty("role", "secondary")
+        delete_feedback_button.clicked.connect(self._delete_feedback)
+        feedback_button_row.addWidget(delete_feedback_button)
+        feedback_button_row.addStretch(1)
+        layout.addLayout(feedback_button_row)
+
+        return tab
+
     # --- Laden / Anzeigen -------------------------------------------------------------
 
     def refresh(self) -> None:
@@ -394,6 +433,8 @@ class RecipesView(QWidget):
         self.version_table.setRowCount(0)
         self.version_detail_table.setRowCount(0)
         self.cost_label.setText("Kosten: -")
+        self.feedback_table.setRowCount(0)
+        self.feedback_detail_label.setText("")
 
     def _reload_detail(self) -> None:
         if self._current_recipe_id is None:
@@ -419,6 +460,7 @@ class RecipesView(QWidget):
             self._rebuild_ingredient_sections(recipe, cost_result)
             self._reload_steps(recipe)
             self._reload_versions(recipe)
+            self._reload_feedback(recipe)
 
         self._set_cost_label(cost_result)
 
@@ -809,6 +851,70 @@ class RecipesView(QWidget):
             self.version_detail_table.setItem(row_index, 1, QTableWidgetItem(entry["ingredient_name"]))
             self.version_detail_table.setItem(row_index, 2, QTableWidgetItem(entry["quantity"]))
             self.version_detail_table.setItem(row_index, 3, QTableWidgetItem(entry["unit"]))
+
+    def _reload_feedback(self, recipe) -> None:
+        self.feedback_table.setRowCount(0)
+        self.feedback_detail_label.setText("")
+        for entry in recipe_service.feedback_history(recipe):
+            row = self.feedback_table.rowCount()
+            self.feedback_table.insertRow(row)
+            year_item = QTableWidgetItem(str(entry.camp_year.year) if entry.camp_year else "-")
+            year_item.setData(1000, entry.id)
+            self.feedback_table.setItem(row, 0, year_item)
+            self.feedback_table.setItem(row, 1, QTableWidgetItem(f"{entry.rating}/5" if entry.rating is not None else ""))
+            self.feedback_table.setItem(row, 2, QTableWidgetItem(entry.quantity_sufficient or ""))
+            planned = entry.planned_portions if entry.planned_portions is not None else "-"
+            cooked = entry.cooked_portions if entry.cooked_portions is not None else "-"
+            self.feedback_table.setItem(row, 3, QTableWidgetItem(f"{planned} / {cooked}"))
+            leftover_text = ""
+            if entry.leftover_quantity is not None:
+                leftover_text = f"{entry.leftover_quantity} {entry.leftover_unit or ''}".strip()
+            self.feedback_table.setItem(row, 4, QTableWidgetItem(leftover_text))
+            if entry.repeat_next_time is True:
+                repeat_text = "Ja"
+            elif entry.repeat_next_time is False:
+                repeat_text = "Nein"
+            else:
+                repeat_text = ""
+            self.feedback_table.setItem(row, 5, QTableWidgetItem(repeat_text))
+
+    def _on_feedback_selected(self) -> None:
+        row = self.feedback_table.currentRow()
+        if row < 0:
+            self.feedback_detail_label.setText("")
+            return
+        feedback_id = self.feedback_table.item(row, 0).data(1000)
+        with self.context.session() as session:
+            feedback = session.get(recipe_service.RecipeFeedback, feedback_id)
+            if feedback is None:
+                self.feedback_detail_label.setText("")
+                return
+            parts = []
+            if feedback.what_went_well:
+                parts.append(f"<b>Gut gelaufen:</b> {escape(feedback.what_went_well)}")
+            if feedback.what_to_change:
+                parts.append(f"<b>Verbessern:</b> {escape(feedback.what_to_change)}")
+            if feedback.process_tips:
+                parts.append(f"<b>Tipps:</b> {escape(feedback.process_tips)}")
+            if feedback.quantity_factor_next_time is not None:
+                parts.append(f"<b>Mengenfaktor nächstes Mal:</b> {feedback.quantity_factor_next_time}")
+        if not parts:
+            parts = ["Keine weiteren Anmerkungen."]
+        self.feedback_detail_label.setText("<br/><br/>".join(parts))
+
+    def _delete_feedback(self) -> None:
+        row = self.feedback_table.currentRow()
+        if row < 0:
+            error_dialog(self, "Bitte zuerst einen Feedback-Eintrag auswählen.")
+            return
+        feedback_id = self.feedback_table.item(row, 0).data(1000)
+        if not confirm_dialog(self, "Feedback löschen", "Diesen Feedback-Eintrag wirklich unwiderruflich löschen?"):
+            return
+        with self.context.session() as session:
+            feedback = session.get(recipe_service.RecipeFeedback, feedback_id)
+            if feedback is not None:
+                feedback_service.delete_feedback(session, feedback)
+        self._reload_detail()
 
     def _scale_recipe(self) -> None:
         if self._current_recipe_id is None:
