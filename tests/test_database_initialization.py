@@ -16,6 +16,8 @@ def test_init_database_creates_expected_tables(tmp_path) -> None:
         "ingredients",
         "ingredient_aliases",
         "ingredient_prices",
+        "ingredient_price_profiles",
+        "open_prices_categories",
         "recipes",
         "recipe_ingredients",
         "camp_years",

@@ -38,6 +38,7 @@ from app.ui.dialogs import (
     AddRecipeIngredientDialog,
     RecipeStepDialog,
     ScaleRecipeDialog,
+    SimilarIngredientsWarningDialog,
     confirm_dialog,
     error_dialog,
     info_dialog,
@@ -638,10 +639,6 @@ class RecipesView(QWidget):
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
             ingredients = [(i.id, i.name) for i in ingredient_service.search_ingredients(session)]
             components = [(c.id, c.name) for c in recipe.components]
-        if not ingredients:
-            error_dialog(self, "Es sind noch keine Zutaten angelegt.")
-            return
-
         dialog = AddRecipeIngredientDialog(
             ingredients,
             components,
@@ -658,6 +655,11 @@ class RecipesView(QWidget):
 
         with self.context.session() as session:
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+            ingredient_id = self._resolve_recipe_ingredient_id(session, data)
+            if ingredient_id is None:
+                return
+            data["ingredient_id"] = ingredient_id
+            data.pop("new_ingredient_name", None)
             recipe_service.add_ingredient_to_recipe(session, recipe, **data)
         self._reload_detail()
 
@@ -699,6 +701,11 @@ class RecipesView(QWidget):
         with self.context.session() as session:
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
             link = session.get(recipe_service.RecipeIngredient, link_id)
+            ingredient_id = self._resolve_recipe_ingredient_id(session, data)
+            if ingredient_id is None:
+                return
+            data["ingredient_id"] = ingredient_id
+            data.pop("new_ingredient_name", None)
             if link.quantity != data["quantity"] or link.unit != data["unit"]:
                 recipe_service.update_ingredient_quantity(
                     session, recipe, link, quantity=data["quantity"], unit=data["unit"]
@@ -710,6 +717,40 @@ class RecipesView(QWidget):
             link.component_id = data["component_id"]
             link.notes = data["notes"]
         self._reload_detail()
+
+    def _resolve_recipe_ingredient_id(self, session, data: dict) -> int | None:
+        if data.get("ingredient_id") is not None:
+            return data["ingredient_id"]
+        name = (data.get("new_ingredient_name") or "").strip()
+        if not name:
+            error_dialog(self, "Bitte eine Zutat auswaehlen oder einen neuen Namen eingeben.")
+            return None
+
+        existing = ingredient_service.find_by_name_or_alias(session, name)
+        if existing is not None:
+            return existing.id
+
+        matches = [
+            (match.name, similarity, reason, len(match.recipe_links) + len(match.prices))
+            for match, similarity, reason in ingredient_service.find_similar_ingredients(session, name)
+        ]
+        if matches:
+            dialog = SimilarIngredientsWarningDialog(name, matches, self)
+            if dialog.exec() != SimilarIngredientsWarningDialog.DialogCode.Accepted:
+                return None
+
+        try:
+            ingredient = ingredient_service.create_ingredient(session, name=name, default_unit=data.get("unit"))
+        except IntegrityError:
+            existing = ingredient_service.find_by_name_or_alias(session, name)
+            if existing is not None:
+                return existing.id
+            raise
+        info_dialog(
+            self,
+            f"Zutat '{ingredient.name}' wurde angelegt. Bitte spaeter in der Zutatenansicht einen Preis hinterlegen.",
+        )
+        return ingredient.id
 
     def _calculate_cost(self) -> None:
         if self._current_recipe_id is None:

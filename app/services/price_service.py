@@ -140,6 +140,10 @@ def copy_prices_from_year(
     return copied
 
 
+def delete_price(session: Session, price: IngredientPrice) -> None:
+    session.delete(price)
+
+
 def compare_years(session: Session, *, year_a: int, year_b: int) -> list[PriceComparisonRow]:
     ingredients = session.execute(select(Ingredient).order_by(Ingredient.name)).scalars().all()
     rows: list[PriceComparisonRow] = []
@@ -168,6 +172,14 @@ def normalize_unit(unit: str | None) -> str | None:
     if unit is None:
         return None
     normalized = unit.strip().lower()
+    normalized = normalized.replace("€", "eur").replace("euro", "eur")
+    normalized = normalized.replace(" ", "")
+    for prefix in ("eur/", "eurpro", "preis/", "price/", "/"):
+        if normalized.startswith(prefix):
+            normalized = normalized[len(prefix) :]
+            break
+    if normalized.startswith("pro"):
+        normalized = normalized[3:]
     return UNIT_ALIASES.get(normalized, normalized or None)
 
 

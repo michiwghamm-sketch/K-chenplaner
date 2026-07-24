@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+from types import SimpleNamespace
 
-from PySide6.QtCore import QDate, QObject, QSize, QThread, Signal
+from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
@@ -19,6 +20,7 @@ from PySide6.QtWidgets import (
     QListWidget,
     QListWidgetItem,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSpinBox,
     QTextEdit,
@@ -33,6 +35,7 @@ from app.services.open_prices_service import (
     lookup_product_prices,
     suggest_matches_for_query,
 )
+from app.services import open_prices_category_service, open_prices_service
 
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
@@ -101,6 +104,8 @@ class AddRecipeIngredientDialog(QDialog):
         self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufügen"))
 
         self.ingredient_combo = QComboBox(self)
+        self.ingredient_combo.setEditable(True)
+        self.ingredient_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
         for ingredient_id, name in ingredients:
             self.ingredient_combo.addItem(name, ingredient_id)
         ingredient_index = self.ingredient_combo.findData(initial.get("ingredient_id"))
@@ -152,8 +157,17 @@ class AddRecipeIngredientDialog(QDialog):
     def result_data(self) -> dict | None:
         if not self.unit_edit.text().strip():
             return None
+        typed_ingredient_name = self.ingredient_combo.currentText().strip()
+        ingredient_id = self.ingredient_combo.currentData()
+        if typed_ingredient_name:
+            matching_index = self.ingredient_combo.findText(typed_ingredient_name, Qt.MatchFlag.MatchFixedString)
+            if matching_index >= 0:
+                ingredient_id = self.ingredient_combo.itemData(matching_index)
+            else:
+                ingredient_id = None
         return {
-            "ingredient_id": self.ingredient_combo.currentData(),
+            "ingredient_id": ingredient_id,
+            "new_ingredient_name": typed_ingredient_name if ingredient_id is None else None,
             "component_id": self.component_combo.currentData(),
             "quantity": Decimal(str(self.quantity_spin.value())),
             "unit": self.unit_edit.text().strip(),
@@ -171,6 +185,10 @@ class AddPriceDialog(QDialog):
         parent: QWidget | None = None,
         *,
         selected_ingredient_id: int | None = None,
+        default_unit: str | None = None,
+        default_source: str | None = None,
+        default_store: str | None = None,
+        default_notes: str | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Preis erfassen")
@@ -189,14 +207,22 @@ class AddPriceDialog(QDialog):
         self.price_spin.setRange(0, 100000)
 
         self.unit_edit = QLineEdit(self)
+        if default_unit:
+            self.unit_edit.setText(default_unit)
         self.source_edit = QLineEdit(self)
+        if default_source:
+            self.source_edit.setText(default_source)
         self.store_edit = QLineEdit(self)
+        if default_store:
+            self.store_edit.setText(default_store)
 
         self.year_spin = QSpinBox(self)
         self.year_spin.setRange(2000, 2100)
         self.year_spin.setValue(default_year)
 
         self.notes_edit = QLineEdit(self)
+        if default_notes:
+            self.notes_edit.setText(default_notes)
 
         form = QFormLayout()
         form.addRow("Zutat", self.ingredient_combo)
@@ -384,6 +410,285 @@ class ProductSearchResult:
     image_bytes: bytes | None
 
 
+@dataclass(slots=True)
+class OpenPricesCandidateResult:
+    candidate: open_prices_category_service.ProductCandidate
+    image_bytes: bytes | None
+
+
+class _OpenPricesCandidateSearchWorker(QObject):
+    finished = Signal(list)
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        query: str,
+        target_unit: str | None,
+        category_tag: str | None,
+        brand_filter: str,
+    ) -> None:
+        super().__init__()
+        self.query = query
+        self.target_unit = target_unit
+        self.category_tag = category_tag
+        self.brand_filter = brand_filter.lower()
+
+    def run(self) -> None:
+        try:
+            candidates = self._load_candidates()
+        except OpenPricesError as exc:
+            self.failed.emit(str(exc))
+            return
+
+        if self.brand_filter:
+            candidates = [
+                candidate
+                for candidate in candidates
+                if self.brand_filter in (candidate.brands or "").lower()
+                or self.brand_filter in candidate.product_name.lower()
+            ]
+
+        results: list[OpenPricesCandidateResult] = []
+        for candidate in candidates[:30]:
+            candidate = _enrich_candidate_from_product_lookup(candidate)
+            image_bytes = fetch_image_bytes(candidate.image_url, timeout=8) if candidate.image_url else None
+            results.append(OpenPricesCandidateResult(candidate=candidate, image_bytes=image_bytes))
+        self.finished.emit(results)
+
+    def _load_candidates(self) -> list[open_prices_category_service.ProductCandidate]:
+        candidates: list[open_prices_category_service.ProductCandidate] = []
+        if self.category_tag:
+            profile = SimpleNamespace(category_tag=self.category_tag)
+            candidates.extend(open_prices_category_service.find_product_candidates_for_profile(profile, pages=4))
+
+        for suggestion in open_prices_service.suggest_matches_for_query(
+            self.query,
+            target_unit=self.target_unit,
+            limit=10,
+            search_size=30,
+            max_product_checks=10,
+        ):
+            observation = suggestion.observation
+            candidates.append(
+                open_prices_category_service.ProductCandidate(
+                    product_code=suggestion.product.code,
+                    product_name=suggestion.product.name,
+                    brands=suggestion.product.brands,
+                    quantity=suggestion.product.quantity,
+                    image_url=suggestion.product.image_url,
+                    price=observation.price,
+                    currency=observation.currency,
+                    price_date=observation.date,
+                    store_name=observation.store_name,
+                    country_code=None,
+                    price_count=suggestion.product.price_count,
+                )
+            )
+
+        deduped: dict[str, open_prices_category_service.ProductCandidate] = {}
+        for candidate in candidates:
+            if candidate.product_code and candidate.product_code not in deduped:
+                deduped[candidate.product_code] = candidate
+        return list(deduped.values())
+
+
+class OpenPricesProductPriceDialog(QDialog):
+    """Produktsuche aus Open Prices fuer eine konkrete Zutat, optional mit Tag, Suchbegriff und Marke."""
+
+    def __init__(
+        self,
+        ingredient_name: str,
+        target_unit: str | None,
+        profile,
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Open Prices Produkt suchen")
+        self.setMinimumSize(680, 520)
+        self._ingredient_name = ingredient_name
+        self._target_unit = target_unit
+        self._profile = profile
+        self._category_tag = profile.category_tag if profile and profile.category_tag else None
+        self._results: list[OpenPricesCandidateResult] = []
+        self._thread: QThread | None = None
+        self._worker: _OpenPricesCandidateSearchWorker | None = None
+
+        layout = QVBoxLayout(self)
+        form = QFormLayout()
+        self.query_edit = QLineEdit(self)
+        self.query_edit.setText(ingredient_name)
+        self.query_edit.returnPressed.connect(self._search)
+        self.brand_edit = QLineEdit(self)
+        self.brand_edit.setPlaceholderText("optional, z. B. Ja!, Barilla, Gut & Günstig")
+        tag_text = profile.category_tag if profile and profile.category_tag else "kein Tag"
+        self.tag_label = QLabel(tag_text, self)
+        form.addRow("Suchbegriff", self.query_edit)
+        form.addRow("Marke", self.brand_edit)
+        form.addRow("Open-Prices-Tag", self.tag_label)
+        layout.addLayout(form)
+
+        self.search_button = QPushButton("Suchen", self)
+        self.search_button.clicked.connect(self._search)
+        layout.addWidget(self.search_button)
+
+        self.status_label = QLabel("", self)
+        layout.addWidget(self.status_label)
+        self.progress_bar = QProgressBar(self)
+        self.progress_bar.setRange(0, 0)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        self.result_list = QListWidget(self)
+        self.result_list.setIconSize(QSize(72, 72))
+        self.result_list.itemDoubleClicked.connect(lambda _item: self.accept())
+        layout.addWidget(self.result_list, stretch=1)
+
+        self.buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Produkt verwenden")
+        self.buttons.accepted.connect(self.accept)
+        self.buttons.rejected.connect(self.reject)
+        layout.addWidget(self.buttons)
+
+        self._search()
+
+    def _search(self) -> None:
+        if self._thread is not None:
+            return
+        self.result_list.clear()
+        self._results = []
+        self.status_label.setText("Suche laeuft ...")
+        self._set_search_running(True)
+        query = self.query_edit.text().strip() or self._ingredient_name
+        self._thread = QThread(self)
+        self._worker = _OpenPricesCandidateSearchWorker(
+            query,
+            self._target_unit,
+            self._category_tag,
+            self.brand_edit.text().strip(),
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_search_finished)
+        self._worker.failed.connect(self._on_search_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._cleanup_search_thread)
+        self._thread.start()
+
+    def _on_search_finished(self, results: list[OpenPricesCandidateResult]) -> None:
+        self._results = results
+        for result in results:
+            item = QListWidgetItem(self._candidate_label(result.candidate))
+            if result.image_bytes:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(result.image_bytes):
+                    item.setIcon(QIcon(pixmap))
+            self.result_list.addItem(item)
+        self.status_label.setText(f"{len(self._results)} Treffer")
+        self._set_search_running(False)
+
+    def _on_search_failed(self, message: str) -> None:
+        self.status_label.setText(f"Fehler: {message}")
+        self._set_search_running(False)
+
+    def _cleanup_search_thread(self) -> None:
+        if self._worker is not None:
+            self._worker.deleteLater()
+        if self._thread is not None:
+            self._thread.deleteLater()
+        self._worker = None
+        self._thread = None
+
+    def _set_search_running(self, running: bool) -> None:
+        self.search_button.setEnabled(not running)
+        self.query_edit.setEnabled(not running)
+        self.brand_edit.setEnabled(not running)
+        self.result_list.setEnabled(not running)
+        self.buttons.button(QDialogButtonBox.StandardButton.Ok).setEnabled(not running)
+        self.buttons.button(QDialogButtonBox.StandardButton.Cancel).setEnabled(not running)
+        self.progress_bar.setVisible(running)
+
+    def closeEvent(self, event) -> None:  # noqa: N802 - Qt hook
+        if self._thread is not None:
+            event.ignore()
+            return
+        super().closeEvent(event)
+
+    def _candidate_label(self, candidate: open_prices_category_service.ProductCandidate) -> str:
+        date_text = candidate.price_date.isoformat() if candidate.price_date else "Datum unbekannt"
+        brand_text = f" ({candidate.brands})" if candidate.brands else ""
+        quantity_text = f" | Packung: {candidate.quantity}" if candidate.quantity else ""
+        price_text = _price_preview(candidate, self._target_unit)
+        store_text = f" | {candidate.store_name}" if candidate.store_name else ""
+        return (
+            f"{candidate.product_name}{brand_text}{quantity_text}\n"
+            f"Barcode {candidate.product_code} | {candidate.price} {candidate.currency}"
+            f"{price_text} | {date_text}{store_text}"
+        )
+
+    def selected_candidate(self) -> open_prices_category_service.ProductCandidate | None:
+        row = self.result_list.currentRow()
+        if row < 0 or row >= len(self._results):
+            return None
+        return self._results[row].candidate
+
+
+def _price_preview(candidate: open_prices_category_service.ProductCandidate, target_unit: str | None) -> str:
+    normalized_target_unit = _clean_unit(target_unit)
+    if normalized_target_unit is None:
+        return ""
+    observation = open_prices_service.OpenPriceObservation(
+        product_code=candidate.product_code,
+        product_name=candidate.product_name,
+        price=candidate.price,
+        currency=candidate.currency,
+        date=candidate.price_date,
+        store_name=candidate.store_name,
+        location_name=candidate.store_name,
+        proof_type=None,
+        price_is_discounted=False,
+    )
+    price = open_prices_service.build_ingredient_price_from_observation(
+        0,
+        observation,
+        product_quantity=candidate.quantity,
+        target_unit=normalized_target_unit,
+    )
+    if price.unit == normalized_target_unit:
+        return f" | = {price.price_per_unit} {candidate.currency}/{price.unit}"
+    return " | Grundpreis nicht sicher berechenbar"
+
+
+def _enrich_candidate_from_product_lookup(
+    candidate: open_prices_category_service.ProductCandidate,
+) -> open_prices_category_service.ProductCandidate:
+    try:
+        lookup = open_prices_service.lookup_product_prices(candidate.product_code, size=1)
+    except OpenPricesError:
+        return candidate
+    product = lookup.product
+    return replace(
+        candidate,
+        product_name=product.name or candidate.product_name,
+        brands=product.brands or candidate.brands,
+        quantity=product.quantity or candidate.quantity,
+        image_url=product.image_url or candidate.image_url,
+        price_count=product.price_count or candidate.price_count,
+    )
+
+
+def _clean_unit(unit: str | None) -> str | None:
+    if not unit:
+        return None
+    cleaned = unit.strip().lower()
+    for prefix in ("€/", "eur/"):
+        if cleaned.startswith(prefix):
+            cleaned = cleaned[len(prefix) :]
+    if cleaned in {"stueck", "stück"}:
+        return "stk"
+    return cleaned or None
+
+
 class _ProductSearchWorker(QObject):
     """Sucht in Open Prices nach Produkten und laedt Vorschaubilder - reine Netzwerkarbeit, kein
     DB-Zugriff (gleiches Muster wie _OpenPricesAutoImportWorker in ingredients_view.py)."""
@@ -424,7 +729,7 @@ class BarcodeSearchDialog(QDialog):
         progress_text: str | None = None,
     ) -> None:
         super().__init__(parent)
-        self.setWindowTitle("Produkt/Barcode suchen")
+        self.setWindowTitle("Open Prices suchen")
         self.setMinimumSize(560, 420)
 
         self._target_unit = target_unit
