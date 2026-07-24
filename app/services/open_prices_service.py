@@ -123,13 +123,23 @@ def search_products(
     query: str,
     *,
     size: int = 10,
+    order_by: str | None = "-price_count",
     timeout: int = DEFAULT_TIMEOUT_SECONDS,
 ) -> list[OpenPricesProduct]:
     normalized_query = query.strip()
     if not normalized_query:
         return []
 
-    payload = _get_json("/products", params={"product_name__like": normalized_query, "size": size}, timeout=timeout)
+    # Ohne explizite Sortierung liefert die API Treffer in einer Reihenfolge, die mit
+    # tatsaechlich vorhandenen Preisbeobachtungen kaum korreliert - bei generischen Begriffen
+    # wie "Apfel" hatten von den ersten 50 Treffern nur 2 ueberhaupt einen Preis (price_count>0),
+    # das fruehere Standardverhalten fand daher oft schlicht nichts. Nach price_count absteigend
+    # sortieren stellt sicher, dass die Kandidaten, die find_best_match_for_query/
+    # suggest_matches_for_query anschliessend bewerten, ueberhaupt Preisdaten haben koennen.
+    params: dict[str, Any] = {"product_name__like": normalized_query, "size": size}
+    if order_by:
+        params["order_by"] = order_by
+    payload = _get_json("/products", params=params, timeout=timeout)
     return [_parse_product(item) for item in payload.get("items", [])]
 
 
@@ -450,6 +460,124 @@ def parse_quantity_string(value: str | None) -> tuple[Decimal, str] | None:
     return (amount, unit)
 
 
+# Open Prices ist ueberwiegend mit englischsprachigen Produktnamen befuellt (US/UK-lastiger
+# Beitragsstamm) - generische deutsche Warenbegriffe wie "Apfel" oder "Zwiebel" treffen dort kaum
+# Produkte mit hinterlegten Preisen, die englische Entsprechung dagegen deutlich mehr (siehe
+# docs/... Recherche: "Apfel" 7137 Treffer/kaum mit Preis vs. "apple" 29515 Treffer, mehr mit
+# Preisen). Deckt den tatsaechlichen Zutatenbestand der App ab, keine allgemeine Uebersetzung.
+_GERMAN_TO_ENGLISH_FOOD_TERMS: dict[str, str] = {
+    "apfel": "apple",
+    "apfelmuss": "apple sauce",
+    "aubergine": "eggplant",
+    "banane": "banana",
+    "basilikum": "basil",
+    "birne": "pear",
+    "blattspinat": "spinach",
+    "bohnen": "beans",
+    "brokkoli": "broccoli",
+    "brot": "bread",
+    "brotchen": "bread roll",
+    "bruhe": "broth",
+    "butter": "butter",
+    "champignon": "mushroom",
+    "champignons": "mushroom",
+    "champingions": "mushroom",
+    "cayennepfeffer": "cayenne pepper",
+    "currypaste": "curry paste",
+    "dill": "dill",
+    "ei": "egg",
+    "eier": "eggs",
+    "eigelb": "egg yolk",
+    "eiweiss": "egg white",
+    "erbsen": "peas",
+    "erdnusse": "peanuts",
+    "essig": "vinegar",
+    "essiggurken": "pickles",
+    "feta": "feta cheese",
+    "fond": "stock",
+    "frischkase": "cream cheese",
+    "gemusebruhe": "vegetable stock",
+    "gouda": "gouda cheese",
+    "gurke": "cucumber",
+    "hackfleisch": "minced meat",
+    "hartkase": "hard cheese",
+    "honig": "honey",
+    "joghurt": "yogurt",
+    "karotte": "carrot",
+    "kartoffel": "potato",
+    "kartoffeln": "potatoes",
+    "kase": "cheese",
+    "ketchup": "ketchup",
+    "kidneybohnen": "kidney beans",
+    "knoblauch": "garlic",
+    "kohl": "cabbage",
+    "kokosmilch": "coconut milk",
+    "kokusmilch": "coconut milk",
+    "kopfsalat": "lettuce",
+    "kreuzkummel": "cumin",
+    "lauch": "leek",
+    "limette": "lime",
+    "limettensaft": "lime juice",
+    "linsen": "lentils",
+    "lorbeerblatt": "bay leaf",
+    "mais": "corn",
+    "majonaise": "mayonnaise",
+    "majoran": "marjoram",
+    "marmelade": "jam",
+    "mehl": "flour",
+    "milch": "milk",
+    "muskat": "nutmeg",
+    "nudeln": "pasta",
+    "ol": "oil",
+    "oliven": "olives",
+    "olivenol": "olive oil",
+    "paprika": "bell pepper",
+    "petersilie": "parsley",
+    "pfeffer": "pepper",
+    "pinienkerne": "pine nuts",
+    "puderzucker": "powdered sugar",
+    "putenfleisch": "turkey",
+    "radisschen": "radish",
+    "reis": "rice",
+    "rinderbruhe": "beef stock",
+    "rinderfond": "beef stock",
+    "rindfleisch": "beef",
+    "rosinen": "raisins",
+    "rotwein": "red wine",
+    "rustzwiebeln": "fried onions",
+    "sahne": "cream",
+    "salat": "salad",
+    "salz": "salt",
+    "sauerkraut": "sauerkraut",
+    "schalotte": "shallot",
+    "schnittlauch": "chives",
+    "schweinerippen": "pork ribs",
+    "semmel": "bread roll",
+    "semmelbrosel": "breadcrumbs",
+    "senf": "mustard",
+    "sojasauce": "soy sauce",
+    "sojasosse": "soy sauce",
+    "spagetti": "spaghetti",
+    "speck": "bacon",
+    "staudensellerie": "celery",
+    "tofu": "tofu",
+    "tomate": "tomato",
+    "tomaten": "tomatoes",
+    "tomatenmark": "tomato paste",
+    "vanillezucker": "vanilla sugar",
+    "wasser": "water",
+    "weisskohl": "white cabbage",
+    "weisswein": "white wine",
+    "wurst": "sausage",
+    "zitronensaft": "lemon juice",
+    "zucchini": "zucchini",
+    "zuchini": "zucchini",
+    "zucker": "sugar",
+    "zwiebel": "onion",
+    "zwiebeln": "onions",
+}
+
+
 def build_search_queries(ingredient_name: str) -> list[str]:
     original = ingredient_name.strip()
     if not original:
@@ -482,6 +610,24 @@ def build_search_queries(ingredient_name: str) -> list[str]:
 
         without_fillers = [token for token in singular_tokens if token not in {"mit", "und", "a", "la"}]
         add(" ".join(without_fillers))
+
+        # _singularize_token strippt Suffixe rein heuristisch und verstuemmelt dabei manche
+        # bereits-singularen Woerter (z. B. "karotte" -> "karott"), darum bei der Uebersetzung
+        # zusaetzlich gegen die unveraenderte normalisierte Form pruefen.
+        kept_pairs = [
+            (raw, singular)
+            for raw, singular in zip(normalized_tokens, singular_tokens)
+            if singular not in {"mit", "und", "a", "la"}
+        ]
+        if any(
+            singular in _GERMAN_TO_ENGLISH_FOOD_TERMS or raw in _GERMAN_TO_ENGLISH_FOOD_TERMS
+            for raw, singular in kept_pairs
+        ):
+            english_tokens = [
+                _GERMAN_TO_ENGLISH_FOOD_TERMS.get(singular, _GERMAN_TO_ENGLISH_FOOD_TERMS.get(raw, singular))
+                for raw, singular in kept_pairs
+            ]
+            add(" ".join(english_tokens))
 
     return candidates
 

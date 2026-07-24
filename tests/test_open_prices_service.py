@@ -335,6 +335,42 @@ def test_build_search_queries_adds_normalized_and_singular_variants() -> None:
     assert "gnocchi salat" in queries
 
 
+def test_build_search_queries_adds_english_translation_for_known_terms() -> None:
+    # Open Prices ist ueberwiegend englischsprachig befuellt - generische deutsche Begriffe wie
+    # "Apfel" liefern dort kaum Treffer mit Preisdaten, die englische Entsprechung deutlich mehr.
+    assert "apple" in open_prices_service.build_search_queries("Apfel")
+    assert "onion" in open_prices_service.build_search_queries("Zwiebeln")
+
+
+def test_build_search_queries_falls_back_to_raw_token_when_singularizer_overstrips() -> None:
+    # _singularize_token strippt "karotte" (bereits Singular) faelschlich zu "karott" - die
+    # Uebersetzung muss trotzdem greifen, indem sie zusaetzlich die unveraenderte Form prueft.
+    assert "carrot" in open_prices_service.build_search_queries("Karotte")
+
+
+def test_build_search_queries_skips_english_variant_for_unknown_terms() -> None:
+    queries = open_prices_service.build_search_queries("Hinweis")
+    assert len(queries) == len(set(q.lower() for q in queries))
+
+
+def test_search_products_orders_by_price_count_descending_by_default(monkeypatch) -> None:
+    payloads = {
+        "https://prices.openfoodfacts.org/api/v1/products?product_name__like=Apfel&size=10&order_by=-price_count": {
+            "items": [{"code": "1", "product_name": "Apfelmus", "price_count": 3}]
+        },
+    }
+
+    def fake_urlopen(url: str, timeout: int = 15):
+        return _FakeResponse(payloads[url])
+
+    monkeypatch.setattr(open_prices_service, "urlopen", fake_urlopen)
+
+    products = open_prices_service.search_products("Apfel")
+
+    assert len(products) == 1
+    assert products[0].name == "Apfelmus"
+
+
 def test_suggest_matches_for_query_returns_ranked_suggestions(monkeypatch) -> None:
     def fake_search_products(query: str, *, size: int = 10, timeout: int = 15):
         return [
