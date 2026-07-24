@@ -8,7 +8,6 @@ NAV_ITEMS = (
     ("planning", "Wochenplan"),
     ("recipes", "Rezepte"),
     ("ingredients", "Zutaten"),
-    ("prices", "Preise"),
     ("shopping", "Einkaufsliste"),
     ("feedback", "Feedback"),
     ("import_export", "Import/Export"),

@@ -9,7 +9,6 @@ from app.ui.import_export_view import ImportExportView
 from app.ui.ingredients_view import IngredientsView
 from app.ui.navigation import NAV_ITEMS, Sidebar
 from app.ui.planning_view import PlanningView
-from app.ui.prices_view import PricesView
 from app.ui.recipes_view import RecipesView
 from app.ui.settings_view import SettingsView
 from app.ui.shopping_view import ShoppingView
@@ -20,7 +19,6 @@ VIEW_CLASSES = {
     "planning": PlanningView,
     "recipes": RecipesView,
     "ingredients": IngredientsView,
-    "prices": PricesView,
     "shopping": ShoppingView,
     "feedback": FeedbackView,
     "import_export": ImportExportView,

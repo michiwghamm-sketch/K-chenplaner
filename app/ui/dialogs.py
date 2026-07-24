@@ -164,13 +164,25 @@ class AddRecipeIngredientDialog(QDialog):
 class AddPriceDialog(QDialog):
     """Dialog zum Erfassen eines neuen Zutatenpreises."""
 
-    def __init__(self, ingredients: list[tuple[int, str]], default_year: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        ingredients: list[tuple[int, str]],
+        default_year: int,
+        parent: QWidget | None = None,
+        *,
+        selected_ingredient_id: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Preis erfassen")
 
         self.ingredient_combo = QComboBox(self)
         for ingredient_id, name in ingredients:
             self.ingredient_combo.addItem(name, ingredient_id)
+        if selected_ingredient_id is not None:
+            index = self.ingredient_combo.findData(selected_ingredient_id)
+            if index >= 0:
+                self.ingredient_combo.setCurrentIndex(index)
+            self.ingredient_combo.setEnabled(False)
 
         self.price_spin = QDoubleSpinBox(self)
         self.price_spin.setDecimals(2)
@@ -224,16 +236,31 @@ class AddPriceDialog(QDialog):
 class OpenPricesImportDialog(QDialog):
     """Dialog für den Import eines externen Preises über einen Barcode."""
 
-    def __init__(self, ingredients: list[tuple[int, str]], default_year: int, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        ingredients: list[tuple[int, str]],
+        default_year: int,
+        parent: QWidget | None = None,
+        *,
+        selected_ingredient_id: int | None = None,
+        default_barcode: str | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Preis aus Open Prices importieren")
 
         self.ingredient_combo = QComboBox(self)
         for ingredient_id, name in ingredients:
             self.ingredient_combo.addItem(name, ingredient_id)
+        if selected_ingredient_id is not None:
+            index = self.ingredient_combo.findData(selected_ingredient_id)
+            if index >= 0:
+                self.ingredient_combo.setCurrentIndex(index)
+            self.ingredient_combo.setEnabled(False)
 
         self.barcode_edit = QLineEdit(self)
         self.barcode_edit.setPlaceholderText("z. B. 3017620422003")
+        if default_barcode:
+            self.barcode_edit.setText(default_barcode)
 
         self.year_spin = QSpinBox(self)
         self.year_spin.setRange(2000, 2100)
@@ -359,7 +386,7 @@ class ProductSearchResult:
 
 class _ProductSearchWorker(QObject):
     """Sucht in Open Prices nach Produkten und laedt Vorschaubilder - reine Netzwerkarbeit, kein
-    DB-Zugriff (gleiches Muster wie _OpenPricesAutoImportWorker in prices_view.py)."""
+    DB-Zugriff (gleiches Muster wie _OpenPricesAutoImportWorker in ingredients_view.py)."""
 
     finished = Signal(list)
     failed = Signal(str)
