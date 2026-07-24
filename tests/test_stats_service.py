@@ -76,8 +76,8 @@ def test_camp_year_costs_sums_non_cancelled_entries(session_factory) -> None:
         assert len(costs) == 1
         assert costs[0].year == 2026
         assert costs[0].total_portions == 10
-        # Grundrezept fuer 10 Portionen braucht 1kg (2.00 EUR/kg); geplante 10 Portionen = Faktor 1.0.
-        assert costs[0].total_cost == Decimal("2.00")
+        # Rezeptmenge ist pro Portion: 1kg * 10 Portionen * 2.00 EUR/kg.
+        assert costs[0].total_cost == Decimal("20.00")
 
 
 def test_average_recipe_cost_ignores_unpriced_recipes(session_factory) -> None:
@@ -90,4 +90,4 @@ def test_average_recipe_cost_ignores_unpriced_recipes(session_factory) -> None:
         result = stats_service.average_recipe_cost(session)
         assert result.recipes_total == 3
         assert result.recipes_considered == 2
-        assert result.average_total_cost == Decimal("6.00")
+        assert result.average_total_cost == Decimal("60.00")

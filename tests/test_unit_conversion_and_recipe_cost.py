@@ -36,5 +36,5 @@ def test_calculate_recipe_cost_converts_price_unit_to_recipe_unit(session_factor
         recipe = session.query(Recipe).filter_by(normalized_name="nudeltopf").one()
         result = recipe_service.calculate_recipe_cost(session, recipe, year=2026)
 
-        assert result.total_cost == Decimal("1.00")
+        assert result.total_cost == Decimal("10.00")
         assert result.lines[0].price_per_unit == Decimal("0.0040")

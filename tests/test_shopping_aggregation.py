@@ -101,15 +101,128 @@ def test_generate_shopping_list_aggregates_quantities_across_meals(session_facto
         camp_year = session.get(CampYear, camp_year_id)
         shopping_list = shopping_service.generate_shopping_list(session, camp_year)
 
-        assert len(shopping_list.items) == 1
-        item = shopping_list.items[0]
-        # (20 + 10) portions * 0.100kg / 10 base portions = 0.300 kg total, cancelled meal excluded.
-        assert item.quantity == Decimal("0.300")
-        assert item.estimated_total_price == Decimal("0.60")
+        assert len(shopping_list.items) == 2
+        items_by_day = {item.shopping_date: item for item in shopping_list.items}
+        item = items_by_day[date(2026, 8, 1)]
+        assert item.quantity == Decimal("2.000")
+        assert item.estimated_total_price == Decimal("4.00")
         assert item.category == "Trockenware"
         assert item.needed_date == date(2026, 8, 2)
-        assert item.shopping_date == date(2026, 8, 1)
         assert item.status == "offen"
+        assert items_by_day[date(2026, 8, 3)].quantity == Decimal("1.000")
+        assert items_by_day[date(2026, 8, 3)].estimated_total_price == Decimal("2.00")
+
+
+def test_generate_shopping_list_scales_plan_portions_and_converts_price_unit(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Mehl", normalized_name="mehl", default_unit="kg")
+        ingredient.prices.append(IngredientPrice(price_per_unit=Decimal("2.00"), unit="kg", year=2026))
+
+        recipe = Recipe(name="Pfannkuchen", normalized_name="pfannkuchen", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("100.000"), unit="g", price_unit="g", sort_order=1)
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(
+                meal_date=date(2026, 8, 2),
+                meal_type="Mittagessen",
+                recipe=recipe,
+                planned_portions=30,
+                status="geplant",
+            )
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+
+        assert len(shopping_list.items) == 1
+        item = shopping_list.items[0]
+        assert item.quantity == Decimal("3.000")
+        assert item.unit == "kg"
+        assert item.estimated_price_per_unit == Decimal("2.0000")
+        assert item.estimated_total_price == Decimal("6.00")
+
+
+def test_generate_shopping_list_merges_convertible_units_to_ingredient_default_unit(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Milch", normalized_name="milch", default_unit="l")
+        ingredient.prices.append(IngredientPrice(price_per_unit=Decimal("1.50"), unit="l", year=2026))
+
+        recipe = Recipe(name="Fruehstueck Kinder", normalized_name="fruehstueck kinder", default_portions=100)
+        recipe.ingredients.extend(
+            [
+                RecipeIngredient(ingredient=ingredient, quantity=Decimal("500.000"), unit="ml", price_unit="ml", sort_order=1),
+                RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="l", price_unit="l", sort_order=2),
+            ]
+        )
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(meal_date=date(2026, 8, 2), meal_type="Fruehstueck", recipe=recipe, planned_portions=100, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 3), meal_type="Fruehstueck", recipe=recipe, planned_portions=100, status="geplant"),
+            ]
+        )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+
+        assert len(shopping_list.items) == 1
+        item = shopping_list.items[0]
+        assert item.quantity == Decimal("300.000")
+        assert item.unit == "l"
+        assert item.estimated_total_price == Decimal("450.00")
+
+
+def test_generate_shopping_list_uses_recipe_quantity_as_per_portion_amount(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        bread = Ingredient(name="Brot", normalized_name="brot", default_unit="€/kg")
+        bread.prices.append(IngredientPrice(price_per_unit=Decimal("3.98"), unit="kg", year=2026))
+        children = Recipe(name="Fruehstueck Kinder", normalized_name="fruehstueck kinder", default_portions=186)
+        children.ingredients.append(
+            RecipeIngredient(ingredient=bread, quantity=Decimal("0.070"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        adults = Recipe(name="Fruehstueck Betreuer", normalized_name="fruehstueck betreuer", default_portions=69)
+        adults.ingredients.append(
+            RecipeIngredient(ingredient=bread, quantity=Decimal("0.250"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 9), meal_type="Fruehstueck", recipe=adults, planned_portions=24, status="geplant")
+        )
+        for day in range(10, 16):
+            camp_year.meal_plan_entries.append(
+                MealPlanEntry(
+                    meal_date=date(2026, 8, day),
+                    meal_type="Fruehstueck",
+                    recipe=children,
+                    planned_portions=100,
+                    status="geplant",
+                )
+            )
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+
+        assert len(shopping_list.items) == 1
+        item = shopping_list.items[0]
+        assert item.quantity == Decimal("48.000")
+        assert item.unit == "kg"
+        assert item.estimated_total_price == Decimal("191.04")
 
 
 def test_generate_shopping_list_total_list_skips_shopping_dates_but_keeps_needed_date(session_factory) -> None:

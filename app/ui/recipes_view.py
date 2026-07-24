@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import datetime
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -230,6 +231,12 @@ class RecipesView(QWidget):
         self.cost_portions_spin.setRange(1, 2000)
         self.cost_portions_spin.setValue(10)
         cost_panel.addWidget(self.cost_portions_spin)
+        year_label = QLabel("Preisjahr", tab)
+        cost_panel.addWidget(year_label)
+        self.cost_year_spin = QSpinBox(tab)
+        self.cost_year_spin.setRange(2000, 2100)
+        self.cost_year_spin.setValue(datetime.now().year)
+        cost_panel.addWidget(self.cost_year_spin)
         calc_button = QPushButton("Kosten berechnen", tab)
         calc_button.clicked.connect(self._calculate_cost)
         cost_panel.addWidget(calc_button)
@@ -457,7 +464,12 @@ class RecipesView(QWidget):
 
             cost_result = None
             if recipe.ingredients:
-                cost_result = recipe_service.calculate_recipe_cost(session, recipe, portions=recipe.default_portions or 1)
+                cost_result = recipe_service.calculate_recipe_cost(
+                    session,
+                    recipe,
+                    portions=recipe.default_portions or 1,
+                    year=self.cost_year_spin.value(),
+                )
             self._rebuild_ingredient_sections(recipe, cost_result)
             self._reload_steps(recipe)
             self._reload_versions(recipe)
@@ -469,9 +481,9 @@ class RecipesView(QWidget):
         if cost_result is None:
             self.cost_label.setText("Kosten: -")
             return
-        text = f"Gesamt: {cost_result.total_cost} EUR | pro Portion: {cost_result.cost_per_portion} EUR"
+        text = f"Gesamtpreis: {cost_result.total_cost} EUR\nPreis pro Portion: {cost_result.cost_per_portion} EUR"
         if cost_result.missing_price_ingredients:
-            text += f" (fehlende Preise: {', '.join(cost_result.missing_price_ingredients)})"
+            text += f"\nFehlende Preise: {', '.join(cost_result.missing_price_ingredients)}"
         self.cost_label.setText(text)
 
     # --- Teilstuecke / Zutaten: eine Tabelle, Excel-aehnlich (Kopfzeile + Teilstueck-Baender) ---
@@ -760,7 +772,12 @@ class RecipesView(QWidget):
             if recipe is None or not recipe.ingredients:
                 self.cost_label.setText("Kosten: keine Zutaten")
                 return
-            result = recipe_service.calculate_recipe_cost(session, recipe, portions=self.cost_portions_spin.value())
+            result = recipe_service.calculate_recipe_cost(
+                session,
+                recipe,
+                portions=self.cost_portions_spin.value(),
+                year=self.cost_year_spin.value(),
+            )
             self._rebuild_ingredient_sections(recipe, result)
         self._set_cost_label(result)
 

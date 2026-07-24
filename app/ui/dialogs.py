@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+import re
 from types import SimpleNamespace
 
 from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, Signal
@@ -457,6 +458,15 @@ class _OpenPricesCandidateSearchWorker(QObject):
 
     def _load_candidates(self) -> list[open_prices_category_service.ProductCandidate]:
         candidates: list[open_prices_category_service.ProductCandidate] = []
+        barcode = _barcode_digits(self.query)
+        if barcode is not None:
+            try:
+                lookup = open_prices_service.lookup_product_prices(barcode, size=1)
+            except OpenPricesError:
+                lookup = None
+            if lookup is not None and lookup.latest_observation is not None:
+                candidates.append(_candidate_from_product_lookup(lookup))
+
         if self.category_tag:
             profile = SimpleNamespace(category_tag=self.category_tag)
             candidates.extend(open_prices_category_service.find_product_candidates_for_profile(profile, pages=4))
@@ -675,6 +685,35 @@ def _enrich_candidate_from_product_lookup(
         image_url=product.image_url or candidate.image_url,
         price_count=product.price_count or candidate.price_count,
     )
+
+
+def _candidate_from_product_lookup(
+    lookup: open_prices_service.OpenPricesLookupResult,
+) -> open_prices_category_service.ProductCandidate:
+    observation = lookup.latest_observation
+    if observation is None:
+        raise ValueError("Open Prices lookup has no price observation.")
+    return open_prices_category_service.ProductCandidate(
+        product_code=lookup.product.code,
+        product_name=lookup.product.name,
+        brands=lookup.product.brands,
+        quantity=lookup.product.quantity,
+        image_url=lookup.product.image_url,
+        price=observation.price,
+        currency=observation.currency,
+        price_date=observation.date,
+        store_name=observation.store_name,
+        country_code=None,
+        price_count=lookup.product.price_count,
+    )
+
+
+def _barcode_digits(value: str) -> str | None:
+    digits = re.sub(r"\D", "", value)
+    compact = value.replace(" ", "").replace("-", "")
+    if len(digits) >= 8 and len(digits) == len(compact):
+        return digits
+    return None
 
 
 def _clean_unit(unit: str | None) -> str | None:

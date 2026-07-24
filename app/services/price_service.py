@@ -43,7 +43,13 @@ UNIT_FACTORS = {
 }
 
 
-def find_best_price(session: Session, ingredient_id: int, *, year: int | None = None) -> IngredientPrice | None:
+def find_best_price(
+    session: Session,
+    ingredient_id: int,
+    *,
+    year: int | None = None,
+    fallback_latest: bool = True,
+) -> IngredientPrice | None:
     """Bester Preis fuer eine Zutat: exakter Jahrestreffer, sonst der neueste bekannte Preis."""
     prices = session.execute(
         select(IngredientPrice).where(IngredientPrice.ingredient_id == ingredient_id)
@@ -55,6 +61,8 @@ def find_best_price(session: Session, ingredient_id: int, *, year: int | None = 
         exact_matches = [price for price in prices if price.year == year]
         if exact_matches:
             return max(exact_matches, key=_price_sort_key)
+        if not fallback_latest:
+            return None
 
     return find_latest_price_from(prices)
 

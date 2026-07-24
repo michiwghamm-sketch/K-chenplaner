@@ -51,7 +51,7 @@ def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientL
     if base_portions <= 0:
         raise ValueError("Rezept hat keine gültige Standardportionenzahl.")
 
-    factor = Decimal(target_portions) / Decimal(base_portions)
+    factor = Decimal(target_portions)
     lines: list[ScaledIngredientLine] = []
     for item in sorted(recipe.ingredients, key=lambda i: i.sort_order):
         lines.append(
@@ -69,15 +69,19 @@ def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientL
 def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | None = None, year: int | None = None) -> RecipeCostResult:
     """Berechnet Gesamtkosten, Kosten pro Portion und die Kosten je Zutat anhand der besten bekannten Preise."""
     target_portions = portions or recipe.default_portions or 1
-    base_portions = recipe.default_portions or target_portions
-    factor = Decimal(target_portions) / Decimal(base_portions) if base_portions else Decimal(1)
+    factor = Decimal(target_portions)
 
     total_cost = Decimal("0")
     missing: list[str] = []
     lines: list[IngredientCostLine] = []
 
     for item in sorted(recipe.ingredients, key=lambda i: i.sort_order):
-        best_price = price_service.find_best_price(session, item.ingredient_id, year=year)
+        best_price = price_service.find_best_price(
+            session,
+            item.ingredient_id,
+            year=year,
+            fallback_latest=year is None,
+        )
         scaled_quantity = (item.quantity * factor).quantize(Decimal("0.001"))
         component_name = item.component.name if item.component else UNASSIGNED_COMPONENT_LABEL
         target_price_unit = item.price_unit or item.unit

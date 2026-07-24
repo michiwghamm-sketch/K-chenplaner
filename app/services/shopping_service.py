@@ -13,10 +13,10 @@ from app.services import planning_service, price_service
 class _Aggregate:
     ingredient_id: int
     unit: str
+    shopping_date: date | None
     quantity: Decimal = Decimal("0")
     recipe_names: set[str] = field(default_factory=set)
     needed_dates: set[date] = field(default_factory=set)
-    shopping_dates: set[date] = field(default_factory=set)
 
 
 # Lagerarten, die sich bevorraten lassen: einmaliger Einkauf zu Lagerbeginn statt taeglich
@@ -61,7 +61,7 @@ def generate_shopping_list(
     (das Bedarfsdatum - wann die Zutat fuer eine Mahlzeit gebraucht wird - wird trotzdem gefuellt).
     """
     price_year = price_year or camp_year.year
-    aggregates: dict[tuple[int, str], _Aggregate] = {}
+    aggregates: dict[tuple[int, str, date | None], _Aggregate] = {}
 
     for entry in camp_year.meal_plan_entries:
         if entry.recipe is None or entry.status == "abgesagt":
@@ -69,46 +69,72 @@ def generate_shopping_list(
         portions = entry.planned_portions or entry.recipe.default_portions
         if not portions:
             continue
-        base_portions = entry.recipe.default_portions or portions
-        factor = Decimal(portions) / Decimal(base_portions)
-
         for item in entry.recipe.ingredients:
-            key = (item.ingredient_id, item.unit)
-            aggregate = aggregates.setdefault(key, _Aggregate(ingredient_id=item.ingredient_id, unit=item.unit))
-            aggregate.quantity += item.quantity * factor
+            ingredient = item.ingredient
+            shopping_unit = _shopping_unit_for_item(item.unit, ingredient)
+            quantity = item.quantity * Decimal(portions)
+            if shopping_unit != item.unit:
+                quantity = price_service.convert_quantity(quantity, from_unit=item.unit, to_unit=shopping_unit)
+            shopping_date = None
+            if assign_shopping_dates:
+                shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
+            key = (item.ingredient_id, shopping_unit, shopping_date)
+            aggregate = aggregates.setdefault(
+                key,
+                _Aggregate(ingredient_id=item.ingredient_id, unit=shopping_unit, shopping_date=shopping_date),
+            )
+            aggregate.quantity += quantity
             aggregate.recipe_names.add(entry.recipe.name)
             if entry.meal_date is not None:
                 aggregate.needed_dates.add(entry.meal_date)
-            if assign_shopping_dates:
-                shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
-                if shopping_date:
-                    aggregate.shopping_dates.add(shopping_date)
 
     shopping_list = ShoppingList(camp_year=camp_year, name=name or f"Einkaufsliste {camp_year.year}")
     session.add(shopping_list)
 
     for aggregate in aggregates.values():
-        best_price = price_service.find_best_price(session, aggregate.ingredient_id, year=price_year)
+        best_price = price_service.find_best_price(
+            session,
+            aggregate.ingredient_id,
+            year=price_year,
+            fallback_latest=False,
+        )
         quantity = aggregate.quantity.quantize(Decimal("0.001"))
-        estimated_total = (quantity * best_price.price_per_unit).quantize(Decimal("0.01")) if best_price else None
-        ingredient = best_price.ingredient if best_price else None
+        estimated_price_per_unit = None
+        estimated_total = None
+        if best_price and price_service.can_convert_units(best_price.unit, aggregate.unit):
+            estimated_price_per_unit = price_service.convert_price_per_unit(
+                best_price.price_per_unit,
+                from_unit=best_price.unit,
+                to_unit=aggregate.unit,
+            ).quantize(Decimal("0.0001"))
+            estimated_total = (quantity * estimated_price_per_unit).quantize(Decimal("0.01"))
+        ingredient = best_price.ingredient if best_price else session.get(Ingredient, aggregate.ingredient_id)
 
         shopping_list.items.append(
             ShoppingListItem(
                 ingredient_id=aggregate.ingredient_id,
                 quantity=quantity,
                 unit=aggregate.unit,
-                estimated_price_per_unit=best_price.price_per_unit if best_price else None,
+                estimated_price_per_unit=estimated_price_per_unit,
                 estimated_total_price=estimated_total,
                 category=ingredient.category if ingredient else None,
                 storage_type=ingredient.storage_type if ingredient else None,
                 needed_date=min(aggregate.needed_dates) if aggregate.needed_dates else None,
-                shopping_date=min(aggregate.shopping_dates) if aggregate.shopping_dates else None,
+                shopping_date=aggregate.shopping_date,
                 status="offen",
                 linked_recipes_text=", ".join(sorted(aggregate.recipe_names)),
             )
         )
     return shopping_list
+
+
+def _shopping_unit_for_item(item_unit: str, ingredient: Ingredient | None) -> str:
+    default_unit = ingredient.default_unit if ingredient else None
+    normalized_item_unit = price_service.normalize_unit(item_unit)
+    normalized_default_unit = price_service.normalize_unit(default_unit)
+    if normalized_item_unit and normalized_default_unit and price_service.can_convert_units(normalized_item_unit, normalized_default_unit):
+        return normalized_default_unit
+    return normalized_item_unit or item_unit
 
 
 def group_by_shopping_day(shopping_list: ShoppingList) -> dict[date | None, list[ShoppingListItem]]:
@@ -178,7 +204,11 @@ def set_item_status(item: ShoppingListItem, status: str) -> ShoppingListItem:
 
 
 def total_estimated_cost(shopping_list: ShoppingList) -> Decimal:
-    return sum((item.estimated_total_price or Decimal("0") for item in shopping_list.items), Decimal("0"))
+    return total_items_estimated_cost(shopping_list.items)
+
+
+def total_items_estimated_cost(items) -> Decimal:
+    return sum((item.estimated_total_price or Decimal("0") for item in items), Decimal("0")).quantize(Decimal("0.01"))
 
 
 def delete_shopping_list(session, shopping_list: ShoppingList) -> None:

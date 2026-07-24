@@ -1,6 +1,9 @@
 from __future__ import annotations
 
+from collections import defaultdict
+from decimal import Decimal
 from pathlib import Path
+from types import SimpleNamespace
 
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
@@ -27,7 +30,7 @@ from app.ui.theme import ORANGE
 from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 SHOPPING_TABLE_COLUMNS = (
-    "Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis", "Kategorie", "Händler",
+    "Zutat", "Gesamtmenge", "Einheit", "Preis je Einheit", "Gesamtpreis Position", "Kategorie", "Haendler",
     "Bedarfsdatum", "Einkaufstag", "Status", "Rezepte",
 )
 GROUP_MODES = (("Keine Gruppierung", "none"), ("Nach Einkaufstag", "day"), ("Nach Händler", "store"))
@@ -156,58 +159,71 @@ class ShoppingView(QWidget):
 
             if mode == "day":
                 for shopping_date, items in shopping_service.grouped_by_day_ordered(shopping_list):
-                    self._add_band_row(shopping_service.format_shopping_day_label(shopping_date))
+                    self._add_band_row(shopping_service.format_shopping_day_label(shopping_date), items)
                     for item in items:
                         self._add_item_row(item)
             elif mode == "store":
                 for store, items in shopping_service.grouped_by_store_ordered(shopping_list):
-                    self._add_band_row(store or shopping_service.UNASSIGNED_STORE_LABEL)
+                    self._add_band_row(store or shopping_service.UNASSIGNED_STORE_LABEL, items)
                     for item in items:
                         self._add_item_row(item)
             else:
-                for item in shopping_list.items:
-                    self._add_item_row(item)
+                for item in _aggregate_total_view_items(shopping_list.items):
+                    self._add_item_row(item, editable=False)
 
-            self.total_label.setText(f"Gesamtsumme: {shopping_service.total_estimated_cost(shopping_list)} EUR")
+            self.total_label.setText(
+                f"Gesamtpreis Einkauf: {_format_money(shopping_service.total_estimated_cost(shopping_list))}"
+            )
         # Sortieren wuerde die Gruppen-Baender und ihre Zeilen auseinanderreissen.
         self.table.setSortingEnabled(mode == "none")
 
-    def _add_band_row(self, label: str) -> None:
+    def _add_band_row(self, label: str, items: list[ShoppingListItem] | None = None) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         self.table.setSpan(row, 0, 1, len(SHOPPING_TABLE_COLUMNS))
-        band_label = QLabel(f"  {label}", self.table)
+        total_text = ""
+        if items is not None:
+            total_text = f" | Gesamt: {_format_money(shopping_service.total_items_estimated_cost(items))}"
+        band_label = QLabel(f"  {label}{total_text}", self.table)
         band_label.setStyleSheet(f"background-color: {ORANGE}; color: white; font-weight: 600; padding: 5px;")
         self.table.setCellWidget(row, 0, band_label)
 
-    def _add_item_row(self, item: ShoppingListItem) -> None:
+    def _add_item_row(self, item: ShoppingListItem, *, editable: bool = True) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         name_item = QTableWidgetItem(item.ingredient.name if item.ingredient else "")
         name_item.setData(1000, item.id)
         self.table.setItem(row, 0, name_item)
-        self.table.setItem(row, 1, QTableWidgetItem(str(item.quantity)))
+        self.table.setItem(row, 1, QTableWidgetItem(_format_decimal(item.quantity)))
         self.table.setItem(row, 2, QTableWidgetItem(item.unit or ""))
-        price_item = QTableWidgetItem(str(item.estimated_price_per_unit) if item.estimated_price_per_unit is not None else "fehlt")
+        price_item = QTableWidgetItem(
+            _format_money(item.estimated_price_per_unit) if item.estimated_price_per_unit is not None else "fehlt"
+        )
         if item.estimated_price_per_unit is None:
             price_item.setForeground(QColor(COLOR_CRITICAL))
         self.table.setItem(row, 3, price_item)
-        self.table.setItem(row, 4, QTableWidgetItem(str(item.estimated_total_price or "")))
+        self.table.setItem(row, 4, QTableWidgetItem(_format_money(item.estimated_total_price) if item.estimated_total_price is not None else ""))
         self.table.setItem(row, 5, QTableWidgetItem(item.category or ""))
 
-        store_edit = QLineEdit(item.store or "")
-        store_edit.setPlaceholderText("Händler...")
-        store_edit.editingFinished.connect(lambda item_id=item.id, edit=store_edit: self._update_store(item_id, edit.text()))
-        self.table.setCellWidget(row, 6, store_edit)
+        if editable:
+            store_edit = QLineEdit(item.store or "")
+            store_edit.setPlaceholderText("Haendler...")
+            store_edit.editingFinished.connect(lambda item_id=item.id, edit=store_edit: self._update_store(item_id, edit.text()))
+            self.table.setCellWidget(row, 6, store_edit)
+        else:
+            self.table.setItem(row, 6, QTableWidgetItem(item.store or ""))
 
         self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
         self.table.setItem(row, 8, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
 
-        status_combo = QComboBox()
-        status_combo.addItems(shopping_service.ALLOWED_ITEM_STATUSES)
-        status_combo.setCurrentText(item.status or "offen")
-        status_combo.currentTextChanged.connect(lambda status, item_id=item.id: self._update_status(item_id, status))
-        self.table.setCellWidget(row, 9, status_combo)
+        if editable:
+            status_combo = QComboBox()
+            status_combo.addItems(shopping_service.ALLOWED_ITEM_STATUSES)
+            status_combo.setCurrentText(item.status or "offen")
+            status_combo.currentTextChanged.connect(lambda status, item_id=item.id: self._update_status(item_id, status))
+            self.table.setCellWidget(row, 9, status_combo)
+        else:
+            self.table.setItem(row, 9, QTableWidgetItem(item.status or ""))
 
         self.table.setItem(row, 10, QTableWidgetItem(item.linked_recipes_text or ""))
 
@@ -279,3 +295,55 @@ class ShoppingView(QWidget):
             shopping_list = session.get(ShoppingList, shopping_list_id)
             export_function(shopping_list, Path(path))
         info_dialog(self, f"Einkaufsliste exportiert nach:\n{path}")
+
+
+def _format_decimal(value: Decimal) -> str:
+    text = f"{value:.3f}".rstrip("0").rstrip(".")
+    return text or "0"
+
+
+def _format_money(value: Decimal) -> str:
+    return f"{value.quantize(Decimal('0.01'))} EUR"
+
+
+def _aggregate_total_view_items(items) -> list:
+    grouped = defaultdict(list)
+    for item in items:
+        grouped[(item.ingredient_id, item.unit)].append(item)
+
+    aggregated = []
+    for (_ingredient_id, unit), group in grouped.items():
+        first = group[0]
+        quantity = sum((item.quantity or Decimal("0") for item in group), Decimal("0")).quantize(Decimal("0.001"))
+        total = sum((item.estimated_total_price or Decimal("0") for item in group), Decimal("0")).quantize(Decimal("0.01"))
+        has_complete_prices = all(item.estimated_total_price is not None for item in group)
+        price_per_unit = (total / quantity).quantize(Decimal("0.0001")) if has_complete_prices and quantity else None
+        recipe_names = sorted(
+            {
+                recipe.strip()
+                for item in group
+                for recipe in (item.linked_recipes_text or "").split(",")
+                if recipe.strip()
+            }
+        )
+        statuses = {item.status for item in group if item.status}
+        stores = {item.store for item in group if item.store}
+        aggregated.append(
+            SimpleNamespace(
+                id=first.id,
+                ingredient=first.ingredient,
+                ingredient_id=first.ingredient_id,
+                quantity=quantity,
+                unit=unit,
+                estimated_price_per_unit=price_per_unit,
+                estimated_total_price=total if has_complete_prices else None,
+                category=first.category,
+                store=", ".join(sorted(stores)) if stores else "",
+                storage_type=first.storage_type,
+                needed_date=min((item.needed_date for item in group if item.needed_date), default=None),
+                shopping_date=None,
+                status=", ".join(sorted(statuses)) if statuses else "",
+                linked_recipes_text=", ".join(recipe_names),
+            )
+        )
+    return sorted(aggregated, key=lambda item: ((item.ingredient.name if item.ingredient else "").lower(), item.unit or ""))
