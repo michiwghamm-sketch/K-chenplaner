@@ -1,19 +1,33 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QColor
-from PySide6.QtWidgets import QComboBox, QGridLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget
+from PySide6.QtGui import QColor, QFont
+from PySide6.QtWidgets import (
+    QComboBox,
+    QGridLayout,
+    QHBoxLayout,
+    QHeaderView,
+    QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QTableWidget,
+    QTableWidgetItem,
+    QVBoxLayout,
+    QWidget,
+)
 from sqlalchemy import select
 
 from app.context import AppContext
 from app.models import CampYear, Recipe
-from app.services import price_service, recipe_service, validation_service
+from app.services import price_service, recipe_service, stats_service, validation_service
+from app.ui.theme import TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, COLOR_INFO, COLOR_OK, COLOR_WARNING, KpiCard, PageHeader
 
 _SEVERITY_COLORS = {"warnung": COLOR_WARNING, "kritisch": COLOR_CRITICAL, "hinweis": COLOR_INFO}
+_DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
 
 
 class DashboardView(QWidget):
-    """Übersicht: Kennzahlen und Warnungen für das ausgewählte Camp-Jahr."""
+    """Übersicht: Rezept-/Kosten-Statistiken über alle Camp-Jahre sowie Details je ausgewähltem Camp-Jahr."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -23,7 +37,58 @@ class DashboardView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(PageHeader("Dashboard", "Kennzahlen und Warnungen für das ausgewählte Camp-Jahr"))
+        layout.addWidget(PageHeader("Dashboard", "Statistiken über alle Rezepte und Camp-Jahre"))
+
+        layout.addWidget(self._section_title("Rezepte im Überblick"))
+        recipe_grid = QGridLayout()
+        self.kpi_recipes_total = KpiCard("Rezepte gesamt")
+        self.kpi_recipes_fleisch = KpiCard("Fleisch")
+        self.kpi_recipes_vegetarisch = KpiCard("Vegetarisch")
+        self.kpi_recipes_vegan = KpiCard("Vegan")
+        self.kpi_avg_recipe_cost = KpiCard("Ø Kosten je Rezept (EUR)")
+        self.kpi_avg_portion_cost = KpiCard("Ø Kosten je Portion (EUR)")
+        self.kpi_recipes_fleisch.set_level("kritisch")
+        self.kpi_recipes_vegetarisch.set_level("ok")
+        self.kpi_recipes_vegan.set_level("warnung")
+        for index, card in enumerate(
+            (
+                self.kpi_recipes_total,
+                self.kpi_recipes_fleisch,
+                self.kpi_recipes_vegetarisch,
+                self.kpi_recipes_vegan,
+                self.kpi_avg_recipe_cost,
+                self.kpi_avg_portion_cost,
+            )
+        ):
+            recipe_grid.addWidget(card, index // 3, index % 3)
+        layout.addLayout(recipe_grid)
+
+        self.avg_cost_note = QLabel("", self)
+        self.avg_cost_note.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
+        layout.addWidget(self.avg_cost_note)
+
+        stats_row = QHBoxLayout()
+
+        most_planned_column = QVBoxLayout()
+        most_planned_column.addWidget(self._section_title("Am häufigsten geplant"))
+        self.most_planned_list = QListWidget(self)
+        self.most_planned_list.setMaximumHeight(220)
+        most_planned_column.addWidget(self.most_planned_list)
+        stats_row.addLayout(most_planned_column, 1)
+
+        camp_year_column = QVBoxLayout()
+        camp_year_column.addWidget(self._section_title("Camp-Jahre im Überblick"))
+        self.camp_year_table = QTableWidget(0, 4, self)
+        self.camp_year_table.setHorizontalHeaderLabels(["Jahr", "Portionen", "Kosten (EUR)", "Ø je Portion (EUR)"])
+        self.camp_year_table.verticalHeader().setVisible(False)
+        self.camp_year_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.camp_year_table.setMaximumHeight(220)
+        camp_year_column.addWidget(self.camp_year_table)
+        stats_row.addLayout(camp_year_column, 1)
+
+        layout.addLayout(stats_row)
+
+        layout.addWidget(self._section_title("Details für ausgewähltes Camp-Jahr"))
 
         top_row = QHBoxLayout()
         top_row.addWidget(QLabel("Camp-Jahr:", self))
@@ -59,7 +124,14 @@ class DashboardView(QWidget):
         self.warnings_list = QListWidget(self)
         layout.addWidget(self.warnings_list)
 
+    def _section_title(self, text: str) -> QLabel:
+        label = QLabel(text, self)
+        label.setStyleSheet("font-weight: 600; font-size: 15px; padding-top: 6px;")
+        return label
+
     def refresh(self) -> None:
+        self._reload_global_stats()
+
         self.camp_year_combo.blockSignals(True)
         self.camp_year_combo.clear()
         with self.context.session() as session:
@@ -73,6 +145,54 @@ class DashboardView(QWidget):
             if index >= 0:
                 self.camp_year_combo.setCurrentIndex(index)
         self._on_camp_year_changed()
+
+    def _reload_global_stats(self) -> None:
+        with self.context.session() as session:
+            diet_counts = stats_service.recipe_counts_by_diet_type(session)
+            total_recipes = sum(diet_counts.values())
+            self.kpi_recipes_total.set_value(str(total_recipes))
+            self.kpi_recipes_fleisch.set_value(str(diet_counts.get("Fleisch", 0)))
+            self.kpi_recipes_vegetarisch.set_value(str(diet_counts.get("Vegetarisch", 0)))
+            self.kpi_recipes_vegan.set_value(str(diet_counts.get("Vegan", 0)))
+
+            avg_cost = stats_service.average_recipe_cost(session)
+            self.kpi_avg_recipe_cost.set_value(
+                f"{avg_cost.average_total_cost:.2f}" if avg_cost.average_total_cost is not None else "-"
+            )
+            self.kpi_avg_portion_cost.set_value(
+                f"{avg_cost.average_cost_per_portion:.2f}" if avg_cost.average_cost_per_portion is not None else "-"
+            )
+            if avg_cost.recipes_considered:
+                self.avg_cost_note.setText(
+                    f"Durchschnitt basiert auf {avg_cost.recipes_considered} von {avg_cost.recipes_total} Rezepten "
+                    "mit mindestens einer bepreisten Zutat - bei vielen fehlenden Preisen ist der Wert nur grob."
+                )
+            else:
+                self.avg_cost_note.setText("Noch keine Rezepte mit hinterlegten Preisen.")
+
+            self.most_planned_list.clear()
+            most_planned = stats_service.most_planned_recipes(session, limit=8)
+            if not most_planned:
+                self.most_planned_list.addItem("Noch keine Mahlzeiten eingeplant.")
+            for rank, entry in enumerate(most_planned, start=1):
+                item = QListWidgetItem(f"{rank}. {entry.recipe_name} ({entry.plan_count}x geplant)")
+                color = _DIET_TYPE_COLORS.get(entry.diet_type or "")
+                if color:
+                    item.setForeground(QColor(color))
+                    font = item.font()
+                    font.setWeight(QFont.Weight.DemiBold)
+                    item.setFont(font)
+                self.most_planned_list.addItem(item)
+
+            self.camp_year_table.setRowCount(0)
+            for camp_cost in stats_service.camp_year_costs(session):
+                row = self.camp_year_table.rowCount()
+                self.camp_year_table.insertRow(row)
+                self.camp_year_table.setItem(row, 0, QTableWidgetItem(camp_cost.label))
+                self.camp_year_table.setItem(row, 1, QTableWidgetItem(str(camp_cost.total_portions)))
+                self.camp_year_table.setItem(row, 2, QTableWidgetItem(f"{camp_cost.total_cost:.2f}"))
+                per_portion = (camp_cost.total_cost / camp_cost.total_portions) if camp_cost.total_portions else None
+                self.camp_year_table.setItem(row, 3, QTableWidgetItem(f"{per_portion:.2f}" if per_portion else "-"))
 
     def _on_camp_year_changed(self) -> None:
         self.context.current_camp_year_id = self.camp_year_combo.currentData()
