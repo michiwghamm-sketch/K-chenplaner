@@ -3,7 +3,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
-from app.ui.theme import BORDER, ORANGE, TEXT_MUTED
+from app.ui.theme import BORDER, BORDER_STRONG, ORANGE, TEXT_MUTED
 
 # Ampel-Farben fuer Status/Warnungen bleiben funktional (gruen/gelb/rot) und sind
 # bewusst unabhaengig von der Kolping-Markenfarbe Orange, damit "kritisch" nicht
@@ -19,6 +19,10 @@ _STATUS_COLORS = {
     "kritisch": COLOR_CRITICAL,
     "info": COLOR_INFO,
 }
+
+# Einheitliche Ernaehrungstyp-Farben, gemeinsam genutzt von Rezepten, Dashboard und Wochenplan.
+DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
+UNKNOWN_DIET_TYPE_COLOR = BORDER_STRONG
 
 
 class PageHeader(QWidget):

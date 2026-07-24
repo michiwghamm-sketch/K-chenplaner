@@ -47,13 +47,12 @@ from app.ui.dialogs import (
     prompt_text,
 )
 from app.ui.theme import BORDER, ORANGE, ORANGE_TINT, TEXT_MUTED
-from app.ui.widgets import COLOR_CRITICAL, COLOR_OK, COLOR_WARNING, PageHeader, SearchBar
+from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, SearchBar
 
 MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen", "Brotzeit", "Beilage", "Nachtisch")
 AUTO_OPTIONAL_NOTE = "Menge nicht in Excel angegeben (nach Geschmack)"
 NO_DIET_TYPE_LABEL = "Keine Angabe"
 DIET_TYPE_LEVELS = {"Vegetarisch": "ok", "Vegan": "warnung", "Fleisch": "kritisch"}
-DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
 
 
 class RecipesView(QWidget):

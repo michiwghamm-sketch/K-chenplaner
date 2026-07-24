@@ -29,14 +29,21 @@ from sqlalchemy import select
 from app.context import AppContext
 from app.models import CampYear, Recipe
 from app.services import price_service, recipe_service, stats_service, validation_service
-from app.ui.theme import BG_SURFACE, BORDER_STRONG, ORANGE, TEXT_DARK, TEXT_MUTED
-from app.ui.widgets import COLOR_CRITICAL, COLOR_INFO, COLOR_OK, COLOR_WARNING, KpiCard, PageHeader
+from app.ui.theme import BG_SURFACE, ORANGE, TEXT_DARK, TEXT_MUTED
+from app.ui.widgets import (
+    COLOR_CRITICAL,
+    COLOR_INFO,
+    COLOR_OK,
+    COLOR_WARNING,
+    DIET_TYPE_COLORS,
+    KpiCard,
+    PageHeader,
+    UNKNOWN_DIET_TYPE_COLOR,
+)
 
 _SEVERITY_LABELS = {"kritisch": "Kritisch", "warnung": "Warnung", "hinweis": "Hinweis"}
 _SEVERITY_COLORS = {"kritisch": COLOR_CRITICAL, "warnung": COLOR_WARNING, "hinweis": COLOR_INFO}
 _SEVERITY_ORDER = ("kritisch", "warnung", "hinweis")
-_DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
-_UNKNOWN_DIET_COLOR = BORDER_STRONG
 
 
 class DashboardView(QWidget):
@@ -231,7 +238,7 @@ class DashboardView(QWidget):
         series = self._diet_pie_series
         series.clear()
         order = ["Fleisch", "Vegetarisch", "Vegan", stats_service.UNKNOWN_DIET_TYPE_LABEL]
-        colors = {**_DIET_TYPE_COLORS, stats_service.UNKNOWN_DIET_TYPE_LABEL: _UNKNOWN_DIET_COLOR}
+        colors = {**DIET_TYPE_COLORS, stats_service.UNKNOWN_DIET_TYPE_LABEL: UNKNOWN_DIET_TYPE_COLOR}
         for label in order:
             count = counts.get(label, 0)
             if not count:
@@ -262,7 +269,7 @@ class DashboardView(QWidget):
             values[index] = entry.plan_count
             bar_set = QBarSet("")
             bar_set.append(values)
-            bar_set.setColor(QColor(_DIET_TYPE_COLORS.get(entry.diet_type or "", ORANGE)))
+            bar_set.setColor(QColor(DIET_TYPE_COLORS.get(entry.diet_type or "", ORANGE)))
             series.append(bar_set)
         chart.addSeries(series)
 

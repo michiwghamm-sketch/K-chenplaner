@@ -133,6 +133,8 @@ class IngredientsView(QWidget):
         self.active_only_checkbox = QCheckBox("Nur aktive Zutaten", left)
         self.active_only_checkbox.setChecked(True)
         self.active_only_checkbox.stateChanged.connect(self._reload_list)
+        self.without_price_checkbox = QCheckBox("Nur Zutaten ohne Preis", left)
+        self.without_price_checkbox.stateChanged.connect(self._reload_list)
         self.ingredient_list = QListWidget(left)
         self.ingredient_list.currentItemChanged.connect(self._on_selected)
         new_button = QPushButton("Neue Zutat", left)
@@ -142,6 +144,7 @@ class IngredientsView(QWidget):
 
         left_layout.addWidget(self.search_bar)
         left_layout.addWidget(self.active_only_checkbox)
+        left_layout.addWidget(self.without_price_checkbox)
         left_layout.addWidget(self.ingredient_list)
         left_layout.addWidget(new_button)
         left_layout.addWidget(self.assign_barcodes_button)
@@ -242,6 +245,7 @@ class IngredientsView(QWidget):
                 session,
                 query=self.search_bar.text() or None,
                 active_only=self.active_only_checkbox.isChecked(),
+                without_price=self.without_price_checkbox.isChecked(),
             )
             for ingredient in ingredients:
                 item = QListWidgetItem(ingredient.name)

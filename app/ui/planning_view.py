@@ -1,8 +1,8 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from xml.sax.saxutils import escape
 
-from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -18,13 +18,13 @@ from PySide6.QtWidgets import (
 from sqlalchemy import select
 
 from app.context import AppContext
-from app.models import CampYear, Recipe
+from app.models import CampYear, MealPlanEntry, Recipe
 from app.services import planning_service
-from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealCellDialog, error_dialog, info_dialog
+from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealSlotDialog, error_dialog, info_dialog
 from app.ui.theme import TEXT_MUTED
-from app.ui.widgets import COLOR_CRITICAL, PageHeader
+from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader
 
-ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES
+ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES + ("Auswertung",)
 
 
 class PlanningView(QWidget):
@@ -66,11 +66,14 @@ class PlanningView(QWidget):
 
         self.table = QTableWidget(len(ROW_LABELS), 0, self)
         self.table.setVerticalHeaderLabels(list(ROW_LABELS))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setMinimumSectionSize(170)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setMinimumSectionSize(48)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self.table)
+        layout.addStretch(1)
 
     def refresh(self) -> None:
         self._reload_camp_years()
@@ -98,41 +101,106 @@ class PlanningView(QWidget):
         camp_year_id = self.context.current_camp_year_id
         self._day_dates = []
         self.table.setColumnCount(0)
-        if camp_year_id is None:
-            return
 
-        with self.context.session() as session:
-            camp_year = session.get(CampYear, camp_year_id)
-            if camp_year is None:
-                return
+        if camp_year_id is not None:
+            with self.context.session() as session:
+                camp_year = session.get(CampYear, camp_year_id)
+                if camp_year is not None:
+                    self._populate_grid(session, camp_year)
 
-            self._day_dates = planning_service.camp_day_range(camp_year)
-            self.table.setColumnCount(len(self._day_dates))
-            self.table.setHorizontalHeaderLabels(
-                [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
-            )
+        # Tabellenhoehe an den tatsaechlichen Inhalt anpassen (Header + Zeilenhoehen),
+        # statt die Tabelle per Layout-Stretch unnoetig viel Leerraum fuellen zu lassen.
+        # Header-Hoehe bewusst aus der Schrift berechnet (zwei Zeilen: Wochentag + Datum)
+        # statt per horizontalHeader().height() gemessen - dieser Wert ist direkt nach
+        # setHorizontalHeaderLabels() noch nicht auf die zweizeiligen Labels aktualisiert.
+        header_height = 2 * self.table.fontMetrics().height() + 16
+        scrollbar_allowance = self.table.horizontalScrollBar().sizeHint().height()
+        total_height = header_height + scrollbar_allowance + 2 * self.table.frameWidth() + 4
+        for row in range(self.table.rowCount()):
+            total_height += self.table.rowHeight(row)
+        self.table.setFixedHeight(total_height)
 
-            camp_days_by_date = {camp_day.day_date: camp_day for camp_day in camp_year.camp_days}
-            entries_by_key = {(entry.meal_date, entry.meal_type): entry for entry in camp_year.meal_plan_entries}
+    def _populate_grid(self, session, camp_year: CampYear) -> None:
+        self._day_dates = planning_service.camp_day_range(camp_year)
+        self.table.setColumnCount(len(self._day_dates))
+        self.table.setHorizontalHeaderLabels(
+            [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
+        )
 
-            for col, day in enumerate(self._day_dates):
-                camp_day = camp_days_by_date.get(day)
-                responsible_item = QTableWidgetItem(camp_day.responsible_person if camp_day else "")
-                self.table.setItem(0, col, responsible_item)
+        camp_days_by_date = {camp_day.day_date: camp_day for camp_day in camp_year.camp_days}
+        summary_row = len(ROW_LABELS) - 1
+        row_heights: dict[int, int] = {}
 
-                for row, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES, start=1):
-                    entry = entries_by_key.get((day, meal_type))
-                    text = ""
-                    if entry is not None and entry.recipe is not None:
-                        text = entry.recipe.name
-                        if entry.planned_portions:
-                            text += f" ({entry.planned_portions})"
-                    item = QTableWidgetItem(text)
-                    if entry is not None and entry.status == "abgesagt":
-                        item.setForeground(QColor(TEXT_MUTED))
-                    elif entry is not None and entry.recipe is not None and not entry.planned_portions:
-                        item.setForeground(QColor(COLOR_CRITICAL))
-                    self.table.setItem(row, col, item)
+        for col, day in enumerate(self._day_dates):
+            camp_day = camp_days_by_date.get(day)
+            responsible_item = QTableWidgetItem(camp_day.responsible_person if camp_day else "")
+            self.table.setItem(0, col, responsible_item)
+
+            for row, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES, start=1):
+                dishes = planning_service.meal_entries_for_slot(camp_year, day, meal_type)
+                label = self._build_dish_cell(dishes)
+                self.table.setCellWidget(row, col, label)
+                row_heights[row] = max(row_heights.get(row, 0), label.sizeHint().height())
+
+            summary = planning_service.day_summary(session, camp_year, day)
+            summary_label = self._build_summary_cell(summary)
+            self.table.setCellWidget(summary_row, col, summary_label)
+            row_heights[summary_row] = max(row_heights.get(summary_row, 0), summary_label.sizeHint().height())
+
+        # Zeilenhoehe direkt aus dem sizeHint() der (wortumbruchfreien, damit breiten-
+        # unabhaengigen) Zellen-Labels gesetzt statt ueber resizeRowsToContents(): Cell-
+        # Widgets melden ihre reale Groesse erst nach dem naechsten Qt-Layout-Durchlauf,
+        # resizeRowsToContents() rechnet also mit veralteten Groessen und schneidet Text ab.
+        for row, height in row_heights.items():
+            self.table.setRowHeight(row, height + 26)
+        self.table.resizeColumnsToContents()
+
+    def _build_dish_cell(self, dishes: list[MealPlanEntry]) -> QLabel:
+        lines = []
+        for entry in dishes:
+            if entry.recipe is None:
+                continue
+            text = escape(entry.recipe.name)
+            if entry.planned_portions:
+                text += f" ({entry.planned_portions})"
+            if entry.target_group:
+                text += f" · {escape(entry.target_group)}"
+
+            if entry.status == "abgesagt":
+                lines.append(f'<span style="color:{TEXT_MUTED};">{text} (abgesagt)</span>')
+                continue
+            if not entry.planned_portions:
+                lines.append(f'<span style="color:{COLOR_CRITICAL};">{text}</span>')
+                continue
+            color = DIET_TYPE_COLORS.get(entry.recipe.diet_type or "")
+            if color:
+                lines.append(f'<span style="color:{color};">{text}</span>')
+            else:
+                lines.append(text)
+
+        label = QLabel("<br>".join(lines), self.table)
+        # Zeilenumbruch bewusst deaktiviert: dadurch ist label.sizeHint() unabhaengig
+        # von der (zum Zeitpunkt des Aufbaus noch nicht finalisierten) Spaltenbreite
+        # und die Zeilenhoehe kann in _reload_grid() direkt daraus gesetzt werden.
+        label.setWordWrap(False)
+        label.setMargin(4)
+        label.setContentsMargins(4, 2, 4, 2)
+        return label
+
+    def _build_summary_cell(self, summary: "planning_service.DaySummary") -> QLabel:
+        if not summary.meals:
+            label = QLabel("-", self.table)
+        else:
+            text = f"{summary.total_portions} Portionen · {summary.total_cost:.2f} EUR"
+            if summary.has_missing_prices:
+                text += " ⚠"
+                label = QLabel(text, self.table)
+                label.setStyleSheet(f"color: {COLOR_CRITICAL};")
+            else:
+                label = QLabel(text, self.table)
+        label.setWordWrap(False)
+        label.setMargin(4)
+        return label
 
     def _on_cell_double_clicked(self, row: int, col: int) -> None:
         if self.context.current_camp_year_id is None or col >= len(self._day_dates):
@@ -140,11 +208,37 @@ class PlanningView(QWidget):
         day = self._day_dates[col]
         day_label = f"{planning_service.weekday_name(day)} {day.strftime('%d.%m.%Y')}"
 
+        summary_row = len(ROW_LABELS) - 1
         if row == 0:
             self._edit_day_responsible(day, day_label)
+        elif row == summary_row:
+            self._show_day_summary(day, day_label)
         else:
             meal_type = planning_service.DEFAULT_MEAL_TYPES[row - 1]
             self._edit_meal_entry(day, meal_type, f"{meal_type} - {day_label}")
+
+    def _show_day_summary(self, day: date, day_label: str) -> None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            return
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            summary = planning_service.day_summary(session, camp_year, day)
+
+        if not summary.meals:
+            info_dialog(self, "Für diesen Tag sind keine Gerichte geplant.", title=day_label)
+            return
+
+        lines = [
+            f"{meal.meal_type}: {meal.recipe_name} ({meal.portions} Portionen) - {meal.cost:.2f} EUR"
+            + (" (Preise unvollständig)" if meal.has_missing_prices else "")
+            for meal in summary.meals
+        ]
+        lines.append("")
+        lines.append(f"Gesamt: {summary.total_portions} Portionen, {summary.total_cost:.2f} EUR")
+        if summary.has_missing_prices:
+            lines.append("Achtung: Für mindestens eine Zutat fehlt ein Preis - die Kosten sind unvollständig.")
+        info_dialog(self, "\n".join(lines), title=day_label)
 
     def _edit_day_responsible(self, day: date, day_label: str) -> None:
         camp_year_id = self.context.current_camp_year_id
@@ -175,40 +269,69 @@ class PlanningView(QWidget):
                     select(Recipe).where(Recipe.active.is_(True)).order_by(Recipe.name)
                 ).scalars()
             ]
-            entry = planning_service.get_or_create_meal_entry(session, camp_year, day, meal_type)
-            current_recipe_id = entry.recipe_id
-            current_portions = entry.planned_portions or 0
-            current_target_group = entry.target_group or ""
-            current_status = entry.status or "geplant"
-            current_notes = entry.notes or ""
+            dishes = [
+                {
+                    "id": entry.id,
+                    "recipe_id": entry.recipe_id,
+                    "planned_portions": entry.planned_portions or 0,
+                    "target_group": entry.target_group or "",
+                    "status": entry.status or "geplant",
+                    "notes": entry.notes or "",
+                    "has_feedback": entry.feedback is not None,
+                }
+                for entry in planning_service.meal_entries_for_slot(camp_year, day, meal_type)
+            ]
 
-        dialog = MealCellDialog(
+        dialog = MealSlotDialog(
             cell_label,
+            dishes,
             recipes,
-            current_recipe_id=current_recipe_id,
-            current_portions=current_portions,
-            current_target_group=current_target_group,
-            current_status=current_status,
-            current_notes=current_notes,
             status_options=planning_service.ALLOWED_STATUSES,
             parent=self,
         )
-        if dialog.exec() != MealCellDialog.DialogCode.Accepted:
+        if dialog.exec() != MealSlotDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()
 
         with self.context.session() as session:
             camp_year = session.get(CampYear, camp_year_id)
-            entry = planning_service.get_or_create_meal_entry(session, camp_year, day, meal_type)
-            entry.recipe = session.get(Recipe, data["recipe_id"]) if data["recipe_id"] else None
-            entry.planned_portions = data["planned_portions"]
-            entry.target_group = data["target_group"]
-            entry.notes = data["notes"]
-            try:
-                planning_service.set_status(entry, data["status"])
-            except ValueError as exc:
-                error_dialog(self, str(exc))
-                return
+
+            for removed_id in data["removed_ids"]:
+                entry = session.get(MealPlanEntry, removed_id)
+                if entry is None:
+                    continue
+                try:
+                    planning_service.delete_meal_entry(session, entry)
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
+
+            for dish in data["dishes"]:
+                recipe = session.get(Recipe, dish["recipe_id"]) if dish["recipe_id"] else None
+                if dish["id"] is not None:
+                    entry = session.get(MealPlanEntry, dish["id"])
+                    if entry is None:
+                        continue
+                    entry.recipe = recipe
+                    entry.planned_portions = dish["planned_portions"]
+                    entry.target_group = dish["target_group"]
+                    entry.notes = dish["notes"]
+                elif recipe is not None or dish["planned_portions"] or dish["notes"]:
+                    entry = planning_service.add_meal_entry(
+                        session,
+                        camp_year,
+                        day,
+                        meal_type,
+                        recipe=recipe,
+                        planned_portions=dish["planned_portions"],
+                        target_group=dish["target_group"],
+                    )
+                    entry.notes = dish["notes"]
+                else:
+                    continue
+                try:
+                    planning_service.set_status(entry, dish["status"])
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
         self._reload_grid()
 
     def _create_camp_year(self) -> None:

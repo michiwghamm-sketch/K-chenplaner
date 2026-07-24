@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date, timedelta
+from decimal import Decimal
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import CampDay, CampYear, MealPlanEntry, Recipe
+from app.services import recipe_service
 
 ALLOWED_STATUSES = ("geplant", "bestellt", "gekocht", "abgesagt")
 DEFAULT_MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen")
@@ -192,3 +195,104 @@ def set_status(entry: MealPlanEntry, status: str) -> MealPlanEntry:
 
 def derive_shopping_date(meal_date: date, *, days_before: int = 1) -> date:
     return meal_date - timedelta(days=days_before)
+
+
+def meal_entries_for_slot(camp_year: CampYear, day_date: date, meal_type: str) -> list[MealPlanEntry]:
+    """Alle Gerichte, die fuer einen Tag/Mahlzeitart-Slot eingeplant sind (mehrere pro Slot moeglich)."""
+    return sorted(
+        (entry for entry in camp_year.meal_plan_entries if entry.meal_date == day_date and entry.meal_type == meal_type),
+        key=lambda entry: entry.id or 0,
+    )
+
+
+def add_meal_entry(
+    session: Session,
+    camp_year: CampYear,
+    day_date: date,
+    meal_type: str,
+    *,
+    recipe: Recipe | None = None,
+    planned_portions: int | None = None,
+    target_group: str | None = None,
+) -> MealPlanEntry:
+    """Legt ein weiteres Gericht in einem Tag/Mahlzeitart-Slot an, ohne bestehende Gerichte zu ersetzen."""
+    entry = MealPlanEntry(
+        camp_year=camp_year,
+        meal_date=day_date,
+        weekday=weekday_name(day_date),
+        meal_type=meal_type,
+        recipe=recipe,
+        planned_portions=planned_portions,
+        target_group=target_group,
+        status="geplant",
+    )
+    session.add(entry)
+    session.flush()
+    return entry
+
+
+def delete_meal_entry(session: Session, entry: MealPlanEntry) -> None:
+    if entry.feedback is not None:
+        raise ValueError("Dieses Gericht kann nicht entfernt werden: Es liegt bereits Feedback dazu vor.")
+    session.delete(entry)
+    session.flush()
+
+
+@dataclass(slots=True)
+class DayMealCost:
+    meal_type: str
+    recipe_name: str
+    portions: int
+    cost: Decimal
+    has_missing_prices: bool
+
+
+@dataclass(slots=True)
+class DaySummary:
+    day: date
+    meals: list[DayMealCost] = field(default_factory=list)
+    total_portions: int = 0
+    total_cost: Decimal = Decimal("0")
+    has_missing_prices: bool = False
+
+
+def day_summary(session: Session, camp_year: CampYear, day_date: date) -> DaySummary:
+    """Kalkulierte Auswertung eines einzelnen Tages: Gerichte, Portionen und Kosten (nicht abgesagte Gerichte)."""
+    entries = sorted(
+        (
+            entry
+            for entry in camp_year.meal_plan_entries
+            if entry.meal_date == day_date and entry.status != "abgesagt" and entry.recipe is not None
+        ),
+        key=lambda entry: (
+            DEFAULT_MEAL_TYPES.index(entry.meal_type) if entry.meal_type in DEFAULT_MEAL_TYPES else len(DEFAULT_MEAL_TYPES),
+            entry.id or 0,
+        ),
+    )
+
+    summary = DaySummary(day=day_date)
+    for entry in entries:
+        portions = entry.planned_portions or entry.recipe.default_portions or 0
+        cost = Decimal("0")
+        has_missing_prices = False
+        if portions:
+            cost_result = recipe_service.calculate_recipe_cost(
+                session, entry.recipe, portions=portions, year=camp_year.year
+            )
+            cost = cost_result.total_cost
+            has_missing_prices = bool(cost_result.missing_price_ingredients)
+
+        summary.meals.append(
+            DayMealCost(
+                meal_type=entry.meal_type or "",
+                recipe_name=entry.recipe.name,
+                portions=portions,
+                cost=cost,
+                has_missing_prices=has_missing_prices,
+            )
+        )
+        summary.total_portions += portions
+        summary.total_cost += cost
+        summary.has_missing_prices = summary.has_missing_prices or has_missing_prices
+
+    return summary

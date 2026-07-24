@@ -1,10 +1,11 @@
 from datetime import date
+from decimal import Decimal
 
 import pytest
 from sqlalchemy import select
 
 from app.db import session_scope
-from app.models import CampYear, MealPlanEntry
+from app.models import CampYear, Ingredient, IngredientPrice, MealPlanEntry, Recipe, RecipeFeedback, RecipeIngredient
 from app.services import planning_service
 
 
@@ -165,3 +166,101 @@ def test_get_or_create_meal_entry_creates_missing_slot(session_factory) -> None:
         entry = planning_service.get_or_create_meal_entry(session, camp_year, date(2026, 8, 1), "Brotzeit")
         assert isinstance(entry, MealPlanEntry)
         assert entry.status == "geplant"
+
+
+def _priced_recipe(session, name: str, *, price: Decimal) -> Recipe:
+    recipe = Recipe(name=name, normalized_name=name.lower(), default_portions=10)
+    ingredient = Ingredient(name=f"{name} Zutat", normalized_name=f"{name.lower()} zutat", default_unit="kg")
+    ingredient.prices.append(IngredientPrice(price_per_unit=price, unit="kg", year=2026))
+    session.add_all([recipe, ingredient])
+    session.flush()
+    recipe.ingredients.append(
+        RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="kg", price_unit="kg", sort_order=1)
+    )
+    return recipe
+
+
+def test_add_meal_entry_allows_multiple_dishes_per_slot(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = planning_service.create_camp_year(
+            session, year=2026, start_date=date(2026, 8, 1), end_date=date(2026, 8, 1)
+        )
+        meat = Recipe(name="Braten", normalized_name="braten")
+        veggi = Recipe(name="Gemüsecurry", normalized_name="gemuesecurry")
+        session.add_all([meat, veggi])
+        session.flush()
+
+        planning_service.add_meal_entry(
+            session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=meat, planned_portions=30
+        )
+        planning_service.add_meal_entry(
+            session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=veggi, planned_portions=10
+        )
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        dishes = planning_service.meal_entries_for_slot(camp_year, date(2026, 8, 1), "Mittagessen")
+        assert [d.recipe.name for d in dishes] == ["Braten", "Gemüsecurry"]
+
+
+def test_delete_meal_entry_removes_it_when_no_feedback(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = planning_service.create_camp_year(
+            session, year=2026, start_date=date(2026, 8, 1), end_date=date(2026, 8, 1)
+        )
+        recipe = Recipe(name="Testgericht", normalized_name="testgericht")
+        session.add(recipe)
+        session.flush()
+        entry = planning_service.add_meal_entry(session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=recipe)
+        entry_id = entry.id
+
+    with session_scope(session_factory) as session:
+        entry = session.get(MealPlanEntry, entry_id)
+        planning_service.delete_meal_entry(session, entry)
+
+    with session_scope(session_factory) as session:
+        assert session.get(MealPlanEntry, entry_id) is None
+
+
+def test_delete_meal_entry_blocks_when_it_has_feedback(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = planning_service.create_camp_year(
+            session, year=2026, start_date=date(2026, 8, 1), end_date=date(2026, 8, 1)
+        )
+        recipe = Recipe(name="Testgericht", normalized_name="testgericht")
+        session.add(recipe)
+        session.flush()
+        entry = planning_service.add_meal_entry(session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=recipe)
+        session.add(RecipeFeedback(camp_year=camp_year, recipe=recipe, meal_plan_entry=entry))
+        entry_id = entry.id
+
+    with session_scope(session_factory) as session:
+        entry = session.get(MealPlanEntry, entry_id)
+        with pytest.raises(ValueError, match="Feedback"):
+            planning_service.delete_meal_entry(session, entry)
+
+
+def test_day_summary_sums_portions_and_cost_across_dishes(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = planning_service.create_camp_year(
+            session, year=2026, start_date=date(2026, 8, 1), end_date=date(2026, 8, 1)
+        )
+        meat = _priced_recipe(session, "Braten", price=Decimal("2.00"))
+        veggi = _priced_recipe(session, "Gemuesecurry", price=Decimal("1.00"))
+        session.flush()
+
+        planning_service.add_meal_entry(session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=meat, planned_portions=10)
+        planning_service.add_meal_entry(session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=veggi, planned_portions=5)
+        # Abgesagte Gerichte zaehlen nicht in die Auswertung.
+        cancelled = planning_service.add_meal_entry(
+            session, camp_year, date(2026, 8, 1), "Abendessen", recipe=meat, planned_portions=999
+        )
+        planning_service.set_status(cancelled, "abgesagt")
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        summary = planning_service.day_summary(session, camp_year, date(2026, 8, 1))
+        assert summary.total_portions == 15
+        assert summary.total_cost == Decimal("25.00")
+        assert len(summary.meals) == 2
+        assert summary.has_missing_prices is False

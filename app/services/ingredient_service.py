@@ -15,7 +15,9 @@ PLURAL_SUFFIXES = ("n", "e", "en")
 AUTO_MERGE_SIMILARITY_THRESHOLD = 0.93
 
 
-def search_ingredients(session: Session, *, query: str | None = None, active_only: bool = True) -> list[Ingredient]:
+def search_ingredients(
+    session: Session, *, query: str | None = None, active_only: bool = True, without_price: bool = False
+) -> list[Ingredient]:
     stmt = select(Ingredient)
     if active_only:
         stmt = stmt.where(Ingredient.active.is_(True))
@@ -28,6 +30,8 @@ def search_ingredients(session: Session, *, query: str | None = None, active_onl
             if normalized_query in ingredient.normalized_name
             or any(normalized_query in normalize_name(alias.alias) for alias in ingredient.aliases)
         ]
+    if without_price:
+        ingredients = [ingredient for ingredient in ingredients if not ingredient.prices]
     return ingredients
 
 

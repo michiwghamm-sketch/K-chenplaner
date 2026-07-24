@@ -8,6 +8,18 @@ from app.models import Ingredient, IngredientPrice, Recipe, RecipeIngredient, Sh
 from app.services import ingredient_service
 
 
+def test_search_ingredients_without_price_filters_to_unpriced(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        priced = Ingredient(name="Mehl", normalized_name="mehl", default_unit="kg")
+        priced.prices.append(IngredientPrice(price_per_unit=Decimal("1.00"), unit="kg", year=2026))
+        unpriced = Ingredient(name="Zucker", normalized_name="zucker", default_unit="kg")
+        session.add_all([priced, unpriced])
+
+    with session_scope(session_factory) as session:
+        results = ingredient_service.search_ingredients(session, without_price=True)
+        assert [i.name for i in results] == ["Zucker"]
+
+
 def test_find_merge_candidates_detects_plural_variant(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = Recipe(name="Testgericht", normalized_name="testgericht")

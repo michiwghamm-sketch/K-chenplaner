@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QDoubleSpinBox,
     QFormLayout,
     QHBoxLayout,
+    QHeaderView,
     QInputDialog,
     QLabel,
     QLineEdit,
@@ -24,6 +25,7 @@ from PySide6.QtWidgets import (
     QProgressBar,
     QPushButton,
     QSpinBox,
+    QTableWidget,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -1022,77 +1024,147 @@ TARGET_GROUP_OPTIONS = ("Alle", "Kinder", "Betreuer")
 NO_TARGET_GROUP_LABEL = "- keine Angabe -"
 
 
-class MealCellDialog(QDialog):
-    """Dialog zum Bearbeiten einer einzelnen Mahlzeit im Wochenplan-Raster."""
+class MealSlotDialog(QDialog):
+    """Dialog zum Verwalten aller Gerichte eines Tag/Mahlzeitart-Slots im Wochenplan-Raster.
+
+    Ein Slot kann mehrere Gerichte enthalten (z. B. eine Fleisch- und eine
+    Veggi-Variante); jede Tabellenzeile entspricht einem Gericht.
+    """
+
+    _COLUMNS = ("Rezept", "Portionen", "Zielgruppe", "Status", "Notizen")
 
     def __init__(
         self,
         cell_label: str,
+        dishes: list[dict],
         recipes: list[tuple[int, str]],
         *,
-        current_recipe_id: int | None,
-        current_portions: int,
-        current_target_group: str,
-        current_status: str,
-        current_notes: str,
         status_options: tuple[str, ...],
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle(cell_label)
+        self.setMinimumWidth(900)
+        self._recipes = recipes
+        self._status_options = status_options
+        self._removed_ids: list[int] = []
 
-        self.recipe_combo = QComboBox(self)
-        self.recipe_combo.addItem("- kein Rezept -", None)
-        for recipe_id, name in recipes:
-            self.recipe_combo.addItem(name, recipe_id)
-        recipe_index = self.recipe_combo.findData(current_recipe_id)
-        self.recipe_combo.setCurrentIndex(recipe_index if recipe_index >= 0 else 0)
+        self.table = QTableWidget(0, len(self._COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        # Das Rezept-Feld braucht deutlich mehr Platz als die anderen Spalten, sonst
+        # sind Rezeptnamen in der Combobox nicht lesbar.
+        for column, width in enumerate((330, 90, 130, 120, 170)):
+            self.table.horizontalHeader().resizeSection(column, width)
+        self.table.verticalHeader().setVisible(False)
 
-        self.portions_spin = QSpinBox(self)
-        self.portions_spin.setRange(0, 2000)
-        self.portions_spin.setValue(current_portions)
+        for dish in dishes:
+            self._add_row(dish)
+        if not dishes:
+            self._add_row(None)
 
-        self.target_group_combo = QComboBox(self)
-        self.target_group_combo.addItem(NO_TARGET_GROUP_LABEL)
-        self.target_group_combo.addItems(TARGET_GROUP_OPTIONS)
-        if current_target_group and current_target_group not in TARGET_GROUP_OPTIONS:
-            self.target_group_combo.addItem(current_target_group)
-        target_group_index = self.target_group_combo.findText(current_target_group) if current_target_group else 0
-        self.target_group_combo.setCurrentIndex(target_group_index if target_group_index >= 0 else 0)
-
-        self.status_combo = QComboBox(self)
-        self.status_combo.addItems(status_options)
-        status_index = self.status_combo.findText(current_status)
-        self.status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
-
-        self.notes_edit = QTextEdit(self)
-        self.notes_edit.setPlainText(current_notes)
-        self.notes_edit.setFixedHeight(60)
-
-        form = QFormLayout()
-        form.addRow("Rezept", self.recipe_combo)
-        form.addRow("Portionen", self.portions_spin)
-        form.addRow("Zielgruppe", self.target_group_combo)
-        form.addRow("Status", self.status_combo)
-        form.addRow("Notizen", self.notes_edit)
+        row_buttons = QHBoxLayout()
+        add_button = QPushButton("+ Gericht hinzufügen", self)
+        add_button.clicked.connect(lambda: self._add_row(None))
+        remove_button = QPushButton("Gericht entfernen", self)
+        remove_button.clicked.connect(self._remove_selected_row)
+        row_buttons.addWidget(add_button)
+        row_buttons.addWidget(remove_button)
+        row_buttons.addStretch(1)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
 
-        layout = QFormLayout(self)
-        layout.addRow(form)
-        layout.addRow(buttons)
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.table)
+        layout.addLayout(row_buttons)
+        layout.addWidget(buttons)
+
+    def _add_row(self, dish: dict | None) -> None:
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        recipe_combo = QComboBox(self.table)
+        recipe_combo.setEditable(True)
+        recipe_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        recipe_combo.addItem("- kein Rezept -", None)
+        for recipe_id, name in self._recipes:
+            recipe_combo.addItem(name, recipe_id)
+        recipe_combo.setProperty("entry_id", dish["id"] if dish else None)
+        recipe_combo.setProperty("has_feedback", bool(dish and dish.get("has_feedback")))
+        if dish and dish.get("recipe_id"):
+            index = recipe_combo.findData(dish["recipe_id"])
+            recipe_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.table.setCellWidget(row, 0, recipe_combo)
+
+        portions_spin = QSpinBox(self.table)
+        portions_spin.setRange(0, 2000)
+        portions_spin.setValue(dish["planned_portions"] if dish else 0)
+        self.table.setCellWidget(row, 1, portions_spin)
+
+        target_group_combo = QComboBox(self.table)
+        target_group_combo.addItem(NO_TARGET_GROUP_LABEL)
+        target_group_combo.addItems(TARGET_GROUP_OPTIONS)
+        current_target_group = dish["target_group"] if dish else ""
+        if current_target_group and current_target_group not in TARGET_GROUP_OPTIONS:
+            target_group_combo.addItem(current_target_group)
+        target_group_index = target_group_combo.findText(current_target_group) if current_target_group else 0
+        target_group_combo.setCurrentIndex(target_group_index if target_group_index >= 0 else 0)
+        self.table.setCellWidget(row, 2, target_group_combo)
+
+        status_combo = QComboBox(self.table)
+        status_combo.addItems(self._status_options)
+        current_status = dish["status"] if dish else "geplant"
+        status_index = status_combo.findText(current_status)
+        status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
+        self.table.setCellWidget(row, 3, status_combo)
+
+        notes_edit = QLineEdit(dish["notes"] if dish else "", self.table)
+        self.table.setCellWidget(row, 4, notes_edit)
+
+        # Widget-Hoehe (Combo/Spin/LineEdit) ist unabhaengig von der Spaltenbreite bekannt,
+        # daher hier direkt und ohne Verzoegerung berechenbar (anders als bei Text mit
+        # Zeilenumbruch, siehe PlanningView._reload_grid()).
+        self.table.resizeRowsToContents()
+
+    def _remove_selected_row(self) -> None:
+        row = self.table.currentRow()
+        if row < 0:
+            return
+        recipe_combo = self.table.cellWidget(row, 0)
+        entry_id = recipe_combo.property("entry_id")
+        if entry_id is not None and recipe_combo.property("has_feedback"):
+            error_dialog(
+                self,
+                "Für dieses Gericht liegt bereits Feedback vor und es kann daher nicht entfernt werden. "
+                "Bitte zuerst das Feedback löschen.",
+            )
+            return
+        if entry_id is not None:
+            self._removed_ids.append(entry_id)
+        self.table.removeRow(row)
 
     def result_data(self) -> dict:
-        target_group_text = self.target_group_combo.currentText()
-        return {
-            "recipe_id": self.recipe_combo.currentData(),
-            "planned_portions": self.portions_spin.value() or None,
-            "target_group": target_group_text if target_group_text != NO_TARGET_GROUP_LABEL else None,
-            "status": self.status_combo.currentText(),
-            "notes": self.notes_edit.toPlainText().strip() or None,
-        }
+        dishes = []
+        for row in range(self.table.rowCount()):
+            recipe_combo = self.table.cellWidget(row, 0)
+            portions_spin = self.table.cellWidget(row, 1)
+            target_group_combo = self.table.cellWidget(row, 2)
+            status_combo = self.table.cellWidget(row, 3)
+            notes_edit = self.table.cellWidget(row, 4)
+            target_group_text = target_group_combo.currentText()
+            dishes.append(
+                {
+                    "id": recipe_combo.property("entry_id"),
+                    "recipe_id": recipe_combo.currentData(),
+                    "planned_portions": portions_spin.value() or None,
+                    "target_group": target_group_text if target_group_text != NO_TARGET_GROUP_LABEL else None,
+                    "status": status_combo.currentText(),
+                    "notes": notes_edit.text().strip() or None,
+                }
+            )
+        return {"dishes": dishes, "removed_ids": self._removed_ids}
 
 
 class ScaleRecipeDialog(QDialog):
