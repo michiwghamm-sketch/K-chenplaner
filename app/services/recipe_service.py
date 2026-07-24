@@ -7,7 +7,7 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Recipe, RecipeComponent, RecipeIngredient, RecipeStep, RecipeVersion
+from app.models import Recipe, RecipeComponent, RecipeFeedback, RecipeIngredient, RecipeStep, RecipeVersion
 from app.services import price_service
 from app.utils.normalization import normalize_name
 

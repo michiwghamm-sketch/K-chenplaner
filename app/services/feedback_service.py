@@ -135,3 +135,8 @@ def recipe_feedback_history(recipe: Recipe) -> list[RecipeFeedback]:
         key=lambda entry: entry.camp_year.year if entry.camp_year else 0,
         reverse=True,
     )
+
+
+def delete_feedback(session: Session, feedback: RecipeFeedback) -> None:
+    session.delete(feedback)
+    session.flush()
