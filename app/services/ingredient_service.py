@@ -153,6 +153,58 @@ def _usage_score(ingredient: Ingredient) -> tuple[int, int]:
     return (len(ingredient.recipe_links), len(ingredient.prices))
 
 
+def _match_reason(normalized_a: str, normalized_b: str, *, threshold: float) -> tuple[str, float] | None:
+    """Prueft, ob zwei normalisierte Namen als Dublette gelten (Singular/Plural oder hohe Aehnlichkeit).
+
+    Gibt (Grund, Aehnlichkeit) zurueck, oder None wenn kein Match. Zentrale Stelle fuer die
+    Aehnlichkeitslogik, damit find_merge_candidates() und find_similar_ingredients() (Dublettenschutz
+    beim Neuanlegen) nicht auseinanderlaufen.
+    """
+    is_plural = _is_plural_variant(normalized_a, normalized_b)
+    similarity = difflib.SequenceMatcher(None, normalized_a, normalized_b).ratio()
+    if not is_plural and similarity < threshold:
+        return None
+    reason = "Singular/Plural-Variante" if is_plural else f"sehr hohe Namensähnlichkeit ({similarity:.0%})"
+    return reason, similarity
+
+
+def find_similar_ingredients(
+    session: Session,
+    name: str,
+    *,
+    exclude_id: int | None = None,
+    active_only: bool = True,
+    threshold: float = AUTO_MERGE_SIMILARITY_THRESHOLD,
+) -> list[tuple[Ingredient, float, str]]:
+    """Findet aktive Zutaten, deren Name dem gegebenen Namen sehr aehnlich ist (Tippfehler, Singular/Plural).
+
+    Zentrale Aehnlichkeitspruefung fuer eine einzelne Zutat gegen den restlichen Bestand - genutzt
+    sowohl von find_merge_candidates() (paarweise ueber alle Zutaten) als auch vom Dublettenschutz
+    beim Anlegen/Umbenennen einer Zutat in der UI. Gibt (Zutat, Aehnlichkeit, Grund)-Tupel zurueck,
+    absteigend nach Aehnlichkeit sortiert.
+    """
+    normalized_name = normalize_name(name)
+    stmt = select(Ingredient)
+    if active_only:
+        stmt = stmt.where(Ingredient.active.is_(True))
+    ingredients = session.execute(stmt).scalars().all()
+
+    matches: list[tuple[Ingredient, float, str]] = []
+    for candidate in ingredients:
+        if exclude_id is not None and candidate.id == exclude_id:
+            continue
+        if candidate.normalized_name == normalized_name:
+            continue
+        match = _match_reason(normalized_name, candidate.normalized_name, threshold=threshold)
+        if match is None:
+            continue
+        reason, similarity = match
+        matches.append((candidate, similarity, reason))
+
+    matches.sort(key=lambda item: item[1], reverse=True)
+    return matches
+
+
 def find_merge_candidates(session: Session, *, active_only: bool = True) -> list[MergeCandidate]:
     """Findet Zutatenpaare, die mit hoher Sicherheit dieselbe Zutat sind (Singular/Plural, Tippfehler).
 
@@ -167,9 +219,11 @@ def find_merge_candidates(session: Session, *, active_only: bool = True) -> list
     candidates: list[MergeCandidate] = []
     seen_pairs: set[frozenset[int]] = set()
 
-    for i, first in enumerate(ingredients):
+    for first in ingredients:
         first_alias_names = {normalize_name(a.alias) for a in first.aliases}
-        for second in ingredients[i + 1 :]:
+        for second, similarity, reason in find_similar_ingredients(
+            session, first.name, exclude_id=first.id, active_only=active_only
+        ):
             pair_key = frozenset((first.id, second.id))
             if pair_key in seen_pairs:
                 continue
@@ -177,17 +231,56 @@ def find_merge_candidates(session: Session, *, active_only: bool = True) -> list
             if second.normalized_name in first_alias_names or first.normalized_name in second_alias_names:
                 continue
 
-            is_plural = _is_plural_variant(first.normalized_name, second.normalized_name)
-            similarity = difflib.SequenceMatcher(None, first.normalized_name, second.normalized_name).ratio()
-            if not is_plural and similarity < AUTO_MERGE_SIMILARITY_THRESHOLD:
-                continue
-
             seen_pairs.add(pair_key)
             keep, remove = (first, second) if _usage_score(first) >= _usage_score(second) else (second, first)
-            reason = "Singular/Plural-Variante" if is_plural else f"sehr hohe Namensähnlichkeit ({similarity:.0%})"
             candidates.append(MergeCandidate(keep=keep, remove=remove, reason=reason, similarity=similarity))
 
     return candidates
+
+
+def find_alias_orphan_candidates(session: Session, *, active_only: bool = True) -> list[MergeCandidate]:
+    """Findet Zutaten, bei denen ein Alias bereits auf eine andere Zutat verweist, die eigentliche
+    Dublette als separate Ingredient-Zeile aber nie geloescht wurde.
+
+    Das passiert z. B., wenn ein frueherer Merge-Lauf Aliase gesetzt hat, ein anschliessender
+    Reimport/Restore aber den Vor-Merge-Datenstand zurueckgebracht hat. Da ein Mensch die
+    Zusammengehoerigkeit durch den Alias bereits bestaetigt hat, ist das die sicherste Kandidatenstufe
+    (similarity=1.0) - unabhaengig von jeder Namensaehnlichkeit.
+    """
+    aliases = session.execute(select(IngredientAlias)).scalars().all()
+    candidates: list[MergeCandidate] = []
+    seen_pairs: set[frozenset[int]] = set()
+
+    for alias in aliases:
+        owner = alias.ingredient
+        if active_only and not owner.active:
+            continue
+        stmt = select(Ingredient).where(Ingredient.name == alias.alias, Ingredient.id != owner.id)
+        if active_only:
+            stmt = stmt.where(Ingredient.active.is_(True))
+        duplicate = session.execute(stmt).scalar_one_or_none()
+        if duplicate is None:
+            continue
+
+        pair_key = frozenset((owner.id, duplicate.id))
+        if pair_key in seen_pairs:
+            continue
+        seen_pairs.add(pair_key)
+        candidates.append(
+            MergeCandidate(
+                keep=owner,
+                remove=duplicate,
+                reason="Alias verweist bereits auf diese Zutat, Dublette wurde aber nie geloescht",
+                similarity=1.0,
+            )
+        )
+
+    return candidates
+
+
+def describe_recipe_usage(ingredient: Ingredient) -> list[str]:
+    """Menschlich lesbare Liste der Rezepte, die diese Zutat verwenden (Name + Menge/Einheit)."""
+    return [f"{link.recipe.name} ({link.quantity} {link.unit})" for link in ingredient.recipe_links]
 
 
 def merge_ingredients(session: Session, *, keep: Ingredient, remove: Ingredient) -> None:

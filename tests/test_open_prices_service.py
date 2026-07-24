@@ -200,6 +200,134 @@ def test_import_price_for_ingredient_returns_price_record(monkeypatch) -> None:
     assert result.matched_date == date(2026, 7, 1)
 
 
+def test_lookup_product_prices_parses_image_url_and_brands(monkeypatch) -> None:
+    payloads = {
+        "https://prices.openfoodfacts.org/api/v1/products/code/3478822005249": {
+            "code": "3478822005249",
+            "product_name": "Ketchup",
+            "brands": "Jardin bio",
+            "image_url": "https://images.openfoodfacts.org/images/products/347/882/200/5249/front_fr.49.400.jpg",
+            "product_quantity": 560,
+            "product_quantity_unit": "g",
+            "price_count": 6,
+        },
+        "https://prices.openfoodfacts.org/api/v1/prices?product_code=3478822005249&order_by=-date&size=1&currency=EUR": {
+            "items": []
+        },
+    }
+
+    def fake_urlopen(url: str, timeout: int = 15):
+        return _FakeResponse(payloads[url])
+
+    monkeypatch.setattr(open_prices_service, "urlopen", fake_urlopen)
+
+    result = open_prices_service.lookup_product_prices("3478822005249", size=1)
+
+    assert result.product.brands == "Jardin bio"
+    assert result.product.image_url == "https://images.openfoodfacts.org/images/products/347/882/200/5249/front_fr.49.400.jpg"
+
+
+def test_fetch_image_bytes_returns_none_on_error(monkeypatch) -> None:
+    from urllib.error import URLError
+
+    def fake_urlopen(url: str, timeout: int = 15):
+        raise URLError("kein Netz")
+
+    monkeypatch.setattr(open_prices_service, "urlopen", fake_urlopen)
+
+    assert open_prices_service.fetch_image_bytes("https://example.invalid/x.jpg") is None
+
+
+def test_fetch_image_bytes_returns_bytes_on_success(monkeypatch) -> None:
+    class _FakeImageResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return None
+
+        def read(self):
+            return b"\x89PNG..."
+
+    monkeypatch.setattr(open_prices_service, "urlopen", lambda url, timeout=15: _FakeImageResponse())
+
+    assert open_prices_service.fetch_image_bytes("https://example.invalid/x.jpg") == b"\x89PNG..."
+
+
+def test_import_price_for_ingredient_prefers_linked_barcode_over_name_search(monkeypatch) -> None:
+    observation = open_prices_service.OpenPriceObservation(
+        product_code="123",
+        product_name="Ketchup Jardin bio",
+        price=Decimal("1.99"),
+        currency="EUR",
+        date=date(2026, 7, 1),
+        store_name="Testmarkt",
+        location_name="Testmarkt, Regensburg, Deutschland",
+        proof_type="PRICE_TAG",
+        price_is_discounted=False,
+    )
+    lookup_result = open_prices_service.OpenPricesLookupResult(
+        product=open_prices_service.OpenPricesProduct(code="123", name="Ketchup Jardin bio", quantity="560 g", price_count=6),
+        observations=[observation],
+    )
+
+    def fail_if_called(*args, **kwargs):
+        raise AssertionError("find_best_match_for_query haette nicht aufgerufen werden duerfen")
+
+    monkeypatch.setattr(open_prices_service, "lookup_product_prices", lambda *args, **kwargs: lookup_result)
+    monkeypatch.setattr(open_prices_service, "find_best_match_for_query", fail_if_called)
+
+    result = open_prices_service.import_price_for_ingredient(
+        7,
+        "Ketchup",
+        target_unit="kg",
+        year=2026,
+        barcode="123",
+    )
+
+    assert result.status == "imported"
+    assert result.matched_product_code == "123"
+    assert result.query_used == "Barcode 123"
+    assert result.price_record is not None
+
+
+def test_import_price_for_ingredient_falls_back_to_name_search_when_barcode_lookup_fails(monkeypatch) -> None:
+    match = open_prices_service.OpenPricesSearchMatch(
+        product=open_prices_service.OpenPricesProduct(code="999", name="Ketchup", quantity="500 g", price_count=3),
+        observation=open_prices_service.OpenPriceObservation(
+            product_code="999",
+            product_name="Ketchup",
+            price=Decimal("1.50"),
+            currency="EUR",
+            date=date(2026, 7, 1),
+            store_name="Testmarkt",
+            location_name="Testmarkt, Regensburg, Deutschland",
+            proof_type="PRICE_TAG",
+            price_is_discounted=False,
+        ),
+        score=100.0,
+        query_used="Ketchup",
+    )
+
+    def fake_lookup_product_prices(*args, **kwargs):
+        raise open_prices_service.OpenPricesLookupError("kein Produkt zu diesem Barcode")
+
+    monkeypatch.setattr(open_prices_service, "lookup_product_prices", fake_lookup_product_prices)
+    monkeypatch.setattr(open_prices_service, "find_best_match_for_query", lambda *args, **kwargs: match)
+
+    result = open_prices_service.import_price_for_ingredient(
+        7,
+        "Ketchup",
+        target_unit="kg",
+        year=2026,
+        barcode="000000000000",
+    )
+
+    assert result.status == "imported"
+    assert result.matched_product_code == "999"
+    assert result.query_used == "Ketchup"
+
+
 def test_build_search_queries_adds_normalized_and_singular_variants() -> None:
     queries = open_prices_service.build_search_queries("Gnocchi Salate")
 

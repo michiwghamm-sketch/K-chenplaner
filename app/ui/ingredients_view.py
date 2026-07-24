@@ -15,11 +15,12 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
 from app.services import ingredient_service
-from app.ui.dialogs import confirm_dialog, error_dialog, prompt_text
+from app.ui.dialogs import BarcodeSearchDialog, SimilarIngredientsWarningDialog, confirm_dialog, error_dialog, info_dialog, prompt_text
 from app.ui.widgets import PageHeader, SearchBar
 
 
@@ -51,11 +52,14 @@ class IngredientsView(QWidget):
         self.ingredient_list.currentItemChanged.connect(self._on_selected)
         new_button = QPushButton("Neue Zutat", left)
         new_button.clicked.connect(self._create_ingredient)
+        assign_barcodes_button = QPushButton("Fehlende Barcodes zuordnen", left)
+        assign_barcodes_button.clicked.connect(self._assign_missing_barcodes)
 
         left_layout.addWidget(self.search_bar)
         left_layout.addWidget(self.active_only_checkbox)
         left_layout.addWidget(self.ingredient_list)
         left_layout.addWidget(new_button)
+        left_layout.addWidget(assign_barcodes_button)
         splitter.addWidget(left)
 
         right = QWidget(self)
@@ -76,6 +80,18 @@ class IngredientsView(QWidget):
         form.addRow("", self.active_checkbox)
         form.addRow("Notizen", self.notes_edit)
         right_layout.addLayout(form)
+
+        self.barcode_label = QLabel("Kein Produkt verknuepft", right)
+        self.barcode_label.setWordWrap(True)
+        barcode_row = QHBoxLayout()
+        search_barcode_button = QPushButton("Produkt/Barcode suchen", right)
+        search_barcode_button.clicked.connect(self._search_barcode)
+        self.remove_barcode_button = QPushButton("Verknuepfung entfernen", right)
+        self.remove_barcode_button.clicked.connect(self._remove_barcode_link)
+        barcode_row.addWidget(search_barcode_button)
+        barcode_row.addWidget(self.remove_barcode_button)
+        right_layout.addWidget(self.barcode_label)
+        right_layout.addLayout(barcode_row)
 
         right_layout.addWidget(QLabel("Aliasnamen", right))
         self.alias_list = QListWidget(right)
@@ -161,6 +177,8 @@ class IngredientsView(QWidget):
         self.active_checkbox.setChecked(True)
         self.notes_edit.clear()
         self.alias_list.clear()
+        self.barcode_label.setText("Kein Produkt verknuepft")
+        self.remove_barcode_button.setEnabled(False)
 
     def _reload_detail(self) -> None:
         if self._current_ingredient_id is None:
@@ -177,6 +195,13 @@ class IngredientsView(QWidget):
             self.storage_edit.setText(ingredient.storage_type or "")
             self.active_checkbox.setChecked(ingredient.active)
             self.notes_edit.setPlainText(ingredient.notes or "")
+
+            if ingredient.barcode:
+                label = ingredient.barcode_product_label or ingredient.barcode
+                self.barcode_label.setText(f"Verknuepftes Produkt: {label} (Barcode {ingredient.barcode})")
+            else:
+                self.barcode_label.setText("Kein Produkt verknuepft")
+            self.remove_barcode_button.setEnabled(bool(ingredient.barcode))
 
             self.alias_list.clear()
             for alias in ingredient.aliases:
@@ -216,6 +241,21 @@ class IngredientsView(QWidget):
         if not name:
             error_dialog(self, "Der Zutatenname darf nicht leer sein.")
             return
+
+        with self.context.session() as session:
+            similar = ingredient_service.find_similar_ingredients(
+                session, name, exclude_id=self._current_ingredient_id
+            )
+            matches = [
+                (match.name, similarity, reason, len(match.recipe_links) + len(match.prices))
+                for match, similarity, reason in similar
+            ]
+
+        if matches:
+            dialog = SimilarIngredientsWarningDialog(name, matches, self)
+            if dialog.exec() != SimilarIngredientsWarningDialog.DialogCode.Accepted:
+                return
+
         with self.context.session() as session:
             ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
             if ingredient is None:
@@ -280,4 +320,78 @@ class IngredientsView(QWidget):
             alias = session.get(ingredient_service.IngredientAlias, alias_id)
             if alias is not None:
                 ingredient_service.remove_alias(session, alias)
+        self._reload_detail()
+
+    def _search_barcode(self) -> None:
+        if self._current_ingredient_id is None:
+            error_dialog(self, "Bitte zuerst eine Zutat auswaehlen oder anlegen.")
+            return
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is None:
+                return
+            name, default_unit = ingredient.name, ingredient.default_unit
+
+        dialog = BarcodeSearchDialog(name, default_unit, self)
+        dialog.exec()
+        data = dialog.result_data()
+        if data is None:
+            return
+
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is not None:
+                ingredient.barcode = data["barcode"]
+                ingredient.barcode_product_label = data["label"]
+        self._reload_detail()
+
+    def _remove_barcode_link(self) -> None:
+        if self._current_ingredient_id is None:
+            return
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is not None:
+                ingredient.barcode = None
+                ingredient.barcode_product_label = None
+        self._reload_detail()
+
+    def _assign_missing_barcodes(self) -> None:
+        with self.context.session() as session:
+            pending = session.execute(
+                select(ingredient_service.Ingredient)
+                .where(ingredient_service.Ingredient.active.is_(True), ingredient_service.Ingredient.barcode.is_(None))
+                .order_by(ingredient_service.Ingredient.name)
+            ).scalars().all()
+            pending_items = [(i.id, i.name, i.default_unit) for i in pending]
+
+        if not pending_items:
+            info_dialog(self, "Alle aktiven Zutaten haben bereits ein verknuepftes Produkt.")
+            return
+
+        assigned = 0
+        skipped = 0
+        total = len(pending_items)
+        for index, (ingredient_id, name, default_unit) in enumerate(pending_items, start=1):
+            dialog = BarcodeSearchDialog(
+                name, default_unit, self, progress_text=f"Zutat {index} von {total}: {name}"
+            )
+            dialog.exec()
+            data = dialog.result_data()
+            stopped = dialog.was_stopped()
+
+            if data is not None:
+                with self.context.session() as session:
+                    ingredient = session.get(ingredient_service.Ingredient, ingredient_id)
+                    if ingredient is not None:
+                        ingredient.barcode = data["barcode"]
+                        ingredient.barcode_product_label = data["label"]
+                assigned += 1
+            else:
+                skipped += 1
+
+            if stopped:
+                break
+
+        info_dialog(self, f"{assigned} Zutaten verknuepft, {skipped} uebersprungen/nicht zugeordnet.")
+        self._reload_list()
         self._reload_detail()

@@ -1,8 +1,10 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
-from PySide6.QtCore import QDate
+from PySide6.QtCore import QDate, QObject, QSize, QThread, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QComboBox,
     QDateEdit,
@@ -10,16 +12,27 @@ from PySide6.QtWidgets import (
     QDialogButtonBox,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QInputDialog,
     QLabel,
     QLineEdit,
+    QListWidget,
+    QListWidgetItem,
     QMessageBox,
+    QPushButton,
     QSpinBox,
     QTextEdit,
+    QVBoxLayout,
     QWidget,
 )
 
-from app.services.open_prices_service import OpenPricesSuggestion
+from app.services.open_prices_service import (
+    OpenPricesError,
+    OpenPricesSuggestion,
+    fetch_image_bytes,
+    lookup_product_prices,
+    suggest_matches_for_query,
+)
 
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
@@ -300,6 +313,235 @@ class OpenPricesSuggestionDialog(QDialog):
 
     def selected_suggestion(self) -> OpenPricesSuggestion:
         return self._suggestions[self.combo.currentData()]
+
+
+class SimilarIngredientsWarningDialog(QDialog):
+    """Warnt beim Anlegen/Umbenennen einer Zutat vor moeglichen Dubletten - reiner Hinweis, kein Zwang."""
+
+    def __init__(
+        self,
+        name: str,
+        matches: list[tuple[str, float, str, int]],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Ähnliche Zutaten gefunden")
+
+        info = QLabel(
+            f"'{name}' ist folgenden bestehenden Zutaten sehr ähnlich. Eventuell ist das bereits "
+            "dieselbe Zutat unter einem anderen Namen oder Tippfehler.",
+            self,
+        )
+        info.setWordWrap(True)
+
+        list_widget = QListWidget(self)
+        for match_name, similarity, reason, usage_count in matches:
+            usage_text = f", {usage_count}x in Rezepten/Preisen verwendet" if usage_count else ""
+            list_widget.addItem(f"{match_name} ({similarity:.0%} - {reason}{usage_text})")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Trotzdem speichern")
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText("Abbrechen")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(info)
+        layout.addWidget(list_widget)
+        layout.addWidget(buttons)
+
+
+@dataclass(slots=True)
+class ProductSearchResult:
+    suggestion: OpenPricesSuggestion
+    image_bytes: bytes | None
+
+
+class _ProductSearchWorker(QObject):
+    """Sucht in Open Prices nach Produkten und laedt Vorschaubilder - reine Netzwerkarbeit, kein
+    DB-Zugriff (gleiches Muster wie _OpenPricesAutoImportWorker in prices_view.py)."""
+
+    finished = Signal(list)
+    failed = Signal(str)
+
+    def __init__(self, query: str, target_unit: str | None) -> None:
+        super().__init__()
+        self.query = query
+        self.target_unit = target_unit
+
+    def run(self) -> None:
+        try:
+            suggestions = suggest_matches_for_query(self.query, target_unit=self.target_unit, limit=8)
+        except OpenPricesError as exc:
+            self.failed.emit(str(exc))
+            return
+
+        results: list[ProductSearchResult] = []
+        for suggestion in suggestions:
+            image_bytes = fetch_image_bytes(suggestion.product.image_url) if suggestion.product.image_url else None
+            results.append(ProductSearchResult(suggestion=suggestion, image_bytes=image_bytes))
+        self.finished.emit(results)
+
+
+class BarcodeSearchDialog(QDialog):
+    """Sucht in Open Prices nach passenden Produkten (mit Bild-Vorschau) und verknuepft die Auswahl
+    per Barcode mit einer Zutat. Wird sowohl fuer einzelne Zutaten als auch im gefuehrten
+    Batch-Modus fuer Bestandszutaten ohne Barcode verwendet (siehe IngredientsView)."""
+
+    def __init__(
+        self,
+        ingredient_name: str,
+        target_unit: str | None,
+        parent: QWidget | None = None,
+        *,
+        progress_text: str | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Produkt/Barcode suchen")
+        self.setMinimumSize(560, 420)
+
+        self._target_unit = target_unit
+        self._results: list[ProductSearchResult] = []
+        self._selected: dict | None = None
+        self._stopped = False
+        self._thread: QThread | None = None
+        self._worker: _ProductSearchWorker | None = None
+
+        layout = QVBoxLayout(self)
+
+        if progress_text:
+            progress_label = QLabel(progress_text, self)
+            progress_label.setStyleSheet("font-weight: bold;")
+            layout.addWidget(progress_label)
+
+        search_row = QHBoxLayout()
+        self.query_edit = QLineEdit(self)
+        self.query_edit.setText(ingredient_name)
+        self.query_edit.returnPressed.connect(self._start_search)
+        search_button = QPushButton("Suchen", self)
+        search_button.clicked.connect(self._start_search)
+        search_row.addWidget(self.query_edit)
+        search_row.addWidget(search_button)
+        layout.addLayout(search_row)
+
+        self.status_label = QLabel("", self)
+        layout.addWidget(self.status_label)
+
+        self.result_list = QListWidget(self)
+        self.result_list.setIconSize(QSize(64, 64))
+        self.result_list.itemSelectionChanged.connect(self._update_button_states)
+        self.result_list.itemDoubleClicked.connect(lambda _item: self._accept_selected())
+        layout.addWidget(self.result_list, stretch=1)
+
+        button_row = QHBoxLayout()
+        self.accept_button = QPushButton("Übernehmen", self)
+        self.accept_button.setEnabled(False)
+        self.accept_button.clicked.connect(self._accept_selected)
+        manual_button = QPushButton("Barcode manuell eingeben", self)
+        manual_button.clicked.connect(self._enter_manual_barcode)
+        skip_button = QPushButton("Überspringen", self)
+        skip_button.clicked.connect(self.reject)
+        stop_button = QPushButton("Vorgang beenden", self)
+        stop_button.clicked.connect(self._stop)
+        button_row.addWidget(self.accept_button)
+        button_row.addWidget(manual_button)
+        button_row.addStretch(1)
+        button_row.addWidget(skip_button)
+        button_row.addWidget(stop_button)
+        layout.addLayout(button_row)
+
+        self._start_search()
+
+    def _start_search(self) -> None:
+        if self._thread is not None:
+            return  # Suche laeuft bereits
+        query = self.query_edit.text().strip()
+        if not query:
+            return
+
+        self.result_list.clear()
+        self.accept_button.setEnabled(False)
+        self.status_label.setText("Suche läuft ...")
+
+        self._thread = QThread(self)
+        self._worker = _ProductSearchWorker(query, self._target_unit)
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.finished.connect(self._on_search_finished)
+        self._worker.failed.connect(self._on_search_failed)
+        self._worker.finished.connect(self._thread.quit)
+        self._worker.failed.connect(self._thread.quit)
+        self._thread.finished.connect(self._cleanup_thread)
+        self._thread.start()
+
+    def _on_search_finished(self, results: list[ProductSearchResult]) -> None:
+        self._results = results
+        self.result_list.clear()
+        for result in results:
+            product = result.suggestion.product
+            observation = result.suggestion.observation
+            brand_text = f" ({product.brands})" if product.brands else ""
+            quantity_text = f" | {product.quantity}" if product.quantity else ""
+            date_text = observation.date.isoformat() if observation.date else "Datum unbekannt"
+            label = (
+                f"{product.name}{brand_text}{quantity_text} | "
+                f"{observation.price} {observation.currency} | {date_text}"
+            )
+            item = QListWidgetItem(label)
+            if result.image_bytes:
+                pixmap = QPixmap()
+                if pixmap.loadFromData(result.image_bytes):
+                    item.setIcon(QIcon(pixmap))
+            self.result_list.addItem(item)
+
+        self.status_label.setText(f"{len(results)} Treffer" if results else "Keine Treffer gefunden.")
+
+    def _on_search_failed(self, message: str) -> None:
+        self.status_label.setText(f"Fehler: {message}")
+
+    def _cleanup_thread(self) -> None:
+        if self._worker is not None:
+            self._worker.deleteLater()
+        if self._thread is not None:
+            self._thread.deleteLater()
+        self._worker = None
+        self._thread = None
+
+    def _update_button_states(self) -> None:
+        self.accept_button.setEnabled(bool(self.result_list.selectedItems()))
+
+    def _accept_selected(self) -> None:
+        row = self.result_list.currentRow()
+        if row < 0 or row >= len(self._results):
+            return
+        product = self._results[row].suggestion.product
+        brand_text = f" ({product.brands})" if product.brands else ""
+        quantity_text = f", {product.quantity}" if product.quantity else ""
+        self._selected = {"barcode": product.code, "label": f"{product.name}{brand_text}{quantity_text}"}
+        self.accept()
+
+    def _enter_manual_barcode(self) -> None:
+        barcode = prompt_text(self, "Barcode manuell eingeben", "Barcode (EAN):")
+        if not barcode:
+            return
+        label = barcode
+        try:
+            lookup = lookup_product_prices(barcode, size=1)
+            label = f"{lookup.product.name} ({lookup.product.brands})" if lookup.product.brands else lookup.product.name
+        except OpenPricesError:
+            pass  # Barcode nicht in Open Prices bekannt - trotzdem als eingegeben verknuepfen
+        self._selected = {"barcode": barcode, "label": label}
+        self.accept()
+
+    def _stop(self) -> None:
+        self._stopped = True
+        self.reject()
+
+    def was_stopped(self) -> bool:
+        return self._stopped
+
+    def result_data(self) -> dict | None:
+        return self._selected
 
 
 class CampYearDialog(QDialog):
