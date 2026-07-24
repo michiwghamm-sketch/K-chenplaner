@@ -447,12 +447,12 @@ def fetch_image_bytes(url: str, *, timeout: int = DEFAULT_TIMEOUT_SECONDS) -> by
 def parse_quantity_string(value: str | None) -> tuple[Decimal, str] | None:
     if not value:
         return None
-    parts = value.strip().replace(",", ".").split()
-    if len(parts) != 2:
+    match = re.search(r"(\d+(?:[.,]\d+)?)\s*([A-Za-zÃ„Ã–ÃœÃ¤Ã¶Ã¼]+)", value.strip())
+    if match is None:
         return None
 
-    amount = _parse_decimal(parts[0])
-    unit = price_service.normalize_unit(parts[1])
+    amount = _parse_decimal(match.group(1).replace(",", "."))
+    unit = price_service.normalize_unit(match.group(2))
     if amount is None or unit is None:
         return None
     if not price_service.can_convert_units(unit, unit):

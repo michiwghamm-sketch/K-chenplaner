@@ -40,6 +40,9 @@ class Ingredient(Base):
 
     aliases: Mapped[list["IngredientAlias"]] = relationship(back_populates="ingredient", cascade="all, delete-orphan")
     prices: Mapped[list["IngredientPrice"]] = relationship(back_populates="ingredient", cascade="all, delete-orphan")
+    price_profile: Mapped[Optional["IngredientPriceProfile"]] = relationship(
+        back_populates="ingredient", cascade="all, delete-orphan", uselist=False
+    )
     recipe_links: Mapped[list["RecipeIngredient"]] = relationship(back_populates="ingredient")
     shopping_items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="ingredient")
 
@@ -74,6 +77,38 @@ class IngredientPrice(Base):
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
     ingredient: Mapped["Ingredient"] = relationship(back_populates="prices")
+
+
+class OpenPricesCategory(Base):
+    __tablename__ = "open_prices_categories"
+
+    tag: Mapped[str] = mapped_column(String(255), primary_key=True)
+    name_de: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    name_en: Mapped[Optional[str]] = mapped_column(String(255), index=True)
+    parents_json: Mapped[Optional[str]] = mapped_column(Text)
+    synonyms_json: Mapped[Optional[str]] = mapped_column(Text)
+    raw_json: Mapped[Optional[str]] = mapped_column(Text)
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    ingredient_profiles: Mapped[list["IngredientPriceProfile"]] = relationship(back_populates="category")
+
+
+class IngredientPriceProfile(Base):
+    __tablename__ = "ingredient_price_profiles"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), nullable=False, unique=True, index=True)
+    category_tag: Mapped[Optional[str]] = mapped_column(ForeignKey("open_prices_categories.tag"), index=True)
+    search_terms: Mapped[Optional[str]] = mapped_column(Text)
+    lookup_mode: Mapped[str] = mapped_column(String(50), default="category", nullable=False)
+    status: Mapped[str] = mapped_column(String(50), default="needs_review", nullable=False, index=True)
+    confidence: Mapped[Optional[str]] = mapped_column(String(50))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    ingredient: Mapped["Ingredient"] = relationship(back_populates="price_profile")
+    category: Mapped[Optional["OpenPricesCategory"]] = relationship(back_populates="ingredient_profiles")
 
 
 class Recipe(Base):
