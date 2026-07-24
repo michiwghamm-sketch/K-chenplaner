@@ -114,6 +114,30 @@ def test_build_ingredient_price_from_observation_maps_external_metadata() -> Non
     assert "Packung" in (price.notes or "")
 
 
+def test_build_ingredient_price_from_observation_normalizes_price_style_target_unit() -> None:
+    observation = open_prices_service.OpenPriceObservation(
+        product_code="4316268599672",
+        product_name="Tafelaepfel",
+        price=Decimal("2.49"),
+        currency="EUR",
+        date=date(2026, 7, 14),
+        store_name="Netto City",
+        location_name="Netto City",
+        proof_type="PRICE_TAG",
+        price_is_discounted=False,
+    )
+
+    price = open_prices_service.build_ingredient_price_from_observation(
+        5,
+        observation,
+        product_quantity="2000 g",
+        target_unit="€/kg",
+    )
+
+    assert price.price_per_unit == Decimal("1.2450")
+    assert price.unit == "kg"
+
+
 def test_lookup_product_prices_raises_lookup_error_for_missing_product(monkeypatch) -> None:
     def fake_urlopen(url: str, timeout: int = 15):
         raise HTTPError(url, 404, "Not found", hdrs=None, fp=None)

@@ -10,6 +10,12 @@ def test_convert_price_per_unit_supports_mass_units() -> None:
     assert converted == Decimal("0.006")
 
 
+def test_normalize_unit_accepts_price_style_units() -> None:
+    assert price_service.normalize_unit("€/kg") == "kg"
+    assert price_service.normalize_unit("EUR/kg") == "kg"
+    assert price_service.normalize_unit("Euro pro kg") == "kg"
+
+
 def test_calculate_recipe_cost_converts_price_unit_to_recipe_unit(session_factory) -> None:
     with session_scope(session_factory) as session:
         ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")

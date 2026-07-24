@@ -5,6 +5,7 @@ from datetime import datetime
 from PySide6.QtCore import QObject, Qt, QThread, Signal
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QApplication,
     QCheckBox,
     QFormLayout,
     QHBoxLayout,
@@ -20,7 +21,6 @@ from PySide6.QtWidgets import (
     QSplitter,
     QTableWidget,
     QTableWidgetItem,
-    QTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -28,11 +28,12 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.services import ingredient_service, open_prices_service, price_service
+from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service
 from app.ui.dialogs import (
     AddPriceDialog,
     BarcodeSearchDialog,
     OpenPricesImportDialog,
+    OpenPricesProductPriceDialog,
     OpenPricesSuggestionDialog,
     SimilarIngredientsWarningDialog,
     confirm_dialog,
@@ -42,6 +43,14 @@ from app.ui.dialogs import (
     prompt_text,
 )
 from app.ui.widgets import COLOR_CRITICAL, PageHeader, SearchBar
+
+
+def _manual_price_notes(barcode: str | None, barcode_label: str | None) -> str | None:
+    if not barcode:
+        return None
+    if barcode_label:
+        return f"Open Prices Produkt: {barcode_label} | Barcode: {barcode}"
+    return f"Open Prices Barcode: {barcode}"
 
 
 class _OpenPricesAutoImportWorker(QObject):
@@ -78,7 +87,7 @@ class _OpenPricesAutoImportWorker(QObject):
 
 
 class IngredientsView(QWidget):
-    """Zutatenverwaltung: Liste, Suche, Detail, Preise und Aliasnamen.
+    """Zutatenverwaltung: Liste, Suche, Detail und zentrale Preise.
 
     Preise sind bewusst hier statt in einer eigenen Ansicht verwaltet - eine Zutat
     und ihr Preis gehoeren fachlich zusammen, ein separater Reiter erforderte
@@ -96,7 +105,7 @@ class IngredientsView(QWidget):
 
     def _build_ui(self) -> None:
         outer = QVBoxLayout(self)
-        outer.addWidget(PageHeader("Zutaten", "Zutatenstammdaten, Preise und Aliasnamen pflegen"))
+        outer.addWidget(PageHeader("Zutaten", "Zutatenstammdaten, Open-Prices-Produkte und Preise pflegen"))
 
         price_toolbar = QHBoxLayout()
         price_toolbar.addWidget(QLabel("Preisjahr:", self))
@@ -105,29 +114,14 @@ class IngredientsView(QWidget):
         self.year_spin.setValue(datetime.now().year)
         self.year_spin.valueChanged.connect(self._reload_price_overview)
         price_toolbar.addWidget(self.year_spin)
-        self.auto_import_button = QPushButton("Fehlende Preise automatisch suchen", self)
-        self.auto_import_button.clicked.connect(self._auto_import_open_prices)
         self.copy_prices_button = QPushButton("Preise aus Vorjahr übernehmen", self)
         self.copy_prices_button.clicked.connect(self._copy_from_previous_year)
-        price_toolbar.addWidget(self.auto_import_button)
         price_toolbar.addWidget(self.copy_prices_button)
         price_toolbar.addStretch(1)
         outer.addLayout(price_toolbar)
 
         self.missing_prices_label = QLabel("", self)
         outer.addWidget(self.missing_prices_label)
-
-        self.price_status_label = QLabel("", self)
-        self.price_status_label.setStyleSheet("color: #666;")
-        outer.addWidget(self.price_status_label)
-
-        self.price_import_log = QTextEdit(self)
-        self.price_import_log.setReadOnly(True)
-        self.price_import_log.setPlaceholderText(
-            "Automatischer Open-Prices-Import: Suchbegriffe, Treffer, Preis und Datum erscheinen hier."
-        )
-        self.price_import_log.setFixedHeight(90)
-        outer.addWidget(self.price_import_log)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
         outer.addWidget(splitter, stretch=1)
@@ -175,8 +169,8 @@ class IngredientsView(QWidget):
         self.barcode_label = QLabel("Kein Produkt verknuepft", right_content)
         self.barcode_label.setWordWrap(True)
         barcode_row = QHBoxLayout()
-        self.search_barcode_button = QPushButton("Produkt/Barcode suchen", right_content)
-        self.search_barcode_button.clicked.connect(self._search_barcode)
+        self.search_barcode_button = QPushButton("Open Prices suchen", right_content)
+        self.search_barcode_button.clicked.connect(self._search_open_prices_product)
         self.remove_barcode_button = QPushButton("Verknuepfung entfernen", right_content)
         self.remove_barcode_button.clicked.connect(self._remove_barcode_link)
         barcode_row.addWidget(self.search_barcode_button)
@@ -195,25 +189,13 @@ class IngredientsView(QWidget):
         price_button_row = QHBoxLayout()
         self.add_price_button = QPushButton("Preis erfassen", right_content)
         self.add_price_button.clicked.connect(self._add_price)
-        self.import_price_button = QPushButton("Aus Open Prices importieren", right_content)
-        self.import_price_button.clicked.connect(self._import_open_prices)
+        self.delete_price_button = QPushButton("Preis loeschen", right_content)
+        self.delete_price_button.setProperty("role", "secondary")
+        self.delete_price_button.clicked.connect(self._delete_selected_price)
         price_button_row.addWidget(self.add_price_button)
-        price_button_row.addWidget(self.import_price_button)
+        price_button_row.addWidget(self.delete_price_button)
         price_button_row.addStretch(1)
         right_layout.addLayout(price_button_row)
-
-        right_layout.addWidget(QLabel("Aliasnamen", right_content))
-        self.alias_list = QListWidget(right_content)
-        right_layout.addWidget(self.alias_list)
-
-        alias_row = QHBoxLayout()
-        add_alias_button = QPushButton("Alias hinzufügen", right_content)
-        add_alias_button.clicked.connect(self._add_alias)
-        remove_alias_button = QPushButton("Alias entfernen", right_content)
-        remove_alias_button.clicked.connect(self._remove_alias)
-        alias_row.addWidget(add_alias_button)
-        alias_row.addWidget(remove_alias_button)
-        right_layout.addLayout(alias_row)
 
         button_row = QHBoxLayout()
         save_button = QPushButton("Speichern", right_content)
@@ -240,10 +222,9 @@ class IngredientsView(QWidget):
         splitter.setStretchFactor(1, 2)
 
         self._price_action_buttons: list[QPushButton] = [
-            self.auto_import_button,
             self.copy_prices_button,
             self.add_price_button,
-            self.import_price_button,
+            self.delete_price_button,
             self.search_barcode_button,
             self.assign_barcodes_button,
         ]
@@ -312,7 +293,6 @@ class IngredientsView(QWidget):
         self.storage_edit.clear()
         self.active_checkbox.setChecked(True)
         self.notes_edit.clear()
-        self.alias_list.clear()
         self.barcode_label.setText("Kein Produkt verknuepft")
         self.remove_barcode_button.setEnabled(False)
         self.price_table.setRowCount(0)
@@ -340,18 +320,14 @@ class IngredientsView(QWidget):
                 self.barcode_label.setText("Kein Produkt verknuepft")
             self.remove_barcode_button.setEnabled(bool(ingredient.barcode))
 
-            self.alias_list.clear()
-            for alias in ingredient.aliases:
-                item = QListWidgetItem(alias.alias)
-                item.setData(1000, alias.id)
-                self.alias_list.addItem(item)
-
             self.price_table.setSortingEnabled(False)
             self.price_table.setRowCount(0)
             for price in sorted(ingredient.prices, key=lambda p: p.year or 0, reverse=True):
                 row = self.price_table.rowCount()
                 self.price_table.insertRow(row)
-                self.price_table.setItem(row, 0, QTableWidgetItem(str(price.year) if price.year else ""))
+                year_item = QTableWidgetItem(str(price.year) if price.year else "")
+                year_item.setData(1000, price.id)
+                self.price_table.setItem(row, 0, year_item)
                 self.price_table.setItem(row, 1, QTableWidgetItem(str(price.price_per_unit)))
                 self.price_table.setItem(row, 2, QTableWidgetItem(price.unit))
                 self.price_table.setItem(row, 3, QTableWidgetItem(price.source or ""))
@@ -450,51 +426,6 @@ class IngredientsView(QWidget):
         self._current_ingredient_id = None
         self._reload_list()
 
-    def _add_alias(self) -> None:
-        if self._current_ingredient_id is None:
-            return
-        alias = prompt_text(self, "Alias hinzufügen", "Alternativer Name / Tippfehler-Variante:")
-        if not alias:
-            return
-        with self.context.session() as session:
-            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
-            ingredient_service.add_alias(session, ingredient, alias)
-        self._reload_detail()
-
-    def _remove_alias(self) -> None:
-        item = self.alias_list.currentItem()
-        if item is None:
-            return
-        alias_id = item.data(1000)
-        with self.context.session() as session:
-            alias = session.get(ingredient_service.IngredientAlias, alias_id)
-            if alias is not None:
-                ingredient_service.remove_alias(session, alias)
-        self._reload_detail()
-
-    def _search_barcode(self) -> None:
-        if self._current_ingredient_id is None:
-            error_dialog(self, "Bitte zuerst eine Zutat auswaehlen oder anlegen.")
-            return
-        with self.context.session() as session:
-            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
-            if ingredient is None:
-                return
-            name, default_unit = ingredient.name, ingredient.default_unit
-
-        dialog = BarcodeSearchDialog(name, default_unit, self)
-        dialog.exec()
-        data = dialog.result_data()
-        if data is None:
-            return
-
-        with self.context.session() as session:
-            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
-            if ingredient is not None:
-                ingredient.barcode = data["barcode"]
-                ingredient.barcode_product_label = data["label"]
-        self._reload_detail()
-
     def _remove_barcode_link(self) -> None:
         if self._current_ingredient_id is None:
             return
@@ -555,9 +486,28 @@ class IngredientsView(QWidget):
             if ingredient is None:
                 return
             ingredients = [(ingredient.id, ingredient.name)]
+            default_unit = ingredient.default_unit
+            barcode = ingredient.barcode
+            barcode_label = ingredient.barcode_product_label
+
+        if barcode:
+            self._add_price_from_linked_barcode(
+                ingredient_id=self._current_ingredient_id,
+                ingredient_name=ingredients[0][1],
+                default_unit=default_unit,
+                barcode=barcode,
+                barcode_label=barcode_label,
+            )
+            return
 
         dialog = AddPriceDialog(
-            ingredients, self.year_spin.value(), self, selected_ingredient_id=self._current_ingredient_id
+            ingredients,
+            self.year_spin.value(),
+            self,
+            selected_ingredient_id=self._current_ingredient_id,
+            default_unit=default_unit,
+            default_source="Manuell (verknuepftes Open-Prices-Produkt)" if barcode else "Manuell",
+            default_notes=_manual_price_notes(barcode, barcode_label),
         )
         if dialog.exec() != AddPriceDialog.DialogCode.Accepted:
             return
@@ -570,6 +520,145 @@ class IngredientsView(QWidget):
             from app.models import IngredientPrice
 
             session.add(IngredientPrice(**data))
+        self._reload_detail()
+        self._reload_price_overview()
+
+    def _add_price_from_linked_barcode(
+        self,
+        *,
+        ingredient_id: int,
+        ingredient_name: str,
+        default_unit: str | None,
+        barcode: str,
+        barcode_label: str | None,
+    ) -> None:
+        lookup_error: str | None = None
+        QApplication.setOverrideCursor(Qt.CursorShape.WaitCursor)
+        try:
+            lookup = open_prices_service.lookup_product_prices(barcode, size=1)
+        except open_prices_service.OpenPricesError as exc:
+            lookup = None
+            lookup_error = str(exc)
+        finally:
+            QApplication.restoreOverrideCursor()
+        if lookup is None:
+            error_dialog(self, f"Für den verknüpften Barcode wurde kein Open-Prices-Preis gefunden.\n\n{lookup_error}")
+            return
+
+        observation = lookup.latest_observation
+        if observation is None:
+            error_dialog(self, "Für den verknüpften Barcode wurden keine Preisbeobachtungen gefunden.")
+            return
+
+        label = barcode_label or lookup.product.name
+        price_record = open_prices_service.build_ingredient_price_from_observation(
+            ingredient_id,
+            observation,
+            product_quantity=lookup.product.quantity,
+            target_unit=default_unit,
+            notes_prefix=f"Ueber verknuepften Barcode gefunden | Produkt: {label} | Barcode: {barcode}",
+        )
+        price_record.year = self.year_spin.value()
+
+        with self.context.session() as session:
+            session.add(price_record)
+
+        quantity = f" ({lookup.product.quantity})" if lookup.product.quantity else ""
+        store = f" bei {observation.store_name}" if observation.store_name else ""
+        info_dialog(
+            self,
+            (
+                f"Preis fuer {ingredient_name} aus Open Prices erfasst: "
+                f"{price_record.price_per_unit} {observation.currency} pro {price_record.unit} "
+                f"aus {lookup.product.name}{quantity}{store}."
+            ),
+        )
+        self._reload_detail()
+        self._reload_price_overview()
+
+    def _search_open_prices_product(self) -> None:
+        if self._current_ingredient_id is None:
+            error_dialog(self, "Bitte zuerst eine Zutat auswaehlen oder anlegen.")
+            return
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is None:
+                return
+            if ingredient.price_profile is None:
+                suggestion = open_prices_category_service.suggest_category_for_ingredient(session, ingredient)
+                if suggestion is not None:
+                    open_prices_category_service.create_or_update_profile_from_suggestion(session, ingredient, suggestion)
+                    session.flush()
+            ingredient_name = ingredient.name
+            default_unit = ingredient.default_unit
+            profile_id = ingredient.price_profile.id if ingredient.price_profile else None
+
+        with self.context.session() as session:
+            profile = session.get(open_prices_category_service.IngredientPriceProfile, profile_id) if profile_id else None
+            dialog = OpenPricesProductPriceDialog(ingredient_name, default_unit, profile, self)
+            if dialog.exec() != OpenPricesProductPriceDialog.DialogCode.Accepted:
+                return
+            candidate = dialog.selected_candidate()
+        if candidate is None:
+            error_dialog(self, "Bitte ein Open-Prices-Produkt auswaehlen.")
+            return
+
+        with self.context.session() as session:
+            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+            if ingredient is None:
+                return
+            open_prices_category_service.assign_product_to_ingredient(ingredient, candidate)
+            observation = open_prices_service.OpenPriceObservation(
+                product_code=candidate.product_code,
+                product_name=candidate.product_name,
+                price=candidate.price,
+                currency=candidate.currency,
+                date=candidate.price_date,
+                store_name=candidate.store_name,
+                location_name=candidate.store_name,
+                proof_type=None,
+                price_is_discounted=False,
+            )
+            price_record = open_prices_service.build_ingredient_price_from_observation(
+                ingredient.id,
+                observation,
+                product_quantity=candidate.quantity,
+                target_unit=ingredient.default_unit,
+                notes_prefix=f"Open Prices Produktauswahl | Produkt: {candidate.product_name} | Barcode: {candidate.product_code}",
+            )
+            price_record.year = self.year_spin.value()
+            session.add(price_record)
+
+        quantity = f" ({candidate.quantity})" if candidate.quantity else ""
+        store = f" bei {candidate.store_name}" if candidate.store_name else ""
+        info_dialog(
+            self,
+            (
+                f"Preis fuer {candidate.product_name}{quantity} importiert: "
+                f"{price_record.price_per_unit} {candidate.currency} pro {price_record.unit}{store}."
+            ),
+        )
+        self._reload_detail()
+        self._reload_price_overview()
+
+    def _delete_selected_price(self) -> None:
+        if self._current_ingredient_id is None:
+            return
+        row = self.price_table.currentRow()
+        if row < 0:
+            error_dialog(self, "Bitte zuerst einen Preis in der Tabelle auswaehlen.")
+            return
+        price_id = self.price_table.item(row, 0).data(1000)
+        if price_id is None:
+            return
+        if not confirm_dialog(self, "Preis loeschen", "Diesen Preis wirklich aus der Zutatenhistorie loeschen?"):
+            return
+        with self.context.session() as session:
+            from app.models import IngredientPrice
+
+            price = session.get(IngredientPrice, price_id)
+            if price is not None:
+                price_service.delete_price(session, price)
         self._reload_detail()
         self._reload_price_overview()
 
