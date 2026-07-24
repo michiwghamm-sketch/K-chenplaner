@@ -1,14 +1,24 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QColor, QFont
+from PySide6.QtCharts import (
+    QBarCategoryAxis,
+    QBarSeries,
+    QBarSet,
+    QChart,
+    QChartView,
+    QHorizontalStackedBarSeries,
+    QPieSeries,
+    QValueAxis,
+)
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QComboBox,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QListWidget,
-    QListWidgetItem,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -19,11 +29,14 @@ from sqlalchemy import select
 from app.context import AppContext
 from app.models import CampYear, Recipe
 from app.services import price_service, recipe_service, stats_service, validation_service
-from app.ui.theme import TEXT_MUTED
+from app.ui.theme import BG_SURFACE, BORDER_STRONG, ORANGE, TEXT_DARK, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, COLOR_INFO, COLOR_OK, COLOR_WARNING, KpiCard, PageHeader
 
-_SEVERITY_COLORS = {"warnung": COLOR_WARNING, "kritisch": COLOR_CRITICAL, "hinweis": COLOR_INFO}
+_SEVERITY_LABELS = {"kritisch": "Kritisch", "warnung": "Warnung", "hinweis": "Hinweis"}
+_SEVERITY_COLORS = {"kritisch": COLOR_CRITICAL, "warnung": COLOR_WARNING, "hinweis": COLOR_INFO}
+_SEVERITY_ORDER = ("kritisch", "warnung", "hinweis")
 _DIET_TYPE_COLORS = {"Vegetarisch": COLOR_OK, "Vegan": COLOR_WARNING, "Fleisch": COLOR_CRITICAL}
+_UNKNOWN_DIET_COLOR = BORDER_STRONG
 
 
 class DashboardView(QWidget):
@@ -67,26 +80,36 @@ class DashboardView(QWidget):
         self.avg_cost_note.setStyleSheet(f"color: {TEXT_MUTED}; font-size: 12px;")
         layout.addWidget(self.avg_cost_note)
 
-        stats_row = QHBoxLayout()
+        charts_row = QHBoxLayout()
+        charts_row.setSpacing(12)
 
-        most_planned_column = QVBoxLayout()
-        most_planned_column.addWidget(self._section_title("Am häufigsten geplant"))
-        self.most_planned_list = QListWidget(self)
-        self.most_planned_list.setMaximumHeight(220)
-        most_planned_column.addWidget(self.most_planned_list)
-        stats_row.addLayout(most_planned_column, 1)
+        self.diet_chart_view = self._make_chart_view("Rezepte nach Ernährungstyp", legend=True)
+        self._diet_pie_series = QPieSeries()
+        self._diet_pie_series.setHoleSize(0.55)
+        self.diet_chart_view.chart().addSeries(self._diet_pie_series)
+        charts_row.addWidget(self.diet_chart_view, 1)
 
-        camp_year_column = QVBoxLayout()
-        camp_year_column.addWidget(self._section_title("Camp-Jahre im Überblick"))
+        self.most_planned_chart_view = self._make_chart_view("Am häufigsten geplant", legend=False)
+        charts_row.addWidget(self.most_planned_chart_view, 1)
+
+        layout.addLayout(charts_row)
+
+        camp_year_row = QHBoxLayout()
+        camp_year_row.setSpacing(12)
+
+        self.camp_year_chart_view = self._make_chart_view("Kosten je Camp-Jahr (EUR)", legend=False)
+        camp_year_row.addWidget(self.camp_year_chart_view, 1)
+
+        camp_year_table_column = QVBoxLayout()
+        camp_year_table_column.addWidget(self._section_title("Camp-Jahre im Überblick"))
         self.camp_year_table = QTableWidget(0, 4, self)
         self.camp_year_table.setHorizontalHeaderLabels(["Jahr", "Portionen", "Kosten (EUR)", "Ø je Portion (EUR)"])
         self.camp_year_table.verticalHeader().setVisible(False)
         self.camp_year_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.camp_year_table.setMaximumHeight(220)
-        camp_year_column.addWidget(self.camp_year_table)
-        stats_row.addLayout(camp_year_column, 1)
+        camp_year_table_column.addWidget(self.camp_year_table)
+        camp_year_row.addLayout(camp_year_table_column, 1)
 
-        layout.addLayout(stats_row)
+        layout.addLayout(camp_year_row)
 
         layout.addWidget(self._section_title("Details für ausgewähltes Camp-Jahr"))
 
@@ -120,14 +143,31 @@ class DashboardView(QWidget):
             grid.addWidget(card, index // 3, index % 3)
         layout.addLayout(grid)
 
-        layout.addWidget(QLabel("Warnungen und Hinweise", self))
-        self.warnings_list = QListWidget(self)
-        layout.addWidget(self.warnings_list)
+        layout.addWidget(self._section_title("Warnungen und Hinweise"))
+        self.warnings_table = QTableWidget(0, 1, self)
+        self.warnings_table.horizontalHeader().setVisible(False)
+        self.warnings_table.verticalHeader().setVisible(False)
+        self.warnings_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.warnings_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.warnings_table.horizontalHeader().setStretchLastSection(True)
+        layout.addWidget(self.warnings_table, stretch=1)
 
     def _section_title(self, text: str) -> QLabel:
         label = QLabel(text, self)
         label.setStyleSheet("font-weight: 600; font-size: 15px; padding-top: 6px;")
         return label
+
+    def _make_chart_view(self, title: str, *, legend: bool) -> QChartView:
+        chart = QChart()
+        chart.setTitle(title)
+        chart.legend().setVisible(legend)
+        if legend:
+            chart.legend().setAlignment(Qt.AlignmentFlag.AlignBottom)
+        chart.setBackgroundVisible(False)
+        view = QChartView(chart, self)
+        view.setRenderHint(QPainter.RenderHint.Antialiasing)
+        view.setMinimumHeight(240)
+        return view
 
     def refresh(self) -> None:
         self._reload_global_stats()
@@ -154,6 +194,7 @@ class DashboardView(QWidget):
             self.kpi_recipes_fleisch.set_value(str(diet_counts.get("Fleisch", 0)))
             self.kpi_recipes_vegetarisch.set_value(str(diet_counts.get("Vegetarisch", 0)))
             self.kpi_recipes_vegan.set_value(str(diet_counts.get("Vegan", 0)))
+            self._update_diet_chart(diet_counts)
 
             avg_cost = stats_service.average_recipe_cost(session)
             self.kpi_avg_recipe_cost.set_value(
@@ -170,22 +211,14 @@ class DashboardView(QWidget):
             else:
                 self.avg_cost_note.setText("Noch keine Rezepte mit hinterlegten Preisen.")
 
-            self.most_planned_list.clear()
             most_planned = stats_service.most_planned_recipes(session, limit=8)
-            if not most_planned:
-                self.most_planned_list.addItem("Noch keine Mahlzeiten eingeplant.")
-            for rank, entry in enumerate(most_planned, start=1):
-                item = QListWidgetItem(f"{rank}. {entry.recipe_name} ({entry.plan_count}x geplant)")
-                color = _DIET_TYPE_COLORS.get(entry.diet_type or "")
-                if color:
-                    item.setForeground(QColor(color))
-                    font = item.font()
-                    font.setWeight(QFont.Weight.DemiBold)
-                    item.setFont(font)
-                self.most_planned_list.addItem(item)
+            self._update_most_planned_chart(most_planned)
+
+            camp_costs = stats_service.camp_year_costs(session)
+            self._update_camp_year_chart(camp_costs)
 
             self.camp_year_table.setRowCount(0)
-            for camp_cost in stats_service.camp_year_costs(session):
+            for camp_cost in camp_costs:
                 row = self.camp_year_table.rowCount()
                 self.camp_year_table.insertRow(row)
                 self.camp_year_table.setItem(row, 0, QTableWidgetItem(camp_cost.label))
@@ -193,6 +226,89 @@ class DashboardView(QWidget):
                 self.camp_year_table.setItem(row, 2, QTableWidgetItem(f"{camp_cost.total_cost:.2f}"))
                 per_portion = (camp_cost.total_cost / camp_cost.total_portions) if camp_cost.total_portions else None
                 self.camp_year_table.setItem(row, 3, QTableWidgetItem(f"{per_portion:.2f}" if per_portion else "-"))
+
+    def _update_diet_chart(self, counts: dict[str, int]) -> None:
+        series = self._diet_pie_series
+        series.clear()
+        order = ["Fleisch", "Vegetarisch", "Vegan", stats_service.UNKNOWN_DIET_TYPE_LABEL]
+        colors = {**_DIET_TYPE_COLORS, stats_service.UNKNOWN_DIET_TYPE_LABEL: _UNKNOWN_DIET_COLOR}
+        for label in order:
+            count = counts.get(label, 0)
+            if not count:
+                continue
+            pie_slice = series.append(f"{label} ({count})", count)
+            pie_slice.setLabelVisible(True)
+            pie_slice.setColor(QColor(colors[label]))
+            pie_slice.setLabelColor(QColor(TEXT_DARK))
+            pie_slice.setBorderColor(QColor(BG_SURFACE))
+            pie_slice.setBorderWidth(2)
+
+    def _update_most_planned_chart(self, entries: list[stats_service.RecipePlanCount]) -> None:
+        chart = self.most_planned_chart_view.chart()
+        chart.removeAllSeries()
+        for axis in list(chart.axes()):
+            chart.removeAxis(axis)
+        if not entries:
+            return
+
+        ordered = list(reversed(entries))  # Platz 1 soll oben stehen
+        series = QHorizontalStackedBarSeries()
+        series.setLabelsVisible(True)
+        series.setLabelsFormat("@value")
+        categories = []
+        for index, entry in enumerate(ordered):
+            categories.append(entry.recipe_name)
+            values = [0] * len(ordered)
+            values[index] = entry.plan_count
+            bar_set = QBarSet("")
+            bar_set.append(values)
+            bar_set.setColor(QColor(_DIET_TYPE_COLORS.get(entry.diet_type or "", ORANGE)))
+            series.append(bar_set)
+        chart.addSeries(series)
+
+        axis_y = QBarCategoryAxis()
+        axis_y.append(categories)
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
+
+        axis_x = QValueAxis()
+        axis_x.setLabelFormat("%d")
+        max_count = max(e.plan_count for e in entries)
+        axis_x.setRange(0, max_count + 1)
+        axis_x.setTickCount(max_count + 2)
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+    def _update_camp_year_chart(self, costs: list[stats_service.CampYearCost]) -> None:
+        chart = self.camp_year_chart_view.chart()
+        chart.removeAllSeries()
+        for axis in list(chart.axes()):
+            chart.removeAxis(axis)
+        if not costs:
+            return
+
+        ordered = list(reversed(costs))  # aeltestes Jahr zuerst
+        bar_set = QBarSet("Kosten (EUR)")
+        bar_set.append([float(c.total_cost) for c in ordered])
+        bar_set.setColor(QColor(ORANGE))
+        series = QBarSeries()
+        series.setBarWidth(0.5)
+        series.append(bar_set)
+        series.setLabelsVisible(True)
+        series.setLabelsFormat("@value")
+        chart.addSeries(series)
+
+        axis_x = QBarCategoryAxis()
+        axis_x.append([c.label for c in ordered])
+        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
+        series.attachAxis(axis_x)
+
+        axis_y = QValueAxis()
+        axis_y.setLabelFormat("%.2f")
+        max_cost = max((float(c.total_cost) for c in ordered), default=0)
+        axis_y.setRange(0, max_cost * 1.15 if max_cost else 1)
+        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
+        series.attachAxis(axis_y)
 
     def _on_camp_year_changed(self) -> None:
         self.context.current_camp_year_id = self.camp_year_combo.currentData()
@@ -202,7 +318,7 @@ class DashboardView(QWidget):
         camp_year_id = self.context.current_camp_year_id
         if camp_year_id is None:
             self.period_label.setText("Kein Camp-Jahr angelegt.")
-            self.warnings_list.clear()
+            self.warnings_table.setRowCount(0)
             return
 
         with self.context.session() as session:
@@ -248,12 +364,35 @@ class DashboardView(QWidget):
             self.kpi_missing_feedback.set_level("warnung" if recipes_without_feedback else "ok")
 
             report = validation_service.run_all_checks(session, camp_year=camp_year, year=camp_year.year)
-            self.warnings_list.clear()
-            if not report.issues:
-                item = QListWidgetItem("Keine Warnungen für dieses Camp-Jahr.")
-                item.setForeground(QColor(COLOR_OK))
-                self.warnings_list.addItem(item)
-            for issue in report.issues:
-                item = QListWidgetItem(f"[{issue.category}] {issue.message}")
-                item.setForeground(QColor(_SEVERITY_COLORS.get(issue.severity, COLOR_INFO)))
-                self.warnings_list.addItem(item)
+            self._reload_warnings_table(report)
+
+    def _reload_warnings_table(self, report: validation_service.ValidationReport) -> None:
+        table = self.warnings_table
+        table.setRowCount(0)
+
+        if not report.issues:
+            self._add_warnings_band("Alles in Ordnung - keine Warnungen für dieses Camp-Jahr.", COLOR_OK)
+            return
+
+        issues_by_severity: dict[str, list] = {severity: [] for severity in _SEVERITY_ORDER}
+        for issue in report.issues:
+            issues_by_severity.setdefault(issue.severity, []).append(issue)
+
+        for severity in _SEVERITY_ORDER:
+            issues = issues_by_severity.get(severity) or []
+            if not issues:
+                continue
+            label = _SEVERITY_LABELS.get(severity, severity.title())
+            self._add_warnings_band(f"{label} ({len(issues)})", _SEVERITY_COLORS.get(severity, COLOR_INFO))
+            for issue in issues:
+                row = table.rowCount()
+                table.insertRow(row)
+                table.setItem(row, 0, QTableWidgetItem(f"[{issue.category}] {issue.message}"))
+
+    def _add_warnings_band(self, text: str, color: str) -> None:
+        table = self.warnings_table
+        row = table.rowCount()
+        table.insertRow(row)
+        band_label = QLabel(f"  {text}", table)
+        band_label.setStyleSheet(f"background-color: {color}; color: white; font-weight: 600; padding: 5px;")
+        table.setCellWidget(row, 0, band_label)
