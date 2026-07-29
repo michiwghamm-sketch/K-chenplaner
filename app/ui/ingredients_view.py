@@ -35,6 +35,7 @@ from app.ui.dialogs import (
     OpenPricesImportDialog,
     OpenPricesProductPriceDialog,
     OpenPricesSuggestionDialog,
+    ReplaceIngredientDialog,
     SimilarIngredientsWarningDialog,
     confirm_dialog,
     error_dialog,
@@ -441,17 +442,44 @@ class IngredientsView(QWidget):
     def _delete_ingredient(self) -> None:
         if self._current_ingredient_id is None:
             return
-        if not confirm_dialog(self, "Zutat löschen", "Diese Zutat wirklich unwiderruflich löschen?"):
-            return
         with self.context.session() as session:
             ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
             if ingredient is None:
                 return
-            try:
-                ingredient_service.delete_ingredient(session, ingredient)
-            except ValueError as exc:
-                error_dialog(self, str(exc))
+            name = ingredient.name
+            usage_lines = ingredient_service.describe_recipe_usage(ingredient)
+            is_used = bool(ingredient.recipe_links)
+            candidates = (
+                [(i.id, i.name) for i in ingredient_service.search_ingredients(session) if i.id != ingredient.id]
+                if is_used
+                else []
+            )
+
+        if is_used:
+            dialog = ReplaceIngredientDialog(name, usage_lines, candidates, self)
+            if dialog.exec() != ReplaceIngredientDialog.DialogCode.Accepted:
                 return
+            replacement_id = dialog.selected_replacement_id()
+            with self.context.session() as session:
+                keep = session.get(ingredient_service.Ingredient, replacement_id)
+                remove = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+                if keep is None or remove is None:
+                    return
+                replacement_name = keep.name
+                ingredient_service.merge_ingredients(session, keep=keep, remove=remove)
+            info_dialog(self, f"'{name}' wurde durch '{replacement_name}' ersetzt und gelöscht.")
+        else:
+            if not confirm_dialog(self, "Zutat löschen", "Diese Zutat wirklich unwiderruflich löschen?"):
+                return
+            with self.context.session() as session:
+                ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
+                if ingredient is None:
+                    return
+                try:
+                    ingredient_service.delete_ingredient(session, ingredient)
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
+                    return
         self._current_ingredient_id = None
         self._reload_list()
 

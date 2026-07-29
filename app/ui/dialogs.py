@@ -471,6 +471,73 @@ class SimilarIngredientsWarningDialog(QDialog):
         layout.addWidget(buttons)
 
 
+class ReplaceIngredientDialog(QDialog):
+    """Angeboten beim Loeschen einer noch verwendeten Zutat: statt die Loeschung nur abzulehnen,
+    kann die Zutat durch eine bestehende ersetzt werden. Alle Verwendungen (Rezepte, Preise,
+    Einkaufslisten-Positionen) wandern automatisch zur Ersatzzutat (siehe
+    ingredient_service.merge_ingredients), danach wird die Ausgangszutat geloescht - ein
+    effektiver Weg, um Dubletten zusammenzufuehren."""
+
+    def __init__(
+        self,
+        ingredient_name: str,
+        usage_lines: list[str],
+        candidates: list[tuple[int, str]],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Zutat wird noch verwendet")
+        self.setMinimumWidth(440)
+
+        shown_usage = usage_lines[:10]
+        usage_text = "\n".join(f"- {line}" for line in shown_usage)
+        if len(usage_lines) > 10:
+            usage_text += f"\n... und {len(usage_lines) - 10} weitere"
+
+        message = QLabel(
+            f"'{ingredient_name}' wird noch verwendet und kann nicht direkt gelöscht werden:\n\n"
+            f"{usage_text}\n\n"
+            "Du kannst sie stattdessen durch eine bestehende Zutat ersetzen - alle Verwendungen "
+            f"wandern automatisch zur ausgewählten Zutat, und '{ingredient_name}' wird danach "
+            "gelöscht. Ohne Auswahl bitte abbrechen und stattdessen deaktivieren.",
+            self,
+        )
+        message.setWordWrap(True)
+
+        self.replacement_combo = QComboBox(self)
+        self.replacement_combo.setEditable(True)
+        self.replacement_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        for ingredient_id, name in candidates:
+            self.replacement_combo.addItem(name, ingredient_id)
+        self.replacement_combo.setCurrentIndex(-1)
+        self.replacement_combo.lineEdit().setPlaceholderText("Ersatzzutat suchen...")
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Ersetzen und löschen")
+        buttons.accepted.connect(self._on_accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(message)
+        layout.addWidget(self.replacement_combo)
+        layout.addWidget(buttons)
+
+    def _on_accept(self) -> None:
+        if self.selected_replacement_id() is None:
+            error_dialog(self, "Bitte eine Ersatzzutat aus der Liste auswählen.")
+            return
+        self.accept()
+
+    def selected_replacement_id(self) -> int | None:
+        typed_name = self.replacement_combo.currentText().strip()
+        if not typed_name:
+            return None
+        matching_index = self.replacement_combo.findText(typed_name, Qt.MatchFlag.MatchFixedString)
+        if matching_index < 0:
+            return None
+        return self.replacement_combo.itemData(matching_index)
+
+
 @dataclass(slots=True)
 class ProductSearchResult:
     suggestion: OpenPricesSuggestion
