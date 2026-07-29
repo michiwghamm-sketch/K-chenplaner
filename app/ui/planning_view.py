@@ -25,6 +25,7 @@ from app.ui.theme import TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader
 
 ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES + ("Auswertung",)
+DAY_COLUMN_WIDTH = 210
 
 
 class PlanningView(QWidget):
@@ -66,8 +67,12 @@ class PlanningView(QWidget):
 
         self.table = QTableWidget(len(ROW_LABELS), 0, self)
         self.table.setVerticalHeaderLabels(list(ROW_LABELS))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
-        self.table.horizontalHeader().setMinimumSectionSize(170)
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        self.table.horizontalHeader().setDefaultSectionSize(DAY_COLUMN_WIDTH)
+        self.table.horizontalHeader().setMinimumSectionSize(DAY_COLUMN_WIDTH)
+        # Wenn eine Spalte breiter/schmaler gezogen wird, muessen die (wortumbruchbehafteten)
+        # Zellen neu umgebrochen und die Zeilenhoehen entsprechend angepasst werden.
+        self.table.horizontalHeader().sectionResized.connect(self._on_column_resized)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setMinimumSectionSize(48)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -108,6 +113,60 @@ class PlanningView(QWidget):
                 if camp_year is not None:
                     self._populate_grid(session, camp_year)
 
+        self._resize_rows_to_content()
+        self._update_table_fixed_height()
+
+    def _populate_grid(self, session, camp_year: CampYear) -> None:
+        self._day_dates = planning_service.camp_day_range(camp_year)
+        self.table.setColumnCount(len(self._day_dates))
+        self.table.setHorizontalHeaderLabels(
+            [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
+        )
+        for col in range(len(self._day_dates)):
+            self.table.setColumnWidth(col, DAY_COLUMN_WIDTH)
+
+        camp_days_by_date = {camp_day.day_date: camp_day for camp_day in camp_year.camp_days}
+        summary_row = len(ROW_LABELS) - 1
+
+        for col, day in enumerate(self._day_dates):
+            camp_day = camp_days_by_date.get(day)
+            responsible_item = QTableWidgetItem(camp_day.responsible_person if camp_day else "")
+            self.table.setItem(0, col, responsible_item)
+
+            for row, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES, start=1):
+                dishes = planning_service.meal_entries_for_slot(camp_year, day, meal_type)
+                label = self._build_dish_cell(dishes)
+                self.table.setCellWidget(row, col, label)
+
+            summary = planning_service.day_summary(session, camp_year, day)
+            summary_label = self._build_summary_cell(summary)
+            self.table.setCellWidget(summary_row, col, summary_label)
+
+    def _on_column_resized(self, *_args: object) -> None:
+        self._resize_rows_to_content()
+        self._update_table_fixed_height()
+
+    def _resize_rows_to_content(self) -> None:
+        """Zeilenhoehe je Zeile aus dem tatsaechlichen Platzbedarf (mit Wortumbruch) aller
+        Zellen dieser Zeile bei der jeweils AKTUELLEN Spaltenbreite berechnen.
+
+        Bewusst ueber QLabel.heightForWidth() statt QTableWidget.resizeRowsToContents():
+        Cell-Widgets melden ihre reale Groesse erst nach dem naechsten Qt-Layout-Durchlauf,
+        resizeRowsToContents() wuerde also mit veralteten Groessen rechnen. heightForWidth()
+        berechnet dagegen sofort und unabhaengig vom Layout-Zyklus.
+        """
+        min_row_height = self.table.verticalHeader().minimumSectionSize()
+        for row in range(self.table.rowCount()):
+            row_height = min_row_height
+            for col in range(self.table.columnCount()):
+                label = self.table.cellWidget(row, col)
+                if label is None:
+                    continue
+                content_width = max(self.table.columnWidth(col) - 12, 1)
+                row_height = max(row_height, label.heightForWidth(content_width) + 12)
+            self.table.setRowHeight(row, row_height)
+
+    def _update_table_fixed_height(self) -> None:
         # Tabellenhoehe an den tatsaechlichen Inhalt anpassen (Header + Zeilenhoehen),
         # statt die Tabelle per Layout-Stretch unnoetig viel Leerraum fuellen zu lassen.
         # Header-Hoehe bewusst aus der Schrift berechnet (zwei Zeilen: Wochentag + Datum)
@@ -119,41 +178,6 @@ class PlanningView(QWidget):
         for row in range(self.table.rowCount()):
             total_height += self.table.rowHeight(row)
         self.table.setFixedHeight(total_height)
-
-    def _populate_grid(self, session, camp_year: CampYear) -> None:
-        self._day_dates = planning_service.camp_day_range(camp_year)
-        self.table.setColumnCount(len(self._day_dates))
-        self.table.setHorizontalHeaderLabels(
-            [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
-        )
-
-        camp_days_by_date = {camp_day.day_date: camp_day for camp_day in camp_year.camp_days}
-        summary_row = len(ROW_LABELS) - 1
-        row_heights: dict[int, int] = {}
-
-        for col, day in enumerate(self._day_dates):
-            camp_day = camp_days_by_date.get(day)
-            responsible_item = QTableWidgetItem(camp_day.responsible_person if camp_day else "")
-            self.table.setItem(0, col, responsible_item)
-
-            for row, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES, start=1):
-                dishes = planning_service.meal_entries_for_slot(camp_year, day, meal_type)
-                label = self._build_dish_cell(dishes)
-                self.table.setCellWidget(row, col, label)
-                row_heights[row] = max(row_heights.get(row, 0), label.sizeHint().height())
-
-            summary = planning_service.day_summary(session, camp_year, day)
-            summary_label = self._build_summary_cell(summary)
-            self.table.setCellWidget(summary_row, col, summary_label)
-            row_heights[summary_row] = max(row_heights.get(summary_row, 0), summary_label.sizeHint().height())
-
-        # Zeilenhoehe direkt aus dem sizeHint() der (wortumbruchfreien, damit breiten-
-        # unabhaengigen) Zellen-Labels gesetzt statt ueber resizeRowsToContents(): Cell-
-        # Widgets melden ihre reale Groesse erst nach dem naechsten Qt-Layout-Durchlauf,
-        # resizeRowsToContents() rechnet also mit veralteten Groessen und schneidet Text ab.
-        for row, height in row_heights.items():
-            self.table.setRowHeight(row, height + 26)
-        self.table.resizeColumnsToContents()
 
     def _build_dish_cell(self, dishes: list[MealPlanEntry]) -> QLabel:
         lines = []
@@ -179,10 +203,9 @@ class PlanningView(QWidget):
                 lines.append(text)
 
         label = QLabel("<br>".join(lines), self.table)
-        # Zeilenumbruch bewusst deaktiviert: dadurch ist label.sizeHint() unabhaengig
-        # von der (zum Zeitpunkt des Aufbaus noch nicht finalisierten) Spaltenbreite
-        # und die Zeilenhoehe kann in _reload_grid() direkt daraus gesetzt werden.
-        label.setWordWrap(False)
+        # Wortumbruch aktiv, damit lange Gerichtnamen nicht am Zellrand abgeschnitten werden -
+        # die Zeilenhoehe wird in _resize_rows_to_content() passend dazu berechnet.
+        label.setWordWrap(True)
         label.setMargin(4)
         label.setContentsMargins(4, 2, 4, 2)
         return label
@@ -198,7 +221,7 @@ class PlanningView(QWidget):
                 label.setStyleSheet(f"color: {COLOR_CRITICAL};")
             else:
                 label = QLabel(text, self.table)
-        label.setWordWrap(False)
+        label.setWordWrap(True)
         label.setMargin(4)
         return label
 
