@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from PySide6.QtGui import QGuiApplication
 from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStatusBar, QStackedWidget, QWidget
 
 from app.context import AppContext
@@ -31,11 +32,18 @@ VIEW_CLASSES = {
 class MainWindow(QMainWindow):
     """Hauptfenster: Seitenleiste, Modul-Bereich und Statusleiste."""
 
+    # Kleinste Fenstergroesse, bei der die Inhalte (Formulare, Tabellen, Diagramme) noch
+    # sinnvoll nutzbar bleiben - darunter duerfte selbst mit Scroll-Bereichen zu wenig
+    # Platz fuer eine brauchbare Bedienung sein.
+    MIN_WIDTH = 1000
+    MIN_HEIGHT = 650
+
     def __init__(self, context: AppContext) -> None:
         super().__init__()
         self.context = context
         self.setWindowTitle("Zeltlager Verpflegung")
-        self.resize(1200, 800)
+        self.setMinimumSize(self.MIN_WIDTH, self.MIN_HEIGHT)
+        self._apply_initial_geometry()
 
         central = QWidget(self)
         layout = QHBoxLayout(central)
@@ -64,6 +72,27 @@ class MainWindow(QMainWindow):
         status_bar.showMessage(db_status_text)
 
         self._show_page("dashboard")
+
+    def _apply_initial_geometry(self) -> None:
+        """Startgroesse an den tatsaechlichen Bildschirm anpassen (85% der verfuegbaren Flaeche,
+        zentriert), statt eine feste Pixelgroesse zu erzwingen - auf einem 14"-Notebook waere
+        1200x800 ggf. zu gross (oder zu klein im Vergleich zu einem 27"-Monitor). Qt skaliert
+        logische Pixel bereits automatisch nach dem DPI-Faktor des Bildschirms; hier geht es nur
+        um einen sinnvollen Ausschnitt der verfuegbaren (bereits DPI-bereinigten) Flaeche.
+        """
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is None:
+            self.resize(1200, 800)
+            return
+
+        available = screen.availableGeometry()
+        width = min(max(int(available.width() * 0.85), self.MIN_WIDTH), available.width())
+        height = min(max(int(available.height() * 0.85), self.MIN_HEIGHT), available.height())
+        self.resize(width, height)
+        self.move(
+            available.x() + (available.width() - width) // 2,
+            available.y() + (available.height() - height) // 2,
+        )
 
     def _show_page(self, key: str) -> None:
         page = self._pages.get(key)
