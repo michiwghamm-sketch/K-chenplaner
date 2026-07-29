@@ -15,10 +15,12 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFrame,
     QGridLayout,
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QScrollArea,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -56,7 +58,20 @@ class DashboardView(QWidget):
         self.refresh()
 
     def _build_ui(self) -> None:
-        layout = QVBoxLayout(self)
+        # Genug Inhalt (KPIs, drei Diagramme, zwei Tabellen), um auf kleineren Bildschirmen
+        # (z. B. 14"-Notebook) mehr Platz zu brauchen, als das Fenster hat - ohne Scroll-Bereich
+        # wuerde Qt sonst versuchen, das ganze Fenster auf die Mindestgroesse des Inhalts
+        # aufzublasen, was auf einem kleinen Bildschirm Inhalte abschneidet.
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        scroll = QScrollArea(self)
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        outer.addWidget(scroll)
+
+        content = QWidget(scroll)
+        scroll.setWidget(content)
+        layout = QVBoxLayout(content)
         layout.addWidget(PageHeader("Dashboard", "Statistiken über alle Rezepte und Camp-Jahre"))
 
         layout.addWidget(self._section_title("Rezepte im Überblick"))
