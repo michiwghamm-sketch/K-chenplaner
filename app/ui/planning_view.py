@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from pathlib import Path
 from xml.sax.saxutils import escape
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
+    QFileDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -19,7 +21,7 @@ from sqlalchemy import select
 
 from app.context import AppContext
 from app.models import CampYear, MealPlanEntry, Recipe
-from app.services import planning_service
+from app.services import export_service, planning_service
 from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealSlotDialog, error_dialog, info_dialog
 from app.ui.theme import TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader
@@ -55,9 +57,15 @@ class PlanningView(QWidget):
         edit_year_button.clicked.connect(self._edit_camp_year)
         generate_button = QPushButton("Wochenplan-Raster anlegen", self)
         generate_button.clicked.connect(self._generate_slots)
+        export_plan_button = QPushButton("Wochenplan als PDF exportieren", self)
+        export_plan_button.clicked.connect(self._export_plan_pdf)
+        export_recipes_button = QPushButton("Rezeptblätter exportieren", self)
+        export_recipes_button.clicked.connect(self._export_recipe_sheets_pdf)
         top_row.addWidget(new_year_button)
         top_row.addWidget(edit_year_button)
         top_row.addWidget(generate_button)
+        top_row.addWidget(export_plan_button)
+        top_row.addWidget(export_recipes_button)
         top_row.addStretch(1)
         layout.addLayout(top_row)
 
@@ -414,3 +422,41 @@ class PlanningView(QWidget):
                 return
         info_dialog(self, f"{len(created)} neue Mahlzeiten-Slots angelegt.")
         self._reload_grid()
+
+    # --- PDF-Export ------------------------------------------------------------------------
+
+    def _export_plan_pdf(self) -> None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswählen oder anlegen.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Wochenplan als PDF exportieren", "wochenplan.pdf", "PDF-Dateien (*.pdf)")
+        if not path:
+            return
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            try:
+                export_service.export_weekly_plan_to_pdf(session, camp_year, Path(path))
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+        info_dialog(self, f"Wochenplan exportiert nach:\n{path}")
+
+    def _export_recipe_sheets_pdf(self) -> None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            error_dialog(self, "Bitte zuerst eine Zeltlagerwoche auswählen oder anlegen.")
+            return
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Rezeptblätter exportieren", "rezeptblaetter.pdf", "PDF-Dateien (*.pdf)"
+        )
+        if not path:
+            return
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            try:
+                export_service.export_weekly_recipe_sheets_to_pdf(session, camp_year, Path(path))
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+        info_dialog(self, f"Rezeptblätter exportiert nach:\n{path}")

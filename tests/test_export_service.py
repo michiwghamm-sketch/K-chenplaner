@@ -4,7 +4,7 @@ from decimal import Decimal
 import pytest
 
 from app.db import session_scope
-from app.models import CampYear, Ingredient, IngredientPrice, Recipe, ShoppingList, ShoppingListItem
+from app.models import CampYear, Ingredient, IngredientPrice, MealPlanEntry, Recipe, ShoppingList, ShoppingListItem
 from app.services import export_service, recipe_service
 
 
@@ -128,3 +128,80 @@ def test_export_shopping_list_to_pdf_rejects_invalid_grouping(session_factory, t
         shopping_list = session.get(ShoppingList, shopping_list_id)
         with pytest.raises(ValueError):
             export_service.export_shopping_list_to_pdf(shopping_list, tmp_path / "x.pdf", group_by="nonsense")
+
+
+def _build_camp_year_with_plan(session) -> int:
+    camp_year = CampYear(
+        year=2026,
+        name="Zeltlager 2026",
+        start_date=date(2026, 8, 1),
+        end_date=date(2026, 8, 3),
+    )
+    recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
+    ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+    session.add_all([camp_year, recipe, ingredient])
+    session.flush()
+    recipe_service.add_ingredient_to_recipe(session, recipe, ingredient_id=ingredient.id, quantity=Decimal("1.000"), unit="kg")
+    ingredient.prices.append(IngredientPrice(price_per_unit=Decimal("2.00"), unit="kg", year=2026))
+
+    camp_year.meal_plan_entries.append(
+        MealPlanEntry(
+            meal_date=date(2026, 8, 2),
+            meal_type="Mittagessen",
+            recipe=recipe,
+            planned_portions=20,
+            status="geplant",
+        )
+    )
+    session.flush()
+    return camp_year.id
+
+
+def test_export_weekly_plan_to_pdf_renders_one_page_grid(session_factory, tmp_path) -> None:
+    with session_scope(session_factory) as session:
+        camp_year_id = _build_camp_year_with_plan(session)
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        out_path = tmp_path / "wochenplan.pdf"
+        result_path = export_service.export_weekly_plan_to_pdf(session, camp_year, out_path)
+        assert result_path == out_path
+        assert out_path.read_bytes().startswith(b"%PDF")
+
+
+def test_export_weekly_plan_to_pdf_rejects_camp_year_without_dates(session_factory, tmp_path) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Ohne Zeitraum")
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        with pytest.raises(ValueError):
+            export_service.export_weekly_plan_to_pdf(session, camp_year, tmp_path / "x.pdf")
+
+
+def test_export_weekly_recipe_sheets_to_pdf_scales_to_planned_portions(session_factory, tmp_path) -> None:
+    with session_scope(session_factory) as session:
+        camp_year_id = _build_camp_year_with_plan(session)
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        out_path = tmp_path / "rezeptblaetter.pdf"
+        result_path = export_service.export_weekly_recipe_sheets_to_pdf(session, camp_year, out_path)
+        assert result_path == out_path
+        assert out_path.read_bytes().startswith(b"%PDF")
+
+
+def test_export_weekly_recipe_sheets_to_pdf_rejects_empty_plan(session_factory, tmp_path) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Leerer Plan", start_date=date(2026, 8, 1), end_date=date(2026, 8, 3))
+        session.add(camp_year)
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        with pytest.raises(ValueError):
+            export_service.export_weekly_recipe_sheets_to_pdf(session, camp_year, tmp_path / "x.pdf")
