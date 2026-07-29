@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
 
 from app.ui.theme import BORDER, BORDER_STRONG, ORANGE, TEXT_MUTED
 
@@ -84,6 +84,36 @@ class SearchBar(QWidget):
 
     def clear(self) -> None:
         self.input.clear()
+
+
+class UnitComboBox(QComboBox):
+    """Dropdown fuer Mengeneinheiten aus dem zentralen Einheiten-Pool (siehe unit_service).
+
+    Bewusst nicht editierbar - neue Einheiten muessen ueber die Pool-Verwaltung angelegt werden,
+    damit keine neuen Freitext-Varianten (wie frueher '€/kg') mehr in die Datenbank gelangen.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+
+    def set_units(self, units: list[str], *, allow_empty: bool = True) -> None:
+        self.clear()
+        if allow_empty:
+            self.addItem("", None)
+        for unit in units:
+            self.addItem(unit, unit)
+
+    def set_current_unit(self, unit: str | None) -> None:
+        index = self.findData(unit)
+        if index < 0 and unit:
+            # Wert steht (noch) nicht im Pool, z. B. unbereinigte Altdaten - trotzdem anzeigen,
+            # damit er beim Speichern nicht unbemerkt verloren geht.
+            self.addItem(f"{unit} (nicht im Pool)", unit)
+            index = self.count() - 1
+        self.setCurrentIndex(max(index, 0))
+
+    def current_unit(self) -> str | None:
+        return self.currentData()
 
 
 class KpiCard(QWidget):

@@ -20,6 +20,24 @@ def updated_timestamp_column() -> Mapped[datetime]:
     return mapped_column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
 
+class Unit(Base):
+    """Pool der gueltigen Mengeneinheiten (z. B. 'kg', 'Stk', 'Bund') fuer Zutaten und Rezepte.
+
+    'kind' gruppiert ineinander umrechenbare Einheiten (z. B. 'mass' fuer g/kg), damit eine
+    Rezeptzutat nur zwischen kompatiblen Einheiten wechseln kann. Einheiten ohne Umrechnungspartner
+    bekommen ihren eigenen Namen als kind (z. B. 'Bund' -> kind 'bund'), sind also nur zu sich
+    selbst kompatibel.
+    """
+
+    __tablename__ = "units"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    name: Mapped[str] = mapped_column(String(50), nullable=False, unique=True)
+    kind: Mapped[str] = mapped_column(String(50), nullable=False)
+    sort_order: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+
+
 class Ingredient(Base):
     __tablename__ = "ingredients"
 
@@ -64,7 +82,10 @@ class IngredientPrice(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), nullable=False, index=True)
-    price_per_unit: Mapped[Decimal] = mapped_column(Numeric(10, 2), nullable=False)
+    # 4 statt 2 Nachkommastellen: Gramm-/ml-Preise (z. B. aus Open-Prices-Umrechnung, "0.0076 EUR/g")
+    # brauchen mehr Praezision als klassische "2,50 EUR"-Preise - siehe convert_price_per_unit(),
+    # das explizit auf 4 Nachkommastellen rundet.
+    price_per_unit: Mapped[Decimal] = mapped_column(Numeric(10, 4), nullable=False)
     unit: Mapped[str] = mapped_column(String(50), nullable=False)
     source: Mapped[Optional[str]] = mapped_column(String(255))
     store: Mapped[Optional[str]] = mapped_column(String(255))
@@ -331,7 +352,8 @@ class ShoppingListItem(Base):
     ingredient_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingredients.id"), index=True)
     quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
     unit: Mapped[Optional[str]] = mapped_column(String(50))
-    estimated_price_per_unit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
+    # Gleiche Praezisions-Begruendung wie IngredientPrice.price_per_unit.
+    estimated_price_per_unit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
     estimated_total_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
     category: Mapped[Optional[str]] = mapped_column(String(100))
     storage_type: Mapped[Optional[str]] = mapped_column(String(100))

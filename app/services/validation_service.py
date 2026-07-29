@@ -6,8 +6,8 @@ from dataclasses import dataclass, field
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import CampYear, Ingredient, MealPlanEntry, Recipe, ShoppingList
-from app.services import price_service
+from app.models import CampYear, Ingredient, MealPlanEntry, Recipe, RecipeIngredient, ShoppingList
+from app.services import price_service, unit_service
 
 DUPLICATE_SIMILARITY_THRESHOLD = 0.88
 
@@ -39,6 +39,24 @@ def find_missing_prices(session: Session, *, year: int | None = None) -> list[In
 def find_missing_units(session: Session) -> list[Ingredient]:
     ingredients = session.execute(select(Ingredient).where(Ingredient.active.is_(True))).scalars().all()
     return [ingredient for ingredient in ingredients if not ingredient.default_unit]
+
+
+def find_recipe_ingredient_unit_mismatches(session: Session) -> list[tuple[Recipe, Ingredient, RecipeIngredient]]:
+    """Findet Rezeptzutaten, deren Einheit nicht (mehr) zur Standardeinheit ihrer Zutat passt.
+
+    Das betrifft nur Altdaten von vor der Einfuehrung des Einheiten-Pools (siehe
+    scripts/cleanup_units.py) - neue Eintraege verhindert bereits recipe_service beim Speichern.
+    """
+    mismatches: list[tuple[Recipe, Ingredient, RecipeIngredient]] = []
+    ingredients = session.execute(select(Ingredient)).scalars().all()
+    for ingredient in ingredients:
+        if not ingredient.default_unit:
+            continue
+        compatible = set(unit_service.compatible_units(session, ingredient.default_unit, active_only=False))
+        for link in ingredient.recipe_links:
+            if link.unit not in compatible:
+                mismatches.append((link.recipe, ingredient, link))
+    return mismatches
 
 
 def find_recipes_without_ingredients(session: Session) -> list[Recipe]:
@@ -89,6 +107,15 @@ def run_all_checks(session: Session, *, camp_year: CampYear | None = None, year:
 
     for recipe in find_recipes_without_ingredients(session):
         report.add("rezept", "warnung", f"Rezept '{recipe.name}' hat keine Zutaten.", recipe.name)
+
+    for recipe, ingredient, link in find_recipe_ingredient_unit_mismatches(session):
+        report.add(
+            "einheit",
+            "warnung",
+            f"'{ingredient.name}' wird in Rezept '{recipe.name}' mit der Einheit '{link.unit}' verwendet - "
+            f"das passt nicht zur Standardeinheit '{ingredient.default_unit}'.",
+            f"{ingredient.name} / {recipe.name}",
+        )
 
     if camp_year is not None:
         for entry in find_meal_plan_without_portions(session, camp_year):

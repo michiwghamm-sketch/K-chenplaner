@@ -34,9 +34,10 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.services import export_service, feedback_service, ingredient_service, recipe_service
+from app.services import export_service, feedback_service, ingredient_service, recipe_service, unit_service
 from app.ui.dialogs import (
     AddRecipeIngredientDialog,
+    RecipeIngredientChoice,
     RecipeStepDialog,
     ScaleRecipeDialog,
     SimilarIngredientsWarningDialog,
@@ -642,17 +643,30 @@ class RecipesView(QWidget):
                 recipe_service.delete_component(session, component)
         self._reload_detail()
 
+    def _build_ingredient_choices(self, session, ingredients) -> list[RecipeIngredientChoice]:
+        return [
+            RecipeIngredientChoice(
+                id=ingredient.id,
+                name=ingredient.name,
+                default_unit=ingredient.default_unit,
+                compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
+            )
+            for ingredient in ingredients
+        ]
+
     def _add_ingredient(self, component_id: int | None) -> None:
         if self._current_recipe_id is None:
             error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
         with self.context.session() as session:
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredients = [(i.id, i.name) for i in ingredient_service.search_ingredients(session)]
+            ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
+            all_units = unit_service.list_unit_names(session)
             components = [(c.id, c.name) for c in recipe.components]
         dialog = AddRecipeIngredientDialog(
-            ingredients,
+            ingredient_choices,
             components,
+            all_units,
             self,
             initial={"component_id": component_id} if component_id is not None else None,
             title="Zutat hinzufügen",
@@ -671,7 +685,11 @@ class RecipesView(QWidget):
                 return
             data["ingredient_id"] = ingredient_id
             data.pop("new_ingredient_name", None)
-            recipe_service.add_ingredient_to_recipe(session, recipe, **data)
+            try:
+                recipe_service.add_ingredient_to_recipe(session, recipe, **data)
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
         self._reload_detail()
 
     def _edit_ingredient(self, link_id: int) -> None:
@@ -680,7 +698,8 @@ class RecipesView(QWidget):
             if link is None:
                 return
             recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredients = [(i.id, i.name) for i in ingredient_service.search_ingredients(session)]
+            ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
+            all_units = unit_service.list_unit_names(session)
             components = [(c.id, c.name) for c in recipe.components]
             initial = {
                 "ingredient_id": link.ingredient_id,
@@ -690,7 +709,9 @@ class RecipesView(QWidget):
                 "notes": link.notes,
             }
 
-        dialog = AddRecipeIngredientDialog(ingredients, components, self, initial=initial, title="Zutat bearbeiten")
+        dialog = AddRecipeIngredientDialog(
+            ingredient_choices, components, all_units, self, initial=initial, title="Zutat bearbeiten"
+        )
         if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
             return
 
@@ -717,12 +738,16 @@ class RecipesView(QWidget):
                 return
             data["ingredient_id"] = ingredient_id
             data.pop("new_ingredient_name", None)
-            if link.quantity != data["quantity"] or link.unit != data["unit"]:
-                recipe_service.update_ingredient_quantity(
-                    session, recipe, link, quantity=data["quantity"], unit=data["unit"]
-                )
-            else:
-                link.quantity = data["quantity"]
+            try:
+                if link.quantity != data["quantity"] or link.unit != data["unit"]:
+                    recipe_service.update_ingredient_quantity(
+                        session, recipe, link, quantity=data["quantity"], unit=data["unit"]
+                    )
+                else:
+                    link.quantity = data["quantity"]
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
                 link.unit = data["unit"]
             link.ingredient_id = data["ingredient_id"]
             link.component_id = data["component_id"]

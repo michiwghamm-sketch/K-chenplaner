@@ -27,6 +27,17 @@ def create_session_factory(engine: Engine) -> sessionmaker[Session]:
 def init_database(engine: Engine) -> None:
     Base.metadata.create_all(engine)
     sync_schema(engine)
+    _seed_default_units(engine)
+
+
+def _seed_default_units(engine: Engine) -> None:
+    # Lokaler Import, damit db.py (generische Infrastruktur) nicht bei jedem Modulimport von
+    # app.services abhaengt - nur zur Laufzeit hier gebraucht.
+    from app.services import unit_service
+
+    with Session(engine) as session:
+        unit_service.ensure_default_units(session)
+        session.commit()
 
 
 def sync_schema(engine: Engine) -> None:

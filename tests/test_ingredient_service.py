@@ -241,6 +241,29 @@ def test_find_alias_orphan_candidates_ignores_alias_without_live_duplicate(sessi
         assert ingredient_service.find_alias_orphan_candidates(session) == []
 
 
+def test_create_ingredient_rejects_unit_not_in_pool(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        with pytest.raises(ValueError):
+            ingredient_service.create_ingredient(session, name="Mehl", default_unit="Krug")
+
+
+def test_create_ingredient_accepts_pool_unit_case_insensitively(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = ingredient_service.create_ingredient(session, name="Mehl", default_unit="KG")
+        assert ingredient.default_unit == "kg"
+
+
+def test_update_ingredient_rejects_unit_not_in_pool(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = ingredient_service.create_ingredient(session, name="Mehl", default_unit="kg")
+        ingredient_id = ingredient.id
+
+    with session_scope(session_factory) as session:
+        ingredient = session.get(Ingredient, ingredient_id)
+        with pytest.raises(ValueError):
+            ingredient_service.update_ingredient(ingredient, default_unit="Krug")
+
+
 def test_describe_recipe_usage_lists_recipe_name_quantity_and_unit(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = Recipe(name="Testgericht", normalized_name="testgericht")

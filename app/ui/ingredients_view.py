@@ -28,7 +28,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service
+from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service, unit_service
 from app.ui.dialogs import (
     AddPriceDialog,
     BarcodeSearchDialog,
@@ -42,7 +42,7 @@ from app.ui.dialogs import (
     prompt_int,
     prompt_text,
 )
-from app.ui.widgets import COLOR_CRITICAL, PageHeader, SearchBar
+from app.ui.widgets import COLOR_CRITICAL, PageHeader, SearchBar, UnitComboBox
 
 
 def _manual_price_notes(barcode: str | None, barcode_label: str | None) -> str | None:
@@ -98,6 +98,7 @@ class IngredientsView(QWidget):
         super().__init__(parent)
         self.context = context
         self._current_ingredient_id: int | None = None
+        self._unit_names: list[str] = []
         self._auto_import_thread: QThread | None = None
         self._auto_import_worker: _OpenPricesAutoImportWorker | None = None
         self._build_ui()
@@ -154,7 +155,7 @@ class IngredientsView(QWidget):
         right_layout = QVBoxLayout(right_content)
         form = QFormLayout()
         self.name_edit = QLineEdit(right_content)
-        self.unit_edit = QLineEdit(right_content)
+        self.unit_edit = UnitComboBox(right_content)
         self.category_edit = QLineEdit(right_content)
         self.storage_edit = QLineEdit(right_content)
         self.active_checkbox = QCheckBox("Aktiv", right_content)
@@ -233,6 +234,8 @@ class IngredientsView(QWidget):
         ]
 
     def refresh(self) -> None:
+        with self.context.session() as session:
+            self._unit_names = unit_service.list_unit_names(session)
         self._reload_list()
         self._reload_price_overview()
 
@@ -292,7 +295,8 @@ class IngredientsView(QWidget):
 
     def _clear_detail(self) -> None:
         self.name_edit.clear()
-        self.unit_edit.clear()
+        self.unit_edit.set_units(self._unit_names)
+        self.unit_edit.set_current_unit(None)
         self.category_edit.clear()
         self.storage_edit.clear()
         self.active_checkbox.setChecked(True)
@@ -311,7 +315,8 @@ class IngredientsView(QWidget):
                 self._clear_detail()
                 return
             self.name_edit.setText(ingredient.name)
-            self.unit_edit.setText(ingredient.default_unit or "")
+            self.unit_edit.set_units(self._unit_names)
+            self.unit_edit.set_current_unit(ingredient.default_unit)
             self.category_edit.setText(ingredient.category or "")
             self.storage_edit.setText(ingredient.storage_type or "")
             self.active_checkbox.setChecked(ingredient.active)
@@ -390,15 +395,19 @@ class IngredientsView(QWidget):
             ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
             if ingredient is None:
                 return
-            ingredient_service.update_ingredient(
-                ingredient,
-                name=name,
-                default_unit=self.unit_edit.text().strip() or None,
-                category=self.category_edit.text().strip() or None,
-                storage_type=self.storage_edit.text().strip() or None,
-                active=self.active_checkbox.isChecked(),
-                notes=self.notes_edit.toPlainText().strip() or None,
-            )
+            try:
+                ingredient_service.update_ingredient(
+                    ingredient,
+                    name=name,
+                    default_unit=self.unit_edit.current_unit(),
+                    category=self.category_edit.text().strip() or None,
+                    storage_type=self.storage_edit.text().strip() or None,
+                    active=self.active_checkbox.isChecked(),
+                    notes=self.notes_edit.toPlainText().strip() or None,
+                )
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
         self._reload_list()
         self._select_ingredient_by_id(self._current_ingredient_id)
 
@@ -493,6 +502,7 @@ class IngredientsView(QWidget):
             default_unit = ingredient.default_unit
             barcode = ingredient.barcode
             barcode_label = ingredient.barcode_product_label
+            units = unit_service.list_unit_names(session)
 
         if barcode:
             self._add_price_from_linked_barcode(
@@ -506,6 +516,7 @@ class IngredientsView(QWidget):
 
         dialog = AddPriceDialog(
             ingredients,
+            units,
             self.year_spin.value(),
             self,
             selected_ingredient_id=self._current_ingredient_id,

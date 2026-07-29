@@ -4,9 +4,10 @@ import difflib
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, object_session
 
 from app.models import Ingredient, IngredientAlias
+from app.services import unit_service
 from app.utils.normalization import normalize_name
 
 # Deutsche Pluralendungen, die bei sonst identischem Namen auf ein Dublettenpaar hindeuten
@@ -54,10 +55,11 @@ def create_ingredient(
     storage_type: str | None = None,
     notes: str | None = None,
 ) -> Ingredient:
+    canonical_unit = unit_service.validate_unit(session, default_unit, field_label="Standardeinheit") if default_unit else None
     ingredient = Ingredient(
         name=name.strip(),
         normalized_name=normalize_name(name),
-        default_unit=default_unit,
+        default_unit=canonical_unit,
         category=category,
         storage_type=storage_type,
         notes=notes,
@@ -68,6 +70,9 @@ def create_ingredient(
 
 
 def update_ingredient(ingredient: Ingredient, **fields: object) -> Ingredient:
+    if fields.get("default_unit"):
+        session = object_session(ingredient)
+        fields["default_unit"] = unit_service.validate_unit(session, fields["default_unit"], field_label="Standardeinheit")
     for key, value in fields.items():
         if not hasattr(ingredient, key):
             raise AttributeError(f"Unbekanntes Zutatenfeld: {key}")

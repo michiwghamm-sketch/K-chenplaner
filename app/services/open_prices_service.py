@@ -12,7 +12,7 @@ from urllib.request import urlopen
 
 from app.models import IngredientPrice
 from app.utils.normalization import normalize_name
-from app.services import price_service
+from app.services import price_service, unit_service
 
 API_BASE_URL = "https://prices.openfoodfacts.org/api/v1"
 DEFAULT_TIMEOUT_SECONDS = 15
@@ -383,7 +383,7 @@ def build_ingredient_price_from_observation(
             )
             if quantity_in_target_unit > 0:
                 price_per_unit = (observation.price / quantity_in_target_unit).quantize(Decimal("0.0001"))
-                unit = normalized_target_unit
+                unit = unit_service.canonicalize_static(normalized_target_unit) or normalized_target_unit
                 notes_parts.append(f"Umgerechnet aus Packung: {product_quantity}")
     elif product_quantity:
         notes_parts.append(f"Packung: {product_quantity}")

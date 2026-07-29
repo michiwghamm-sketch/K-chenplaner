@@ -39,6 +39,7 @@ from app.services.open_prices_service import (
     suggest_matches_for_query,
 )
 from app.services import open_prices_category_service, open_prices_service
+from app.ui.widgets import UnitComboBox
 
 
 def confirm_dialog(parent: QWidget | None, title: str, message: str) -> bool:
@@ -89,13 +90,30 @@ def prompt_choice(parent: QWidget | None, title: str, label: str, options: list[
 NO_COMPONENT_LABEL = "- Sonstiges -"
 
 
+@dataclass(slots=True)
+class RecipeIngredientChoice:
+    """Eine im 'Zutat hinzufuegen/bearbeiten'-Dialog auswaehlbare Zutat, mitsamt den Einheiten,
+    die fuer sie im Rezept erlaubt sind (siehe unit_service.compatible_units)."""
+
+    id: int
+    name: str
+    default_unit: str | None
+    compatible_units: list[str]
+
+
 class AddRecipeIngredientDialog(QDialog):
-    """Dialog zum Hinzufügen oder Bearbeiten einer Rezeptzutat (Menge, Einheit, Teilstück)."""
+    """Dialog zum Hinzufügen oder Bearbeiten einer Rezeptzutat (Menge, Einheit, Teilstück).
+
+    Die Einheit ist bewusst auf die zur gewaehlten Zutat passenden Einheiten eingeschraenkt
+    (gleiche Art wie ihre Standardeinheit, z. B. kg/g) - eine Rezeptzutat soll nicht irgendeine
+    beliebige Poolschreibweise wie 'Zehe' fuer eine in kg gefuehrte Zutat verwenden koennen.
+    """
 
     def __init__(
         self,
-        ingredients: list[tuple[int, str]],
+        ingredients: list[RecipeIngredientChoice],
         components: list[tuple[int, str]],
+        all_units: list[str],
         parent: QWidget | None = None,
         *,
         initial: dict | None = None,
@@ -104,13 +122,15 @@ class AddRecipeIngredientDialog(QDialog):
         super().__init__(parent)
         initial = initial or {}
         self._delete_requested = False
+        self._choices_by_id = {choice.id: choice for choice in ingredients}
+        self._all_units = all_units
         self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufügen"))
 
         self.ingredient_combo = QComboBox(self)
         self.ingredient_combo.setEditable(True)
         self.ingredient_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for ingredient_id, name in ingredients:
-            self.ingredient_combo.addItem(name, ingredient_id)
+        for choice in ingredients:
+            self.ingredient_combo.addItem(choice.name, choice.id)
         ingredient_index = self.ingredient_combo.findData(initial.get("ingredient_id"))
         if ingredient_index >= 0:
             self.ingredient_combo.setCurrentIndex(ingredient_index)
@@ -127,8 +147,9 @@ class AddRecipeIngredientDialog(QDialog):
         self.quantity_spin.setRange(0.001, 100000)
         self.quantity_spin.setValue(float(initial.get("quantity", 1)))
 
-        self.unit_edit = QLineEdit(self)
-        self.unit_edit.setText(initial.get("unit", ""))
+        self.unit_combo = UnitComboBox(self)
+        self.unit_hint_label = QLabel("", self)
+        self.unit_hint_label.setWordWrap(True)
         self.notes_edit = QLineEdit(self)
         self.notes_edit.setText(initial.get("notes") or "")
 
@@ -136,7 +157,8 @@ class AddRecipeIngredientDialog(QDialog):
         form.addRow("Zutat", self.ingredient_combo)
         form.addRow("Teilstück", self.component_combo)
         form.addRow("Menge", self.quantity_spin)
-        form.addRow("Einheit", self.unit_edit)
+        form.addRow("Einheit", self.unit_combo)
+        form.addRow("", self.unit_hint_label)
         form.addRow("Notizen", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -150,6 +172,50 @@ class AddRecipeIngredientDialog(QDialog):
         layout.addRow(form)
         layout.addRow(buttons)
 
+        self.ingredient_combo.currentIndexChanged.connect(lambda _index: self._update_unit_options())
+        self.ingredient_combo.editTextChanged.connect(lambda _text: self._update_unit_options())
+        self._update_unit_options(preserve_current=False)
+        if initial.get("unit"):
+            self.unit_combo.set_current_unit(initial["unit"])
+
+    def _resolve_current_ingredient_id(self) -> int | None:
+        typed_name = self.ingredient_combo.currentText().strip()
+        if not typed_name:
+            return None
+        matching_index = self.ingredient_combo.findText(typed_name, Qt.MatchFlag.MatchFixedString)
+        if matching_index >= 0:
+            return self.ingredient_combo.itemData(matching_index)
+        return None
+
+    def _update_unit_options(self, *, preserve_current: bool = True) -> None:
+        previous_unit = self.unit_combo.current_unit() if preserve_current else None
+        typed_name = self.ingredient_combo.currentText().strip()
+        ingredient_id = self._resolve_current_ingredient_id()
+        choice = self._choices_by_id.get(ingredient_id) if ingredient_id is not None else None
+
+        if choice is not None and choice.default_unit:
+            options = choice.compatible_units or [choice.default_unit]
+            self.unit_hint_label.setText(f"Passend zur Standardeinheit '{choice.default_unit}' von '{choice.name}'.")
+        elif choice is not None:
+            options = self._all_units
+            self.unit_hint_label.setText(
+                f"'{choice.name}' hat noch keine Standardeinheit - die hier gewählte Einheit wird übernommen."
+            )
+        elif typed_name:
+            options = self._all_units
+            self.unit_hint_label.setText("Neue Zutat - die gewählte Einheit wird als Standardeinheit übernommen.")
+        else:
+            options = self._all_units
+            self.unit_hint_label.setText("")
+
+        self.unit_combo.set_units(options, allow_empty=False)
+        if previous_unit and previous_unit in options:
+            self.unit_combo.set_current_unit(previous_unit)
+        elif choice is not None and choice.default_unit in options:
+            self.unit_combo.set_current_unit(choice.default_unit)
+        elif options:
+            self.unit_combo.setCurrentIndex(0)
+
     def _request_delete(self) -> None:
         self._delete_requested = True
         self.accept()
@@ -158,22 +224,17 @@ class AddRecipeIngredientDialog(QDialog):
         return self._delete_requested
 
     def result_data(self) -> dict | None:
-        if not self.unit_edit.text().strip():
+        unit = self.unit_combo.current_unit()
+        if not unit:
             return None
         typed_ingredient_name = self.ingredient_combo.currentText().strip()
-        ingredient_id = self.ingredient_combo.currentData()
-        if typed_ingredient_name:
-            matching_index = self.ingredient_combo.findText(typed_ingredient_name, Qt.MatchFlag.MatchFixedString)
-            if matching_index >= 0:
-                ingredient_id = self.ingredient_combo.itemData(matching_index)
-            else:
-                ingredient_id = None
+        ingredient_id = self._resolve_current_ingredient_id()
         return {
             "ingredient_id": ingredient_id,
             "new_ingredient_name": typed_ingredient_name if ingredient_id is None else None,
             "component_id": self.component_combo.currentData(),
             "quantity": Decimal(str(self.quantity_spin.value())),
-            "unit": self.unit_edit.text().strip(),
+            "unit": unit,
             "notes": self.notes_edit.text().strip() or None,
         }
 
@@ -184,6 +245,7 @@ class AddPriceDialog(QDialog):
     def __init__(
         self,
         ingredients: list[tuple[int, str]],
+        units: list[str],
         default_year: int,
         parent: QWidget | None = None,
         *,
@@ -209,9 +271,10 @@ class AddPriceDialog(QDialog):
         self.price_spin.setDecimals(2)
         self.price_spin.setRange(0, 100000)
 
-        self.unit_edit = QLineEdit(self)
+        self.unit_edit = UnitComboBox(self)
+        self.unit_edit.set_units(units, allow_empty=False)
         if default_unit:
-            self.unit_edit.setText(default_unit)
+            self.unit_edit.set_current_unit(default_unit)
         self.source_edit = QLineEdit(self)
         if default_source:
             self.source_edit.setText(default_source)
@@ -245,7 +308,8 @@ class AddPriceDialog(QDialog):
         layout.addRow(buttons)
 
     def result_data(self) -> dict | None:
-        if not self.unit_edit.text().strip():
+        unit = self.unit_edit.current_unit()
+        if not unit:
             return None
         try:
             price = Decimal(str(self.price_spin.value()))
@@ -254,7 +318,7 @@ class AddPriceDialog(QDialog):
         return {
             "ingredient_id": self.ingredient_combo.currentData(),
             "price_per_unit": price,
-            "unit": self.unit_edit.text().strip(),
+            "unit": unit,
             "source": self.source_edit.text().strip() or None,
             "store": self.store_edit.text().strip() or None,
             "year": self.year_spin.value(),

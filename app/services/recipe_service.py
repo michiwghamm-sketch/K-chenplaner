@@ -7,8 +7,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from app.models import Recipe, RecipeComponent, RecipeFeedback, RecipeIngredient, RecipeStep, RecipeVersion
-from app.services import price_service
+from app.models import Ingredient, Recipe, RecipeComponent, RecipeFeedback, RecipeIngredient, RecipeStep, RecipeVersion
+from app.services import price_service, unit_service
 from app.utils.normalization import normalize_name
 
 UNASSIGNED_COMPONENT_LABEL = "Sonstiges"
@@ -324,6 +324,28 @@ def delete_component(session: Session, component: RecipeComponent) -> None:
 # --- Zutaten -------------------------------------------------------------------------
 
 
+def _validate_recipe_unit(session: Session, ingredient: Ingredient, unit: str) -> str:
+    """Prueft, dass 'unit' zur Standardeinheit der Zutat passt (gleiche Art, z. B. kg/g), und gibt
+    die Pool-Schreibweise zurueck.
+
+    Hat die Zutat noch keine Standardeinheit (z. B. gerade erst angelegt), wird die hier
+    uebergebene Einheit zu ihrer neuen Standardeinheit - so bekommt jede Zutat spaetestens beim
+    ersten Rezepteinsatz eine gueltige Standardeinheit, ohne einen separaten Pflichtschritt zu
+    erzwingen.
+    """
+    canonical = unit_service.validate_unit(session, unit, field_label="Einheit")
+    if ingredient.default_unit:
+        compatible = unit_service.compatible_units(session, ingredient.default_unit, active_only=False)
+        if canonical not in compatible:
+            raise ValueError(
+                f"Die Einheit '{canonical}' passt nicht zur Standardeinheit '{ingredient.default_unit}' von "
+                f"'{ingredient.name}'. Erlaubt: {', '.join(compatible)}."
+            )
+    else:
+        ingredient.default_unit = canonical
+    return canonical
+
+
 def add_ingredient_to_recipe(
     session: Session,
     recipe: Recipe,
@@ -336,14 +358,19 @@ def add_ingredient_to_recipe(
     optional: bool = False,
     notes: str | None = None,
 ) -> RecipeIngredient:
+    ingredient = session.get(Ingredient, ingredient_id)
+    if ingredient is None:
+        raise ValueError("Unbekannte Zutat.")
+    canonical_unit = _validate_recipe_unit(session, ingredient, unit)
+
     sort_order = max((item.sort_order for item in recipe.ingredients), default=0) + 1
     link = RecipeIngredient(
         recipe=recipe,
         ingredient_id=ingredient_id,
         component_id=component_id,
         quantity=quantity,
-        unit=unit,
-        price_unit=price_unit or unit,
+        unit=canonical_unit,
+        price_unit=price_unit or canonical_unit,
         optional=optional,
         sort_order=sort_order,
         notes=notes,
@@ -487,7 +514,7 @@ def update_ingredient_quantity(
     version = create_version_snapshot(session, recipe, change_note=note)
     link.quantity = quantity
     if unit:
-        link.unit = unit
+        link.unit = _validate_recipe_unit(session, link.ingredient, unit)
     return version
 
 

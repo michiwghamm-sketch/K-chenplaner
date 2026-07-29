@@ -167,11 +167,17 @@ def recipe_meal_type_from_name(name: str) -> str | None:
     return "Gericht"
 
 
-def resolve_or_create_ingredient(session, cache: dict[str, Ingredient], name: str, unit: str | None) -> tuple[Ingredient, bool]:
+def resolve_or_create_ingredient(
+    session, cache: dict[str, Ingredient], name: str, unit: str | None, *, set_default_unit: bool = True
+) -> tuple[Ingredient, bool]:
+    """Findet oder legt eine Zutat an. 'unit' setzt nur dann die Standardeinheit, wenn
+    set_default_unit=True - die Preisliste liefert in Spalte 3 eine Preis-Einheit (z. B. 'kg' bei
+    '2,50 EUR pro kg'), keine Mess-Einheit fuer Rezeptmengen, und darf die Standardeinheit deshalb
+    nicht setzen (siehe scripts/cleanup_units.py fuer die Bereinigung der historischen Vermischung)."""
     normalized = normalize_name(name)
     if normalized in cache:
         ingredient = cache[normalized]
-        if unit and not ingredient.default_unit:
+        if set_default_unit and unit and not ingredient.default_unit:
             ingredient.default_unit = unit
         return ingredient, False
 
@@ -183,11 +189,11 @@ def resolve_or_create_ingredient(session, cache: dict[str, Ingredient], name: st
         ingredient = Ingredient(
             name=name.strip(),
             normalized_name=normalized,
-            default_unit=unit,
+            default_unit=unit if set_default_unit else None,
         )
         session.add(ingredient)
         created = True
-    elif unit and not ingredient.default_unit:
+    elif set_default_unit and unit and not ingredient.default_unit:
         ingredient.default_unit = unit
 
     cache[normalized] = ingredient
@@ -227,7 +233,9 @@ def import_price_list(ws: Worksheet, session, ingredient_cache: dict[str, Ingred
             continue
 
         unit_text = normalize_unit(unit)
-        ingredient, created = resolve_or_create_ingredient(session, ingredient_cache, str(name), unit_text)
+        ingredient, created = resolve_or_create_ingredient(
+            session, ingredient_cache, str(name), unit_text, set_default_unit=False
+        )
         if created:
             counters.ingredients += 1
 

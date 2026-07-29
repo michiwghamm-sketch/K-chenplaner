@@ -34,9 +34,31 @@ UNIT_ALIASES = {
     "piece": "stk",
 }
 
+# Durchschnittliche Grammzahlen fuer gebraeuchliche Kuechenmasse (Zehe, Loeffel, Prise, ...).
+# Das sind bewusst grobe Naeherungswerte fuer die Grosseinkauf-Kalkulation (Beschaffung soll in
+# kg/l erfolgen koennen, auch wenn Rezepte weiterhin die kuechenuebliche Einheit verwenden) - keine
+# praezisen, zutatenspezifischen Dichten. Quelle: gaengige deutsche Kuechen-Umrechnungstabellen
+# (z. B. EAT SMARTER, Chefkoch-Referenzwerte).
+#   - Zehe (Knoblauchzehe): ~5 g
+#   - EL (Esslöffel, gehäuft, trockene Zutat wie Zucker/Mehl): ~15 g
+#   - TL (Teelöffel, gehäuft): ~5 g
+#   - Prise: ~0.5 g
+#   - Bund (Kraeuterbund, z. B. Petersilie): ~50 g
+#   - Scheibe (z. B. Brot/Kaese): ~25 g
+#   - Blatt (hier ausschliesslich als Lorbeerblatt verwendet): ~0.15 g
+# "Stk", "Glas", "Dose", "Packung" bekommen bewusst KEINEN Pauschalfaktor - die Groesse eines
+# Stuecks/einer Packung schwankt zu stark zwischen Zutaten (ein Ei vs. eine Wassermelone), das muss
+# je Zutat ueber die tatsaechliche Standardeinheit/Paketgroesse (z. B. per Open Prices) geloest werden.
 UNIT_FACTORS = {
     "g": ("mass", Decimal("1")),
     "kg": ("mass", Decimal("1000")),
+    "zehe": ("mass", Decimal("5")),
+    "el": ("mass", Decimal("15")),
+    "tl": ("mass", Decimal("5")),
+    "prise": ("mass", Decimal("0.5")),
+    "bund": ("mass", Decimal("50")),
+    "scheibe": ("mass", Decimal("25")),
+    "blatt": ("mass", Decimal("0.15")),
     "ml": ("volume", Decimal("1")),
     "l": ("volume", Decimal("1000")),
     "stk": ("count", Decimal("1")),
