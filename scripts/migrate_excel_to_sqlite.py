@@ -682,7 +682,6 @@ def import_shopping_sheet(ws: Worksheet, session, ingredient_cache: dict[str, In
                 estimated_price_per_unit=parse_decimal(ws.cell(row=row, column=4).value),
                 estimated_total_price=parse_decimal(ws.cell(row=row, column=7).value if header_row == 6 else ws.cell(row=row, column=5).value),
                 shopping_date=parse_excel_date(ws.cell(row=row, column=8).value) if header_row == 6 else None,
-                category=str(ws.cell(row=row, column=9).value) if header_row == 6 and ws.cell(row=row, column=9).value else None,
                 status=str(ws.cell(row=row, column=10).value if header_row == 6 else None) if (header_row == 6 and ws.cell(row=row, column=10).value) else None,
                 linked_recipes_text=str(ws.cell(row=row, column=6).value if header_row == 6 else ws.cell(row=row, column=6).value) if ws.cell(row=row, column=6).value else None,
                 notes=str(ws.cell(row=row, column=11).value) if header_row == 6 and ws.cell(row=row, column=11).value else None,

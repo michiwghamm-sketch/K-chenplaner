@@ -30,7 +30,7 @@ from app.ui.theme import ORANGE
 from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 SHOPPING_TABLE_COLUMNS = (
-    "Zutat", "Gesamtmenge", "Einheit", "Preis je Einheit", "Gesamtpreis Position", "Kategorie", "Haendler",
+    "Zutat", "Gesamtmenge", "Einheit", "Preis je Einheit", "Gesamtpreis Position", "Haendler",
     "Bedarfsdatum", "Einkaufstag", "Status", "Rezepte",
 )
 GROUP_MODES = (("Keine Gruppierung", "none"), ("Nach Einkaufstag", "day"), ("Nach Händler", "store"))
@@ -203,29 +203,28 @@ class ShoppingView(QWidget):
             price_item.setForeground(QColor(COLOR_CRITICAL))
         self.table.setItem(row, 3, price_item)
         self.table.setItem(row, 4, QTableWidgetItem(_format_money(item.estimated_total_price) if item.estimated_total_price is not None else ""))
-        self.table.setItem(row, 5, QTableWidgetItem(item.category or ""))
 
         if editable:
             store_edit = QLineEdit(item.store or "")
             store_edit.setPlaceholderText("Haendler...")
             store_edit.editingFinished.connect(lambda item_id=item.id, edit=store_edit: self._update_store(item_id, edit.text()))
-            self.table.setCellWidget(row, 6, store_edit)
+            self.table.setCellWidget(row, 5, store_edit)
         else:
-            self.table.setItem(row, 6, QTableWidgetItem(item.store or ""))
+            self.table.setItem(row, 5, QTableWidgetItem(item.store or ""))
 
-        self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
-        self.table.setItem(row, 8, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
+        self.table.setItem(row, 6, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
+        self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
 
         if editable:
             status_combo = QComboBox()
             status_combo.addItems(shopping_service.ALLOWED_ITEM_STATUSES)
             status_combo.setCurrentText(item.status or "offen")
             status_combo.currentTextChanged.connect(lambda status, item_id=item.id: self._update_status(item_id, status))
-            self.table.setCellWidget(row, 9, status_combo)
+            self.table.setCellWidget(row, 8, status_combo)
         else:
-            self.table.setItem(row, 9, QTableWidgetItem(item.status or ""))
+            self.table.setItem(row, 8, QTableWidgetItem(item.status or ""))
 
-        self.table.setItem(row, 10, QTableWidgetItem(item.linked_recipes_text or ""))
+        self.table.setItem(row, 9, QTableWidgetItem(item.linked_recipes_text or ""))
 
     def _update_status(self, item_id: int, status: str) -> None:
         with self.context.session() as session:
@@ -337,9 +336,7 @@ def _aggregate_total_view_items(items) -> list:
                 unit=unit,
                 estimated_price_per_unit=price_per_unit,
                 estimated_total_price=total if has_complete_prices else None,
-                category=first.category,
                 store=", ".join(sorted(stores)) if stores else "",
-                storage_type=first.storage_type,
                 needed_date=min((item.needed_date for item in group if item.needed_date), default=None),
                 shopping_date=None,
                 status=", ".join(sorted(statuses)) if statuses else "",

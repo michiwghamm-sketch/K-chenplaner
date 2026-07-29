@@ -57,7 +57,7 @@ def test_camp_year_planning_and_shopping_list_roundtrip(session_factory) -> None
 
 def test_generate_shopping_list_aggregates_quantities_across_meals(session_factory) -> None:
     with session_scope(session_factory) as session:
-        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", category="Trockenware")
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
         ingredient.prices.append(IngredientPrice(price_per_unit=Decimal("2.00"), unit="kg", year=2026))
 
         recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
@@ -106,7 +106,6 @@ def test_generate_shopping_list_aggregates_quantities_across_meals(session_facto
         item = items_by_day[date(2026, 8, 1)]
         assert item.quantity == Decimal("2.000")
         assert item.estimated_total_price == Decimal("4.00")
-        assert item.category == "Trockenware"
         assert item.needed_date == date(2026, 8, 2)
         assert item.status == "offen"
         assert items_by_day[date(2026, 8, 3)].quantity == Decimal("1.000")
@@ -288,35 +287,9 @@ def test_generate_shopping_list_derives_shopping_date_one_day_before_meal(sessio
         assert shopping_list.items[0].shopping_date == date(2026, 8, 4)
 
 
-def test_generate_shopping_list_consolidates_shelf_stable_ingredients_to_camp_start(session_factory) -> None:
-    with session_scope(session_factory) as session:
-        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", storage_type="Trockenware")
-
-        recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
-        recipe.ingredients.append(
-            RecipeIngredient(ingredient=ingredient, quantity=Decimal("1.000"), unit="kg", price_unit="kg", sort_order=1)
-        )
-
-        camp_year = CampYear(year=2026, name="Zeltlager 2026", start_date=date(2026, 8, 1), end_date=date(2026, 8, 10))
-        camp_year.meal_plan_entries.append(
-            MealPlanEntry(meal_date=date(2026, 8, 8), meal_type="Mittagessen", recipe=recipe, planned_portions=10, status="geplant")
-        )
-        session.add(camp_year)
-        session.flush()
-        camp_year_id = camp_year.id
-
-    with session_scope(session_factory) as session:
-        camp_year = session.get(CampYear, camp_year_id)
-        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
-
-        assert len(shopping_list.items) == 1
-        # Lagerfaehig -> ein Rutsch zu Lagerbeginn statt kurz vor der einzelnen Mahlzeit.
-        assert shopping_list.items[0].shopping_date == date(2026, 7, 31)
-
-
 def test_generate_shopping_list_respects_manual_shopping_date_override(session_factory) -> None:
     with session_scope(session_factory) as session:
-        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", storage_type="Trockenware")
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
 
         recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
         recipe.ingredients.append(

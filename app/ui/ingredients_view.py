@@ -153,22 +153,26 @@ class IngredientsView(QWidget):
 
         right_content = QWidget(self)
         right_layout = QVBoxLayout(right_content)
+
+        columns_row = QHBoxLayout()
+        right_layout.addLayout(columns_row, stretch=1)
+
+        # Linke Spalte: Stammdaten + Barcode-Verknuepfung.
+        left_column = QVBoxLayout()
+        columns_row.addLayout(left_column, stretch=1)
+
         form = QFormLayout()
         self.name_edit = QLineEdit(right_content)
         self.unit_edit = UnitComboBox(right_content)
-        self.category_edit = QLineEdit(right_content)
-        self.storage_edit = QLineEdit(right_content)
         self.active_checkbox = QCheckBox("Aktiv", right_content)
         self.notes_edit = QPlainTextEdit(right_content)
         self.notes_edit.setFixedHeight(70)
 
         form.addRow("Name", self.name_edit)
         form.addRow("Standardeinheit", self.unit_edit)
-        form.addRow("Kategorie", self.category_edit)
-        form.addRow("Lagerart", self.storage_edit)
         form.addRow("", self.active_checkbox)
         form.addRow("Notizen", self.notes_edit)
-        right_layout.addLayout(form)
+        left_column.addLayout(form)
 
         self.barcode_label = QLabel("Kein Produkt verknuepft", right_content)
         self.barcode_label.setWordWrap(True)
@@ -179,16 +183,16 @@ class IngredientsView(QWidget):
         self.remove_barcode_button.clicked.connect(self._remove_barcode_link)
         barcode_row.addWidget(self.search_barcode_button)
         barcode_row.addWidget(self.remove_barcode_button)
-        right_layout.addWidget(self.barcode_label)
-        right_layout.addLayout(barcode_row)
+        left_column.addWidget(self.barcode_label)
+        left_column.addLayout(barcode_row)
 
-        right_layout.addWidget(QLabel("Preise", right_content))
+        left_column.addWidget(QLabel("Preise", right_content))
         self.price_table = QTableWidget(0, 6, right_content)
         self.price_table.setHorizontalHeaderLabels(["Jahr", "Preis", "Einheit", "Quelle", "Laden", "Notizen"])
         self.price_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.price_table.setSortingEnabled(True)
         self.price_table.setMaximumHeight(150)
-        right_layout.addWidget(self.price_table)
+        left_column.addWidget(self.price_table)
 
         price_button_row = QHBoxLayout()
         self.add_price_button = QPushButton("Preis erfassen", right_content)
@@ -199,7 +203,16 @@ class IngredientsView(QWidget):
         price_button_row.addWidget(self.add_price_button)
         price_button_row.addWidget(self.delete_price_button)
         price_button_row.addStretch(1)
-        right_layout.addLayout(price_button_row)
+        left_column.addLayout(price_button_row)
+        left_column.addStretch(1)
+
+        # Rechte Spalte: nur die Rezeptverwendung.
+        right_column = QVBoxLayout()
+        columns_row.addLayout(right_column, stretch=1)
+
+        right_column.addWidget(QLabel("Verwendet in Rezepten", right_content))
+        self.recipe_usage_list = QListWidget(right_content)
+        right_column.addWidget(self.recipe_usage_list, stretch=1)
 
         button_row = QHBoxLayout()
         save_button = QPushButton("Speichern", right_content)
@@ -297,13 +310,12 @@ class IngredientsView(QWidget):
         self.name_edit.clear()
         self.unit_edit.set_units(self._unit_names)
         self.unit_edit.set_current_unit(None)
-        self.category_edit.clear()
-        self.storage_edit.clear()
         self.active_checkbox.setChecked(True)
         self.notes_edit.clear()
         self.barcode_label.setText("Kein Produkt verknuepft")
         self.remove_barcode_button.setEnabled(False)
         self.price_table.setRowCount(0)
+        self.recipe_usage_list.clear()
 
     def _reload_detail(self) -> None:
         if self._current_ingredient_id is None:
@@ -317,8 +329,6 @@ class IngredientsView(QWidget):
             self.name_edit.setText(ingredient.name)
             self.unit_edit.set_units(self._unit_names)
             self.unit_edit.set_current_unit(ingredient.default_unit)
-            self.category_edit.setText(ingredient.category or "")
-            self.storage_edit.setText(ingredient.storage_type or "")
             self.active_checkbox.setChecked(ingredient.active)
             self.notes_edit.setPlainText(ingredient.notes or "")
 
@@ -343,6 +353,14 @@ class IngredientsView(QWidget):
                 self.price_table.setItem(row, 4, QTableWidgetItem(price.store or ""))
                 self.price_table.setItem(row, 5, QTableWidgetItem(price.notes or ""))
             self.price_table.setSortingEnabled(True)
+
+            self.recipe_usage_list.clear()
+            usage_lines = ingredient_service.describe_recipe_usage(ingredient)
+            if usage_lines:
+                for line in usage_lines:
+                    self.recipe_usage_list.addItem(line)
+            else:
+                self.recipe_usage_list.addItem("Wird in keinem Rezept verwendet")
 
     def _create_ingredient(self) -> None:
         with self.context.session() as session:
@@ -400,8 +418,6 @@ class IngredientsView(QWidget):
                     ingredient,
                     name=name,
                     default_unit=self.unit_edit.current_unit(),
-                    category=self.category_edit.text().strip() or None,
-                    storage_type=self.storage_edit.text().strip() or None,
                     active=self.active_checkbox.isChecked(),
                     notes=self.notes_edit.toPlainText().strip() or None,
                 )

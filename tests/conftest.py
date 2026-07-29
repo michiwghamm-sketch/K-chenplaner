@@ -21,7 +21,7 @@ def session_factory(tmp_path):
 def seeded_camp_year_id(session_factory) -> int:
     """Legt ein Camp-Jahr mit einem Rezept, einer Zutat, einem Preis und einer geplanten Mahlzeit an."""
     with session_scope(session_factory) as session:
-        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", category="Trockenware")
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
         ingredient.prices.append(
             IngredientPrice(price_per_unit=Decimal("2.00"), unit="kg", year=2026, source="Preisliste")
         )

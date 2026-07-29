@@ -14,7 +14,6 @@ def test_recipe_and_ingredient_relationships_can_be_persisted(session_factory) -
             name="Nudeln",
             normalized_name="nudeln",
             default_unit="kg",
-            category="Trockenware",
         )
         ingredient.prices.append(
             IngredientPrice(

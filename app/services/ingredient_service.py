@@ -51,8 +51,6 @@ def create_ingredient(
     *,
     name: str,
     default_unit: str | None = None,
-    category: str | None = None,
-    storage_type: str | None = None,
     notes: str | None = None,
 ) -> Ingredient:
     canonical_unit = unit_service.validate_unit(session, default_unit, field_label="Standardeinheit") if default_unit else None
@@ -60,8 +58,6 @@ def create_ingredient(
         name=name.strip(),
         normalized_name=normalize_name(name),
         default_unit=canonical_unit,
-        category=category,
-        storage_type=storage_type,
         notes=notes,
     )
     session.add(ingredient)
@@ -321,9 +317,5 @@ def merge_ingredients(session: Session, *, keep: Ingredient, remove: Ingredient)
 
     if not keep.default_unit and remove.default_unit:
         keep.default_unit = remove.default_unit
-    if not keep.category and remove.category:
-        keep.category = remove.category
-    if not keep.storage_type and remove.storage_type:
-        keep.storage_type = remove.storage_type
 
     session.delete(remove)

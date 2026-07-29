@@ -45,8 +45,6 @@ class Ingredient(Base):
     name: Mapped[str] = mapped_column(String(255), nullable=False)
     normalized_name: Mapped[str] = mapped_column(String(255), nullable=False, unique=True, index=True)
     default_unit: Mapped[Optional[str]] = mapped_column(String(50))
-    category: Mapped[Optional[str]] = mapped_column(String(100))
-    storage_type: Mapped[Optional[str]] = mapped_column(String(100))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
     barcode: Mapped[Optional[str]] = mapped_column(String(64))
@@ -355,8 +353,6 @@ class ShoppingListItem(Base):
     # Gleiche Praezisions-Begruendung wie IngredientPrice.price_per_unit.
     estimated_price_per_unit: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 4))
     estimated_total_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
-    category: Mapped[Optional[str]] = mapped_column(String(100))
-    storage_type: Mapped[Optional[str]] = mapped_column(String(100))
     needed_date: Mapped[Optional[date]] = mapped_column(Date)
     shopping_date: Mapped[Optional[date]] = mapped_column(Date)
     store: Mapped[Optional[str]] = mapped_column(String(255))

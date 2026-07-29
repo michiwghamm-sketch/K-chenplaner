@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date, timedelta
+from datetime import date
 from decimal import Decimal
 
 from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem
@@ -19,29 +19,11 @@ class _Aggregate:
     needed_dates: set[date] = field(default_factory=set)
 
 
-# Lagerarten, die sich bevorraten lassen: einmaliger Einkauf zu Lagerbeginn statt taeglich
-# frisch. Freitext-Feld (Ingredient.storage_type), daher Schluesselwort-Abgleich statt Enum.
-SHELF_STABLE_KEYWORDS = ("trocken", "tiefkuehl", "tiefkühl", "tk", "konserve", "getraenke", "getränke", "vorrat")
-
-
-def _is_shelf_stable(ingredient: Ingredient | None) -> bool:
-    storage_type = (ingredient.storage_type or "").lower() if ingredient else ""
-    return any(keyword in storage_type for keyword in SHELF_STABLE_KEYWORDS)
-
-
-def _derive_item_shopping_date(entry, ingredient: Ingredient | None, camp_year: CampYear) -> date | None:
-    """Automatischer Einkaufstag, wenn am Mahlzeit-Slot keiner manuell gesetzt wurde.
-
-    Frische Zutaten: ein Tag vor der Mahlzeit (moeglichst kurze Lagerzeit).
-    Lagerfaehige Zutaten (Trockenware, Tiefkuehlware, Getraenke, ...): ein Tag vor
-    Lagerbeginn, damit sie in einem Rutsch eingekauft werden koennen statt taeglich.
-    """
+def _derive_item_shopping_date(entry, camp_year: CampYear) -> date | None:
+    """Automatischer Einkaufstag, wenn am Mahlzeit-Slot keiner manuell gesetzt wurde: ein Tag vor
+    der Mahlzeit (moeglichst kurze Lagerzeit)."""
     if entry.meal_date is None:
         return None
-    if _is_shelf_stable(ingredient):
-        if camp_year.start_date is not None:
-            return camp_year.start_date - timedelta(days=1)
-        return entry.meal_date
     return planning_service.derive_shopping_date(entry.meal_date, days_before=1)
 
 
@@ -77,7 +59,7 @@ def generate_shopping_list(
                 quantity = price_service.convert_quantity(quantity, from_unit=item.unit, to_unit=shopping_unit)
             shopping_date = None
             if assign_shopping_dates:
-                shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, item.ingredient, camp_year)
+                shopping_date = entry.shopping_date or _derive_item_shopping_date(entry, camp_year)
             key = (item.ingredient_id, shopping_unit, shopping_date)
             aggregate = aggregates.setdefault(
                 key,
@@ -108,7 +90,6 @@ def generate_shopping_list(
                 to_unit=aggregate.unit,
             ).quantize(Decimal("0.0001"))
             estimated_total = (quantity * estimated_price_per_unit).quantize(Decimal("0.01"))
-        ingredient = best_price.ingredient if best_price else session.get(Ingredient, aggregate.ingredient_id)
 
         shopping_list.items.append(
             ShoppingListItem(
@@ -117,8 +98,6 @@ def generate_shopping_list(
                 unit=aggregate.unit,
                 estimated_price_per_unit=estimated_price_per_unit,
                 estimated_total_price=estimated_total,
-                category=ingredient.category if ingredient else None,
-                storage_type=ingredient.storage_type if ingredient else None,
                 needed_date=min(aggregate.needed_dates) if aggregate.needed_dates else None,
                 shopping_date=aggregate.shopping_date,
                 status="offen",
@@ -141,13 +120,6 @@ def group_by_shopping_day(shopping_list: ShoppingList) -> dict[date | None, list
     groups: dict[date | None, list[ShoppingListItem]] = defaultdict(list)
     for item in shopping_list.items:
         groups[item.shopping_date].append(item)
-    return dict(groups)
-
-
-def group_by_category(shopping_list: ShoppingList) -> dict[str | None, list[ShoppingListItem]]:
-    groups: dict[str | None, list[ShoppingListItem]] = defaultdict(list)
-    for item in shopping_list.items:
-        groups[item.category].append(item)
     return dict(groups)
 
 
