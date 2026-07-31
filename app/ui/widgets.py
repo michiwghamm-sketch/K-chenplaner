@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QVBoxLayout, QWidget
 
 from app.ui.theme import BORDER, BORDER_STRONG, ORANGE, TEXT_MUTED
 
@@ -143,3 +145,74 @@ class KpiCard(QWidget):
     def set_level(self, level: str) -> None:
         color = _STATUS_COLORS.get(level, COLOR_INFO)
         self.value_label.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {color};")
+
+
+@dataclass(slots=True)
+class RankingEntry:
+    label: str
+    value: float
+    value_text: str
+    color: str = ORANGE
+
+
+class RankingList(QWidget):
+    """Lesbare Rangliste: Name links (voller Text, kein abgeschnittenes Achsen-Label), ein
+    proportionaler Balken und der Wert rechts. Ersetzt QtChart-Balkendiagramme mit
+    Kategorie-Achse, deren Beschriftungen bei vielen/langen Namen unlesbar werden."""
+
+    BAR_TRACK_WIDTH = 140
+    BAR_HEIGHT = 12
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._layout = QVBoxLayout(self)
+        self._layout.setContentsMargins(0, 0, 0, 0)
+        self._layout.setSpacing(8)
+
+    def set_entries(self, entries: list[RankingEntry]) -> None:
+        while self._layout.count():
+            item = self._layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())
+
+        if not entries:
+            empty_label = QLabel("Keine Daten.", self)
+            empty_label.setStyleSheet(f"color: {TEXT_MUTED};")
+            self._layout.addWidget(empty_label)
+            return
+
+        max_value = max((entry.value for entry in entries), default=0) or 1
+        for entry in entries:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+
+            name_label = QLabel(entry.label, self)
+            name_label.setWordWrap(True)
+            name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+            row.addWidget(name_label, stretch=1)
+
+            track = QWidget(self)
+            track.setFixedSize(self.BAR_TRACK_WIDTH, self.BAR_HEIGHT)
+            track.setStyleSheet(f"background-color: {BORDER}; border-radius: 3px;")
+            bar_width = max(4, int(self.BAR_TRACK_WIDTH * entry.value / max_value))
+            bar = QWidget(track)
+            bar.setGeometry(0, 0, bar_width, self.BAR_HEIGHT)
+            bar.setStyleSheet(f"background-color: {entry.color}; border-radius: 3px;")
+            row.addWidget(track)
+
+            value_label = QLabel(entry.value_text, self)
+            value_label.setMinimumWidth(64)
+            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+            row.addWidget(value_label)
+
+            self._layout.addLayout(row)
+
+    def _clear_layout(self, layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+            elif item.layout():
+                self._clear_layout(item.layout())

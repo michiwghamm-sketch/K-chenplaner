@@ -9,7 +9,6 @@ from PySide6.QtCharts import (
     QBarSet,
     QChart,
     QChartView,
-    QHorizontalStackedBarSeries,
     QPieSeries,
     QValueAxis,
 )
@@ -49,6 +48,8 @@ from app.ui.widgets import (
     DIET_TYPE_COLORS,
     KpiCard,
     PageHeader,
+    RankingEntry,
+    RankingList,
     UNKNOWN_DIET_TYPE_COLOR,
 )
 
@@ -229,25 +230,10 @@ class DashboardView(QWidget):
 
         recipe_grid = QGridLayout()
         self.kpi_recipes_total = KpiCard("Rezepte gesamt")
-        self.kpi_recipes_fleisch = KpiCard("Fleisch")
-        self.kpi_recipes_vegetarisch = KpiCard("Vegetarisch")
-        self.kpi_recipes_vegan = KpiCard("Vegan")
         self.kpi_avg_recipe_cost = KpiCard("Ø Kosten je Rezept (EUR)")
         self.kpi_avg_portion_cost = KpiCard("Ø Kosten je Portion (EUR)")
-        self.kpi_recipes_fleisch.set_level("kritisch")
-        self.kpi_recipes_vegetarisch.set_level("ok")
-        self.kpi_recipes_vegan.set_level("warnung")
-        for index, card in enumerate(
-            (
-                self.kpi_recipes_total,
-                self.kpi_recipes_fleisch,
-                self.kpi_recipes_vegetarisch,
-                self.kpi_recipes_vegan,
-                self.kpi_avg_recipe_cost,
-                self.kpi_avg_portion_cost,
-            )
-        ):
-            recipe_grid.addWidget(card, index // 3, index % 3)
+        for index, card in enumerate((self.kpi_recipes_total, self.kpi_avg_recipe_cost, self.kpi_avg_portion_cost)):
+            recipe_grid.addWidget(card, 0, index)
         layout.addLayout(recipe_grid)
 
         self.avg_cost_note = QLabel("", self)
@@ -255,7 +241,7 @@ class DashboardView(QWidget):
         layout.addWidget(self.avg_cost_note)
 
         charts_row = QHBoxLayout()
-        charts_row.setSpacing(12)
+        charts_row.setSpacing(24)
 
         self.diet_chart_view = self._make_chart_view("Rezepte nach Ernährungstyp", legend=True)
         self._diet_pie_series = QPieSeries()
@@ -263,8 +249,12 @@ class DashboardView(QWidget):
         self.diet_chart_view.chart().addSeries(self._diet_pie_series)
         charts_row.addWidget(self.diet_chart_view, 1)
 
-        self.most_planned_chart_view = self._make_chart_view("Am häufigsten geplant", legend=False)
-        charts_row.addWidget(self.most_planned_chart_view, 1)
+        most_planned_column = QVBoxLayout()
+        most_planned_column.addWidget(QLabel("Am häufigsten geplant (Jahre mit diesem Gericht)", self))
+        self.most_planned_ranking = RankingList(self)
+        most_planned_column.addWidget(self.most_planned_ranking)
+        most_planned_column.addStretch(1)
+        charts_row.addLayout(most_planned_column, 1)
 
         layout.addLayout(charts_row)
 
@@ -523,9 +513,6 @@ class DashboardView(QWidget):
             diet_counts = stats_service.recipe_counts_by_diet_type(session)
             total_recipes = sum(diet_counts.values())
             self.kpi_recipes_total.set_value(str(total_recipes))
-            self.kpi_recipes_fleisch.set_value(str(diet_counts.get("Fleisch", 0)))
-            self.kpi_recipes_vegetarisch.set_value(str(diet_counts.get("Vegetarisch", 0)))
-            self.kpi_recipes_vegan.set_value(str(diet_counts.get("Vegan", 0)))
             self._update_diet_chart(diet_counts)
 
             avg_cost = stats_service.average_recipe_cost(session)
@@ -544,7 +531,7 @@ class DashboardView(QWidget):
                 self.avg_cost_note.setText("Noch keine Rezepte mit hinterlegten Preisen.")
 
             most_planned = stats_service.most_planned_recipes(session, limit=8)
-            self._update_most_planned_chart(most_planned)
+            self._update_most_planned_ranking(most_planned)
 
             camp_costs = stats_service.camp_year_costs(session)
             self._update_camp_year_chart(camp_costs)
@@ -575,41 +562,17 @@ class DashboardView(QWidget):
             pie_slice.setBorderColor(QColor(BG_SURFACE))
             pie_slice.setBorderWidth(2)
 
-    def _update_most_planned_chart(self, entries: list[stats_service.RecipePlanCount]) -> None:
-        chart = self.most_planned_chart_view.chart()
-        chart.removeAllSeries()
-        for axis in list(chart.axes()):
-            chart.removeAxis(axis)
-        if not entries:
-            return
-
-        ordered = list(reversed(entries))  # Platz 1 soll oben stehen
-        series = QHorizontalStackedBarSeries()
-        series.setLabelsVisible(True)
-        series.setLabelsFormat("@value")
-        categories = []
-        for index, entry in enumerate(ordered):
-            categories.append(entry.recipe_name)
-            values = [0] * len(ordered)
-            values[index] = entry.plan_count
-            bar_set = QBarSet("")
-            bar_set.append(values)
-            bar_set.setColor(QColor(DIET_TYPE_COLORS.get(entry.diet_type or "", ORANGE)))
-            series.append(bar_set)
-        chart.addSeries(series)
-
-        axis_y = QBarCategoryAxis()
-        axis_y.append(categories)
-        chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
-        series.attachAxis(axis_y)
-
-        axis_x = QValueAxis()
-        axis_x.setLabelFormat("%d")
-        max_count = max(e.plan_count for e in entries)
-        axis_x.setRange(0, max_count + 1)
-        axis_x.setTickCount(max_count + 2)
-        chart.addAxis(axis_x, Qt.AlignmentFlag.AlignBottom)
-        series.attachAxis(axis_x)
+    def _update_most_planned_ranking(self, entries: list[stats_service.RecipePlanCount]) -> None:
+        ranking_entries = [
+            RankingEntry(
+                label=entry.recipe_name,
+                value=entry.plan_count,
+                value_text=f"{entry.plan_count}x",
+                color=DIET_TYPE_COLORS.get(entry.diet_type or "", ORANGE),
+            )
+            for entry in entries
+        ]
+        self.most_planned_ranking.set_entries(ranking_entries)
 
     def _update_camp_year_chart(self, costs: list[stats_service.CampYearCost]) -> None:
         chart = self.camp_year_chart_view.chart()
