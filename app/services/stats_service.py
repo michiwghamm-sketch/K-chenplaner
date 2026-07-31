@@ -8,7 +8,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import CampYear, Recipe
-from app.services import recipe_service
+from app.services import planning_service, recipe_service
 
 UNKNOWN_DIET_TYPE_LABEL = "Ohne Angabe"
 
@@ -34,8 +34,9 @@ class RecipePlanCount:
 def most_planned_recipes(session: Session, *, limit: int = 8, active_only: bool = True) -> list[RecipePlanCount]:
     """Rangliste der am haeufigsten eingeplanten Rezepte ueber alle Camp-Jahre hinweg.
 
-    Zaehlt jeden nicht abgesagten Mahlzeit-Slot, in dem das Rezept steht - unabhaengig
-    davon, ob dazu Feedback vorliegt (ein Rezept im Wochenplan zaehlt fuer das Jahr).
+    Zaehlt je Rezept die Anzahl unterschiedlicher Camp-Jahre, in denen es mindestens einmal
+    (nicht abgesagt, nicht 'keine Mahlzeit') eingeplant ist - ein Rezept, das in einer Woche
+    fuenfmal auf dem Plan steht, zaehlt fuer dieses Jahr trotzdem nur einmal.
     """
     stmt = select(Recipe)
     if active_only:
@@ -44,7 +45,10 @@ def most_planned_recipes(session: Session, *, limit: int = 8, active_only: bool 
 
     counts: list[RecipePlanCount] = []
     for recipe in recipes:
-        plan_count = sum(1 for entry in recipe.meal_plan_entries if entry.status != "abgesagt")
+        camp_years_planned = {
+            entry.camp_year_id for entry in recipe.meal_plan_entries if planning_service.is_active_status(entry.status)
+        }
+        plan_count = len(camp_years_planned)
         if plan_count:
             counts.append(
                 RecipePlanCount(
@@ -69,7 +73,7 @@ def camp_year_costs(session: Session) -> list[CampYearCost]:
     camp_years = session.execute(select(CampYear).order_by(CampYear.year.desc())).scalars().all()
     results: list[CampYearCost] = []
     for camp_year in camp_years:
-        active_entries = [entry for entry in camp_year.meal_plan_entries if entry.status != "abgesagt"]
+        active_entries = [entry for entry in camp_year.meal_plan_entries if planning_service.is_active_status(entry.status)]
         total_portions = sum(entry.planned_portions or 0 for entry in active_entries)
         total_cost = Decimal("0")
         for entry in active_entries:

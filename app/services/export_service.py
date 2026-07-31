@@ -348,8 +348,8 @@ def export_weekly_plan_to_pdf(session, camp_year: CampYear, path: Path) -> Path:
                     line_text = _pdf_text(entry.recipe.name)
                     if entry.planned_portions:
                         line_text += f" ({entry.planned_portions})"
-                    if entry.status == "abgesagt":
-                        line_text = f'<font color="{PDF_TEXT_MUTED_HEX}">{line_text} (abgesagt)</font>'
+                    if not planning_service.is_active_status(entry.status):
+                        line_text = f'<font color="{PDF_TEXT_MUTED_HEX}">{line_text} ({entry.status})</font>'
                     elif not entry.planned_portions:
                         line_text = f'<font color="{PDF_CRITICAL_HEX}">{line_text}</font>'
                     lines.append(line_text)
@@ -400,7 +400,7 @@ def export_weekly_recipe_sheets_to_pdf(session, camp_year: CampYear, path: Path)
     entries = [
         entry
         for entry in camp_year.meal_plan_entries
-        if entry.recipe is not None and entry.status != "abgesagt" and entry.planned_portions
+        if entry.recipe is not None and planning_service.is_active_status(entry.status) and entry.planned_portions
     ]
     if not entries:
         raise ValueError("Für diese Zeltlagerwoche sind keine Rezepte mit Portionenzahl geplant.")

@@ -46,7 +46,7 @@ def generate_shopping_list(
     aggregates: dict[tuple[int, str, date | None], _Aggregate] = {}
 
     for entry in camp_year.meal_plan_entries:
-        if entry.recipe is None or entry.status == "abgesagt":
+        if entry.recipe is None or not planning_service.is_active_status(entry.status):
             continue
         portions = entry.planned_portions or entry.recipe.default_portions
         if not portions:

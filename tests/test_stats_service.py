@@ -59,6 +59,32 @@ def test_most_planned_recipes_counts_non_cancelled_entries_across_years(session_
         assert [(r.recipe_name, r.plan_count) for r in ranked] == [("Spaghetti", 2), ("Rippchen", 1)]
 
 
+def test_most_planned_recipes_counts_recipe_once_per_year_even_if_repeated(session_factory) -> None:
+    """Ein Rezept, das in einer Woche mehrfach auf dem Plan steht, soll fuer dieses Jahr trotzdem
+    nur einmal zaehlen - sonst dominieren haeufig wiederholte Standardgerichte die Rangliste."""
+    with session_scope(session_factory) as session:
+        recipe = Recipe(name="Müsli", normalized_name="müsli")
+        session.add(recipe)
+        session.flush()
+
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(meal_date=date(2026, 8, d), meal_type="Frühstück", recipe=recipe, status="geplant")
+                for d in (1, 2, 3)
+            ]
+        )
+        # Ein 'keine Mahlzeit'-Slot ohne Rezept darf die Zaehlung natuerlich nicht beeinflussen.
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 4), meal_type="Frühstück", status="keine Mahlzeit")
+        )
+        session.add(camp_year)
+
+    with session_scope(session_factory) as session:
+        ranked = stats_service.most_planned_recipes(session)
+        assert [(r.recipe_name, r.plan_count) for r in ranked] == [("Müsli", 1)]
+
+
 def test_camp_year_costs_sums_non_cancelled_entries(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = _recipe_with_ingredient(session, "Nudeln", diet_type=None, price=Decimal("2.00"))

@@ -76,7 +76,7 @@ def test_days_until_start(session_factory) -> None:
         assert planning_service.days_until_start(no_dates_camp_year) is None
 
 
-def test_meal_plan_completeness_ignores_cancelled_entries(session_factory) -> None:
+def test_meal_plan_completeness_ignores_cancelled_and_no_meal_entries(session_factory) -> None:
     with session_scope(session_factory) as session:
         recipe = Recipe(name="Nudeln", normalized_name="nudeln")
         camp_year = planning_service.create_camp_year(session, year=2026)
@@ -87,10 +87,18 @@ def test_meal_plan_completeness_ignores_cancelled_entries(session_factory) -> No
                 MealPlanEntry(meal_type="Mittagessen", recipe=recipe, status="geplant"),
                 MealPlanEntry(meal_type="Abendessen", recipe=None, status="geplant"),
                 MealPlanEntry(meal_type="Frühstück", recipe=None, status="abgesagt"),
+                MealPlanEntry(meal_type="Brotzeit", recipe=None, status="keine Mahlzeit"),
             ]
         )
         filled, total = planning_service.meal_plan_completeness(camp_year)
         assert (filled, total) == (1, 2)
+
+
+def test_is_active_status() -> None:
+    assert planning_service.is_active_status("geplant") is True
+    assert planning_service.is_active_status(None) is True
+    assert planning_service.is_active_status("abgesagt") is False
+    assert planning_service.is_active_status(planning_service.NO_MEAL_STATUS) is False
 
 
 def test_generate_daily_meal_slots_creates_one_entry_per_day_and_meal_type(session_factory) -> None:

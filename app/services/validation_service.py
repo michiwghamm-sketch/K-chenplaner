@@ -7,7 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import CampYear, Ingredient, MealPlanEntry, Recipe, RecipeIngredient, ShoppingList
-from app.services import price_service, unit_service
+from app.services import planning_service, price_service, unit_service
 
 DUPLICATE_SIMILARITY_THRESHOLD = 0.88
 
@@ -68,7 +68,7 @@ def find_meal_plan_without_portions(session: Session, camp_year: CampYear) -> li
     return [
         entry
         for entry in camp_year.meal_plan_entries
-        if entry.recipe is not None and not entry.planned_portions and entry.status != "abgesagt"
+        if entry.recipe is not None and not entry.planned_portions and planning_service.is_active_status(entry.status)
     ]
 
 

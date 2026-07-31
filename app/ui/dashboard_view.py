@@ -395,7 +395,7 @@ class DashboardView(QWidget):
             self.kpi_plan_progress.set_value(f"{filled} / {total}" if total else "0 / 0")
             self.kpi_plan_progress.set_level("ok" if total and filled == total else "warnung" if total else "info")
 
-            active_entries = [e for e in camp_year.meal_plan_entries if e.status != "abgesagt"]
+            active_entries = [e for e in camp_year.meal_plan_entries if planning_service.is_active_status(e.status)]
             total_portions = sum(e.planned_portions or 0 for e in active_entries)
             self.kpi_portions.set_value(str(total_portions))
 

@@ -7,6 +7,7 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import CampYear, MealPlanEntry, Recipe, RecipeFeedback
+from app.services import planning_service
 
 QUANTITY_SUFFICIENT_OPTIONS = ("Unbekannt", "Ja, hat gereicht", "Zu wenig", "Zu viel")
 
@@ -19,11 +20,11 @@ def calculate_quantity_factor(planned_portions: int | None, cooked_portions: int
 
 
 def list_feedback_candidates(session: Session, camp_year: CampYear) -> list[MealPlanEntry]:
-    """Alle Mahlzeiten des Wochenplans, fuer die sinnvoll Feedback erfasst werden kann (Rezept gesetzt, nicht abgesagt)."""
+    """Alle Mahlzeiten des Wochenplans, fuer die sinnvoll Feedback erfasst werden kann (Rezept gesetzt, aktiv)."""
     entries = [
         entry
         for entry in camp_year.meal_plan_entries
-        if entry.recipe is not None and entry.status != "abgesagt"
+        if entry.recipe is not None and planning_service.is_active_status(entry.status)
     ]
     return sorted(entries, key=lambda entry: (entry.meal_date or date.min, entry.meal_type or ""))
 

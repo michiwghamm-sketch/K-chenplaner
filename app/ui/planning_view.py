@@ -191,6 +191,8 @@ class PlanningView(QWidget):
         lines = []
         for entry in dishes:
             if entry.recipe is None:
+                if entry.status == planning_service.NO_MEAL_STATUS:
+                    lines.append(f'<span style="color:{TEXT_MUTED};">– keine Mahlzeit –</span>')
                 continue
             text = escape(entry.recipe.name)
             if entry.planned_portions:
@@ -346,7 +348,7 @@ class PlanningView(QWidget):
                     entry.planned_portions = dish["planned_portions"]
                     entry.target_group = dish["target_group"]
                     entry.notes = dish["notes"]
-                elif recipe is not None or dish["planned_portions"] or dish["notes"]:
+                elif recipe is not None or dish["planned_portions"] or dish["notes"] or dish["status"] != "geplant":
                     entry = planning_service.add_meal_entry(
                         session,
                         camp_year,

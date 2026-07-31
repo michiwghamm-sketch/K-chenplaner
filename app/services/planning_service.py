@@ -10,8 +10,18 @@ from sqlalchemy.orm import Session
 from app.models import CampDay, CampYear, MealPlanEntry, Recipe
 from app.services import recipe_service
 
-ALLOWED_STATUSES = ("geplant", "bestellt", "gekocht", "abgesagt")
+NO_MEAL_STATUS = "keine Mahlzeit"
+ALLOWED_STATUSES = ("geplant", "bestellt", "gekocht", "abgesagt", NO_MEAL_STATUS)
+# Status-Werte, die einen Slot von allen Zaehlungen/Kosten/Warnungen ausschliessen: 'abgesagt'
+# (eine geplante Mahlzeit ist ausgefallen) und 'keine Mahlzeit' (an diesem Slot ist von vornherein
+# keine Mahlzeit vorgesehen, z. B. kein Abendessen am Anreisetag) - beides sind bewusst keine
+# "offenen" Slots, die noch ein Rezept brauchen.
+INACTIVE_STATUSES = ("abgesagt", NO_MEAL_STATUS)
 DEFAULT_MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen")
+
+
+def is_active_status(status: str | None) -> bool:
+    return status not in INACTIVE_STATUSES
 
 WEEKDAY_NAMES_DE = (
     "Montag",
@@ -95,8 +105,8 @@ def days_until_start(camp_year: CampYear, *, today: date | None = None) -> int |
 
 def meal_plan_completeness(camp_year: CampYear) -> tuple[int, int]:
     """(Anzahl Slots mit zugewiesenem Rezept, Anzahl aktiver Slots insgesamt) - fuer eine
-    'X von Y Mahlzeiten geplant'-Anzeige. Abgesagte Slots zaehlen nicht mit."""
-    active_entries = [entry for entry in camp_year.meal_plan_entries if entry.status != "abgesagt"]
+    'X von Y Mahlzeiten geplant'-Anzeige. Abgesagte und 'keine Mahlzeit'-Slots zaehlen nicht mit."""
+    active_entries = [entry for entry in camp_year.meal_plan_entries if is_active_status(entry.status)]
     filled = sum(1 for entry in active_entries if entry.recipe is not None)
     return filled, len(active_entries)
 
@@ -285,7 +295,7 @@ def day_summary(session: Session, camp_year: CampYear, day_date: date) -> DaySum
         (
             entry
             for entry in camp_year.meal_plan_entries
-            if entry.meal_date == day_date and entry.status != "abgesagt" and entry.recipe is not None
+            if entry.meal_date == day_date and is_active_status(entry.status) and entry.recipe is not None
         ),
         key=lambda entry: (
             DEFAULT_MEAL_TYPES.index(entry.meal_type) if entry.meal_type in DEFAULT_MEAL_TYPES else len(DEFAULT_MEAL_TYPES),
