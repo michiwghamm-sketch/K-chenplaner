@@ -294,6 +294,11 @@ class MealPlanEntry(Base):
     recipe_id: Mapped[Optional[int]] = mapped_column(ForeignKey("recipes.id"), index=True)
     planned_portions: Mapped[Optional[int]] = mapped_column(Integer)
     target_group: Mapped[Optional[str]] = mapped_column(String(100))
+    # Ernaehrungsbezug des Gerichts (Alle/Vegetarisch/Fleisch) - noetig, weil ein Slot mehrere
+    # Gerichte parallel haben kann (z. B. eine Fleisch- und eine Veggi-Variante); die erwartete
+    # Personenzahl fuer das jeweilige Gericht haengt dann nicht nur von target_group ab, sondern
+    # auch davon, fuer welche Ernaehrungsgruppe es gedacht ist (siehe planning_service.expected_attendees).
+    diet_scope: Mapped[Optional[str]] = mapped_column(String(50))
     status: Mapped[Optional[str]] = mapped_column(String(50))
     shopping_date: Mapped[Optional[date]] = mapped_column(Date)
     shopping_group: Mapped[Optional[str]] = mapped_column(String(100))

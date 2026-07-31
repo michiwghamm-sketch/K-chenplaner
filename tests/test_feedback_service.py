@@ -107,6 +107,68 @@ def test_list_feedback_candidates_groups_repeated_recipe_into_one_candidate(sess
         assert candidates[0].total_planned_portions == 60
 
 
+def test_list_feedback_candidates_sums_expected_attendees_from_target_group(session_factory) -> None:
+    """Anwesenden-Referenz je Kandidat: aus der Zielgruppe je Slot (Kinder/Betreuer/Alle) und den
+    Teilnehmerzahlen des Camp-Jahrs abgeleitet, ueber alle Vorkommen aufsummiert."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(
+            year=2026,
+            name="Zeltlager 2026",
+            participant_count_children=20,
+            participant_count_adults=5,
+            participant_count_total=25,
+        )
+        recipe = Recipe(name="Müsli", normalized_name="müsli")
+        session.add_all([camp_year, recipe])
+        session.flush()
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(
+                    meal_date=date(2026, 8, 1),
+                    meal_type="Frühstück",
+                    recipe=recipe,
+                    planned_portions=20,
+                    status="geplant",
+                    target_group="Kinder",
+                ),
+                MealPlanEntry(
+                    meal_date=date(2026, 8, 2),
+                    meal_type="Frühstück",
+                    recipe=recipe,
+                    planned_portions=20,
+                    status="geplant",
+                    target_group="Kinder",
+                ),
+            ]
+        )
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        candidates = feedback_service.list_feedback_candidates(session, camp_year)
+        assert len(candidates) == 1
+        assert candidates[0].expected_attendees_total == 40
+
+
+def test_list_feedback_candidates_leaves_expected_attendees_none_without_data(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        recipe = Recipe(name="Müsli", normalized_name="müsli")
+        session.add_all([camp_year, recipe])
+        session.flush()
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Frühstück", recipe=recipe, status="geplant")
+        )
+        session.flush()
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        candidates = feedback_service.list_feedback_candidates(session, camp_year)
+        assert candidates[0].expected_attendees_total is None
+
+
 def test_save_feedback_creates_one_feedback_per_recipe_and_year(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

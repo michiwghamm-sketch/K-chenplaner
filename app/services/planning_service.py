@@ -116,6 +116,42 @@ def update_camp_year(session: Session, camp_year: CampYear, *, year: int | None 
     return camp_year
 
 
+def _sum_counts(*counts: int | None) -> int | None:
+    """Summiert Teilnehmerzahlen, die einzeln fehlen koennen (None). Liefert None, wenn ALLE
+    Werte fehlen (unbekannt), sonst die Summe der vorhandenen (fehlende zaehlen als 0)."""
+    if all(count is None for count in counts):
+        return None
+    return sum(count or 0 for count in counts)
+
+
+def expected_attendees(entry: MealPlanEntry, camp_year: CampYear) -> int | None:
+    """Erwartete Personenzahl fuer ein Gericht, abgeleitet aus dessen Zielgruppe (Kinder/Betreuer/
+    Alle) UND Ernaehrungsbezug (Alle/Vegetarisch/Fleisch) sowie den Teilnehmerzahlen des Camp-Jahrs.
+
+    Noetig, weil ein Slot mehrere Gerichte parallel haben kann (z. B. Fleisch- und Veggi-Variante
+    fuer dasselbe Abendessen) - die erwartete Personenzahl fuer das Fleischgericht haengt dann von
+    der Anzahl Fleischesser ab, nicht von allen Anwesenden. Dient als Referenzwert im Feedback, um
+    Rueckmeldungen zur Menge ('zu wenig'/'zu viel') nicht nur an den geplanten Portionen, sondern
+    auch an der tatsaechlichen Personenzahl zu spiegeln."""
+    if entry.target_group == "Kinder":
+        if entry.diet_scope == "Vegetarisch":
+            return camp_year.participant_count_children_vegetarian
+        if entry.diet_scope == "Fleisch":
+            return camp_year.participant_count_children_meat
+        return camp_year.participant_count_children
+    if entry.target_group == "Betreuer":
+        if entry.diet_scope == "Vegetarisch":
+            return camp_year.participant_count_adults_vegetarian
+        if entry.diet_scope == "Fleisch":
+            return camp_year.participant_count_adults_meat
+        return camp_year.participant_count_adults
+    if entry.diet_scope == "Vegetarisch":
+        return _sum_counts(camp_year.participant_count_children_vegetarian, camp_year.participant_count_adults_vegetarian)
+    if entry.diet_scope == "Fleisch":
+        return _sum_counts(camp_year.participant_count_children_meat, camp_year.participant_count_adults_meat)
+    return camp_year.participant_count_total
+
+
 def days_until_start(camp_year: CampYear, *, today: date | None = None) -> int | None:
     """Tage bis Zeltlagerbeginn (negativ, wenn es schon begonnen hat). None ohne Startdatum."""
     if camp_year.start_date is None:
@@ -231,12 +267,15 @@ def set_meal_recipe(
     recipe: Recipe | None,
     planned_portions: int | None = None,
     target_group: str | None = None,
+    diet_scope: str | None = None,
 ) -> MealPlanEntry:
     entry.recipe = recipe
     if planned_portions is not None:
         entry.planned_portions = planned_portions
     if target_group is not None:
         entry.target_group = target_group
+    if diet_scope is not None:
+        entry.diet_scope = diet_scope
     return entry
 
 
@@ -268,6 +307,7 @@ def add_meal_entry(
     recipe: Recipe | None = None,
     planned_portions: int | None = None,
     target_group: str | None = None,
+    diet_scope: str | None = None,
 ) -> MealPlanEntry:
     """Legt ein weiteres Gericht in einem Tag/Mahlzeitart-Slot an, ohne bestehende Gerichte zu ersetzen."""
     entry = MealPlanEntry(
@@ -278,6 +318,7 @@ def add_meal_entry(
         recipe=recipe,
         planned_portions=planned_portions,
         target_group=target_group,
+        diet_scope=diet_scope,
         status="geplant",
     )
     session.add(entry)

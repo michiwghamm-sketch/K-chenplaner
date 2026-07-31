@@ -29,6 +29,7 @@ class FeedbackCandidate:
     recipe_id: int
     recipe_name: str
     occurrences: list[MealPlanEntry] = field(default_factory=list)
+    expected_attendees_total: int | None = None
 
     @property
     def occurrence_count(self) -> int:
@@ -61,6 +62,10 @@ def list_feedback_candidates(session: Session, camp_year: CampYear) -> list[Feed
         candidate.occurrences.append(entry)
 
     candidates = list(by_recipe.values())
+    for candidate in candidates:
+        attendee_counts = [planning_service.expected_attendees(entry, camp_year) for entry in candidate.occurrences]
+        if any(count is not None for count in attendee_counts):
+            candidate.expected_attendees_total = sum(count or 0 for count in attendee_counts)
     for candidate in candidates:
         candidate.occurrences.sort(key=lambda entry: (entry.meal_date or date.min, entry.meal_type or ""))
     candidates.sort(key=lambda c: (c.first_date or date.min, c.recipe_name))

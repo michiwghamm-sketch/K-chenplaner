@@ -115,6 +115,55 @@ def test_is_scheduled_entry_requires_a_real_date() -> None:
     assert planning_service.is_active_status(planning_service.NO_MEAL_STATUS) is False
 
 
+def test_expected_attendees_derives_from_target_group() -> None:
+    camp_year = CampYear(year=2026, participant_count_children=20, participant_count_adults=5, participant_count_total=25)
+
+    children_only = MealPlanEntry(meal_type="Frühstück", target_group="Kinder")
+    assert planning_service.expected_attendees(children_only, camp_year) == 20
+
+    adults_only = MealPlanEntry(meal_type="Frühstück", target_group="Betreuer")
+    assert planning_service.expected_attendees(adults_only, camp_year) == 5
+
+    everyone = MealPlanEntry(meal_type="Abendessen", target_group="Alle")
+    assert planning_service.expected_attendees(everyone, camp_year) == 25
+
+    unspecified = MealPlanEntry(meal_type="Abendessen", target_group=None)
+    assert planning_service.expected_attendees(unspecified, camp_year) == 25
+
+
+def test_expected_attendees_narrows_by_diet_scope_for_parallel_dishes() -> None:
+    """Wenn ein Slot ein Fleisch- und ein Veggi-Gericht parallel hat (zwei MealPlanEntry-Zeilen),
+    muss jedes Gericht nur auf seine eigene Ernaehrungsgruppe bezogen werden, nicht auf alle."""
+    camp_year = CampYear(
+        year=2026,
+        participant_count_children=20,
+        participant_count_adults=5,
+        participant_count_total=25,
+        participant_count_children_vegetarian=8,
+        participant_count_children_meat=12,
+        participant_count_adults_vegetarian=2,
+        participant_count_adults_meat=3,
+    )
+
+    meat_dish = MealPlanEntry(meal_type="Abendessen", target_group="Alle", diet_scope="Fleisch")
+    assert planning_service.expected_attendees(meat_dish, camp_year) == 15
+
+    veggie_dish = MealPlanEntry(meal_type="Abendessen", target_group="Alle", diet_scope="Vegetarisch")
+    assert planning_service.expected_attendees(veggie_dish, camp_year) == 10
+
+    kids_meat_dish = MealPlanEntry(meal_type="Mittagessen", target_group="Kinder", diet_scope="Fleisch")
+    assert planning_service.expected_attendees(kids_meat_dish, camp_year) == 12
+
+    kids_veggie_dish = MealPlanEntry(meal_type="Mittagessen", target_group="Kinder", diet_scope="Vegetarisch")
+    assert planning_service.expected_attendees(kids_veggie_dish, camp_year) == 8
+
+
+def test_expected_attendees_diet_scope_none_when_breakdown_missing() -> None:
+    camp_year = CampYear(year=2026, participant_count_children=20, participant_count_adults=5, participant_count_total=25)
+    meat_dish = MealPlanEntry(meal_type="Abendessen", target_group="Alle", diet_scope="Fleisch")
+    assert planning_service.expected_attendees(meat_dish, camp_year) is None
+
+
 def test_create_camp_year_stores_diet_breakdown_per_group(session_factory) -> None:
     with session_scope(session_factory) as session:
         planning_service.create_camp_year(

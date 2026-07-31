@@ -228,6 +228,8 @@ class PlanningView(QWidget):
                 text += f" ({entry.planned_portions})"
             if entry.target_group:
                 text += f" · {escape(entry.target_group)}"
+            if entry.diet_scope and entry.diet_scope != "Alle":
+                text += f" · {escape(entry.diet_scope)}"
 
             if entry.status == "abgesagt":
                 lines.append(f'<span style="color:{TEXT_MUTED};">{text} (abgesagt)</span>')
@@ -337,6 +339,7 @@ class PlanningView(QWidget):
                     "recipe_id": entry.recipe_id,
                     "planned_portions": entry.planned_portions or 0,
                     "target_group": entry.target_group or "",
+                    "diet_scope": entry.diet_scope or "",
                     "status": entry.status or "geplant",
                     "notes": entry.notes or "",
                 }
@@ -375,6 +378,7 @@ class PlanningView(QWidget):
                     entry.recipe = recipe
                     entry.planned_portions = dish["planned_portions"]
                     entry.target_group = dish["target_group"]
+                    entry.diet_scope = dish["diet_scope"]
                     entry.notes = dish["notes"]
                 elif recipe is not None or dish["planned_portions"] or dish["notes"] or dish["status"] != "geplant":
                     entry = planning_service.add_meal_entry(
@@ -385,6 +389,7 @@ class PlanningView(QWidget):
                         recipe=recipe,
                         planned_portions=dish["planned_portions"],
                         target_group=dish["target_group"],
+                        diet_scope=dish["diet_scope"],
                     )
                     entry.notes = dish["notes"]
                 else:

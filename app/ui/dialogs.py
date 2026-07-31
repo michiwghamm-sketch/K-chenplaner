@@ -1194,6 +1194,8 @@ class DayResponsibleDialog(QDialog):
 
 TARGET_GROUP_OPTIONS = ("Alle", "Kinder", "Betreuer")
 NO_TARGET_GROUP_LABEL = "- keine Angabe -"
+DIET_SCOPE_OPTIONS = ("Alle", "Vegetarisch", "Fleisch")
+NO_DIET_SCOPE_LABEL = "- keine Angabe -"
 
 
 class MealSlotDialog(QDialog):
@@ -1203,7 +1205,7 @@ class MealSlotDialog(QDialog):
     Veggi-Variante); jede Tabellenzeile entspricht einem Gericht.
     """
 
-    _COLUMNS = ("Rezept", "Portionen", "Zielgruppe", "Status", "Notizen")
+    _COLUMNS = ("Rezept", "Portionen", "Zielgruppe", "Ernährung", "Status", "Notizen")
 
     def __init__(
         self,
@@ -1226,7 +1228,7 @@ class MealSlotDialog(QDialog):
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
         # Das Rezept-Feld braucht deutlich mehr Platz als die anderen Spalten, sonst
         # sind Rezeptnamen in der Combobox nicht lesbar.
-        for column, width in enumerate((330, 90, 130, 120, 170)):
+        for column, width in enumerate((330, 90, 130, 130, 120, 170)):
             self.table.horizontalHeader().resizeSection(column, width)
         self.table.verticalHeader().setVisible(False)
 
@@ -1284,15 +1286,25 @@ class MealSlotDialog(QDialog):
         target_group_combo.setCurrentIndex(target_group_index if target_group_index >= 0 else 0)
         self.table.setCellWidget(row, 2, target_group_combo)
 
+        diet_scope_combo = QComboBox(self.table)
+        diet_scope_combo.addItem(NO_DIET_SCOPE_LABEL)
+        diet_scope_combo.addItems(DIET_SCOPE_OPTIONS)
+        current_diet_scope = dish["diet_scope"] if dish else ""
+        if current_diet_scope and current_diet_scope not in DIET_SCOPE_OPTIONS:
+            diet_scope_combo.addItem(current_diet_scope)
+        diet_scope_index = diet_scope_combo.findText(current_diet_scope) if current_diet_scope else 0
+        diet_scope_combo.setCurrentIndex(diet_scope_index if diet_scope_index >= 0 else 0)
+        self.table.setCellWidget(row, 3, diet_scope_combo)
+
         status_combo = QComboBox(self.table)
         status_combo.addItems(self._status_options)
         current_status = dish["status"] if dish else "geplant"
         status_index = status_combo.findText(current_status)
         status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
-        self.table.setCellWidget(row, 3, status_combo)
+        self.table.setCellWidget(row, 4, status_combo)
 
         notes_edit = QLineEdit(dish["notes"] if dish else "", self.table)
-        self.table.setCellWidget(row, 4, notes_edit)
+        self.table.setCellWidget(row, 5, notes_edit)
 
         # Widget-Hoehe (Combo/Spin/LineEdit) ist unabhaengig von der Spaltenbreite bekannt,
         # daher hier direkt und ohne Verzoegerung berechenbar (anders als bei Text mit
@@ -1315,15 +1327,18 @@ class MealSlotDialog(QDialog):
             recipe_combo = self.table.cellWidget(row, 0)
             portions_spin = self.table.cellWidget(row, 1)
             target_group_combo = self.table.cellWidget(row, 2)
-            status_combo = self.table.cellWidget(row, 3)
-            notes_edit = self.table.cellWidget(row, 4)
+            diet_scope_combo = self.table.cellWidget(row, 3)
+            status_combo = self.table.cellWidget(row, 4)
+            notes_edit = self.table.cellWidget(row, 5)
             target_group_text = target_group_combo.currentText()
+            diet_scope_text = diet_scope_combo.currentText()
             dishes.append(
                 {
                     "id": recipe_combo.property("entry_id"),
                     "recipe_id": recipe_combo.currentData(),
                     "planned_portions": portions_spin.value() or None,
                     "target_group": target_group_text if target_group_text != NO_TARGET_GROUP_LABEL else None,
+                    "diet_scope": diet_scope_text if diet_scope_text != NO_DIET_SCOPE_LABEL else None,
                     "status": status_combo.currentText(),
                     "notes": notes_edit.text().strip() or None,
                 }

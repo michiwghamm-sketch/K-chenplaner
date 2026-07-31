@@ -50,6 +50,7 @@ class FeedbackView(QWidget):
         self.context = context
         self._current_recipe_id: int | None = None
         self._current_total_planned_portions: int | None = None
+        self._current_expected_attendees: int | None = None
         self._build_ui()
         self.refresh()
 
@@ -73,8 +74,8 @@ class FeedbackView(QWidget):
         left = QWidget(self)
         left_layout = QVBoxLayout(left)
         left_layout.addWidget(QLabel("Im Wochenplan eingesetzte Rezepte", left))
-        self.meal_table = QTableWidget(0, 3, left)
-        self.meal_table.setHorizontalHeaderLabels(["Rezept", "Geplant", "Feedback"])
+        self.meal_table = QTableWidget(0, 4, left)
+        self.meal_table.setHorizontalHeaderLabels(["Rezept", "Geplant", "Anwesend", "Feedback"])
         self.meal_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.meal_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.meal_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -113,7 +114,7 @@ class FeedbackView(QWidget):
         self.what_to_change_edit.setFixedHeight(50)
 
         form.addRow("Wie kam es an? (1-5)", self.rating_spin)
-        form.addRow("Hat die Menge gereicht?", self.quantity_sufficient_combo)
+        form.addRow("Hat die Menge gereicht? (zu wenig / zu viel)", self.quantity_sufficient_combo)
         form.addRow("Portionen gekocht (insgesamt)", self.cooked_spin)
         form.addRow("Mengenfaktor nächstes Mal", self.factor_line)
         form.addRow("Restmenge", self.leftover_qty_spin)
@@ -174,18 +175,23 @@ class FeedbackView(QWidget):
                 recipe_item.setData(1000, candidate.recipe_id)
                 self.meal_table.setItem(row, 0, recipe_item)
                 self.meal_table.setItem(row, 1, QTableWidgetItem(_format_occurrences(candidate)))
+                attendees_text = (
+                    f"{candidate.expected_attendees_total} Pers." if candidate.expected_attendees_total is not None else "–"
+                )
+                self.meal_table.setItem(row, 2, QTableWidgetItem(attendees_text))
 
                 feedback = feedback_service.get_feedback(session, camp_year.id, candidate.recipe_id)
                 has_feedback = feedback is not None and feedback.rating is not None
                 status_item = QTableWidgetItem("Erledigt" if has_feedback else "Offen")
                 status_item.setForeground(QColor(COLOR_OK if has_feedback else TEXT_MUTED))
-                self.meal_table.setItem(row, 2, status_item)
+                self.meal_table.setItem(row, 3, status_item)
 
     def _on_meal_selected(self) -> None:
         row = self.meal_table.currentRow()
         if row < 0:
             self._current_recipe_id = None
             self._current_total_planned_portions = None
+            self._current_expected_attendees = None
             self._clear_form()
             self._set_form_enabled(False)
             return
@@ -203,9 +209,15 @@ class FeedbackView(QWidget):
                 None,
             )
             self._current_total_planned_portions = candidate.total_planned_portions if candidate else None
+            self._current_expected_attendees = candidate.expected_attendees_total if candidate else None
             occurrence_text = _format_occurrences(candidate) if candidate else ""
-            portions_text = f" (insgesamt geplant: {self._current_total_planned_portions} Portionen)" if self._current_total_planned_portions else ""
-            self.meal_info_label.setText(f"{recipe.name} - {occurrence_text}{portions_text}")
+            portions_text = f" · geplant: {self._current_total_planned_portions} Portionen" if self._current_total_planned_portions else ""
+            attendees_text = (
+                f" · anwesend lt. Teilnehmerzahlen: {self._current_expected_attendees} Personen"
+                if self._current_expected_attendees is not None
+                else ""
+            )
+            self.meal_info_label.setText(f"{recipe.name} - {occurrence_text}{portions_text}{attendees_text}")
 
             feedback = feedback_service.get_feedback(session, camp_year.id, recipe.id)
             self.rating_spin.setValue(feedback.rating if feedback and feedback.rating else 1)
