@@ -65,17 +65,36 @@ UNIT_FACTORS = {
 }
 
 
+def prefetch_prices_by_ingredient(session: Session, ingredient_ids) -> dict[int, list[IngredientPrice]]:
+    """Laedt die Preise mehrerer Zutaten in EINER Abfrage statt einer Einzelabfrage je Zutat -
+    fuer find_best_price()-Aufrufe in Schleifen ueber viele Rezepte/Zutaten (siehe
+    stats_service.camp_year_costs & Co.), wo eine Cloud-Datenbank sonst spuerbar langsam wird."""
+    ids = set(ingredient_ids)
+    if not ids:
+        return {}
+    rows = session.execute(select(IngredientPrice).where(IngredientPrice.ingredient_id.in_(ids))).scalars().all()
+    lookup: dict[int, list[IngredientPrice]] = {}
+    for row in rows:
+        lookup.setdefault(row.ingredient_id, []).append(row)
+    return lookup
+
+
 def find_best_price(
     session: Session,
     ingredient_id: int,
     *,
     year: int | None = None,
     fallback_latest: bool = True,
+    prices: list[IngredientPrice] | None = None,
 ) -> IngredientPrice | None:
-    """Bester Preis fuer eine Zutat: exakter Jahrestreffer, sonst der neueste bekannte Preis."""
-    prices = session.execute(
-        select(IngredientPrice).where(IngredientPrice.ingredient_id == ingredient_id)
-    ).scalars().all()
+    """Bester Preis fuer eine Zutat: exakter Jahrestreffer, sonst der neueste bekannte Preis.
+
+    `prices` kann vorab per prefetch_prices_by_ingredient() geladen werden, um beim Aufruf in
+    einer Schleife die sonst uebliche Einzelabfrage pro Zutat zu vermeiden."""
+    if prices is None:
+        prices = session.execute(
+            select(IngredientPrice).where(IngredientPrice.ingredient_id == ingredient_id)
+        ).scalars().all()
     if not prices:
         return None
 

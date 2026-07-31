@@ -5,10 +5,15 @@ from dataclasses import dataclass
 from decimal import Decimal
 
 from sqlalchemy import select
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 
-from app.models import CampYear, Recipe
-from app.services import planning_service, recipe_service
+from app.models import CampYear, MealPlanEntry, Recipe, RecipeIngredient
+from app.services import planning_service, price_service, recipe_service
+
+# Eager-Load-Pfad fuer Recipe.ingredients samt der fuer calculate_recipe_cost() benoetigten
+# Ingredient/Component-Namen - vermeidet eine Lazy-Load-Abfrage pro Zutat/Rezeptzutat, die bei
+# einer Cloud-Datenbank (statt lokalem SQLite) in Schleifen ueber viele Rezepte spuerbar wird.
+_RECIPE_INGREDIENTS_EAGER_LOAD = selectinload(Recipe.ingredients)
 
 UNKNOWN_DIET_TYPE_LABEL = "Ohne Angabe"
 
@@ -38,7 +43,7 @@ def most_planned_recipes(session: Session, *, limit: int = 8, active_only: bool 
     (nicht abgesagt, nicht 'keine Mahlzeit') eingeplant ist - ein Rezept, das in einer Woche
     fuenfmal auf dem Plan steht, zaehlt fuer dieses Jahr trotzdem nur einmal.
     """
-    stmt = select(Recipe)
+    stmt = select(Recipe).options(selectinload(Recipe.meal_plan_entries))
     if active_only:
         stmt = stmt.where(Recipe.active.is_(True))
     recipes = session.execute(stmt).scalars().all()
@@ -70,7 +75,31 @@ class CampYearCost:
 
 def camp_year_costs(session: Session) -> list[CampYearCost]:
     """Kalkulierte Gesamtkosten je Camp-Jahr (Rezeptkosten je geplanter Mahlzeit, nicht abgesagte Slots)."""
-    camp_years = session.execute(select(CampYear).order_by(CampYear.year.desc())).scalars().all()
+    entries_recipe = selectinload(CampYear.meal_plan_entries).selectinload(MealPlanEntry.recipe)
+    camp_years = (
+        session.execute(
+            select(CampYear)
+            .order_by(CampYear.year.desc())
+            .options(
+                entries_recipe.selectinload(Recipe.ingredients).selectinload(RecipeIngredient.ingredient),
+                entries_recipe.selectinload(Recipe.ingredients).selectinload(RecipeIngredient.component),
+            )
+        )
+        .scalars()
+        .all()
+    )
+
+    price_lookup = price_service.prefetch_prices_by_ingredient(
+        session,
+        (
+            item.ingredient_id
+            for camp_year in camp_years
+            for entry in camp_year.meal_plan_entries
+            if entry.recipe is not None
+            for item in entry.recipe.ingredients
+        ),
+    )
+
     results: list[CampYearCost] = []
     for camp_year in camp_years:
         active_entries = [entry for entry in camp_year.meal_plan_entries if planning_service.is_scheduled_entry(entry)]
@@ -80,7 +109,11 @@ def camp_year_costs(session: Session) -> list[CampYearCost]:
             if entry.recipe is None or not entry.planned_portions:
                 continue
             cost_result = recipe_service.calculate_recipe_cost(
-                session, entry.recipe, portions=entry.planned_portions, year=camp_year.year
+                session,
+                entry.recipe,
+                portions=entry.planned_portions,
+                year=camp_year.year,
+                price_lookup=price_lookup,
             )
             total_cost += cost_result.total_cost
         results.append(
@@ -115,13 +148,28 @@ def recipe_cost_ranking_for_camp_year(session: Session, camp_year: CampYear) -> 
         for entry in camp_year.meal_plan_entries
         if entry.recipe_id is not None and planning_service.is_scheduled_entry(entry)
     }
+    if not recipe_ids:
+        return []
+
+    recipes = (
+        session.execute(
+            select(Recipe)
+            .where(Recipe.id.in_(recipe_ids))
+            .options(
+                _RECIPE_INGREDIENTS_EAGER_LOAD.selectinload(RecipeIngredient.ingredient),
+                _RECIPE_INGREDIENTS_EAGER_LOAD.selectinload(RecipeIngredient.component),
+            )
+        )
+        .scalars()
+        .all()
+    )
+    price_lookup = price_service.prefetch_prices_by_ingredient(
+        session, (item.ingredient_id for recipe in recipes for item in recipe.ingredients)
+    )
 
     ranking: list[RecipeCostRank] = []
-    for recipe_id in recipe_ids:
-        recipe = session.get(Recipe, recipe_id)
-        if recipe is None:
-            continue
-        result = recipe_service.calculate_recipe_cost(session, recipe, year=camp_year.year)
+    for recipe in recipes:
+        result = recipe_service.calculate_recipe_cost(session, recipe, year=camp_year.year, price_lookup=price_lookup)
         if result.cost_per_portion is None or result.missing_price_ingredients:
             continue
         ranking.append(
@@ -147,17 +195,25 @@ class AverageRecipeCost:
 def average_recipe_cost(session: Session, *, active_only: bool = True) -> AverageRecipeCost:
     """Durchschnittliche Rezeptkosten bei Standardportionen, ueber alle Rezepte mit mind.
     einer bepreisten Zutat (nutzt je Zutat den neuesten bekannten Preis, jahresunabhaengig)."""
-    stmt = select(Recipe)
+    stmt = select(Recipe).options(
+        _RECIPE_INGREDIENTS_EAGER_LOAD.selectinload(RecipeIngredient.ingredient),
+        _RECIPE_INGREDIENTS_EAGER_LOAD.selectinload(RecipeIngredient.component),
+    )
     if active_only:
         stmt = stmt.where(Recipe.active.is_(True))
     recipes = session.execute(stmt).scalars().all()
+    price_lookup = price_service.prefetch_prices_by_ingredient(
+        session, (item.ingredient_id for recipe in recipes for item in recipe.ingredients)
+    )
 
     total_costs: list[Decimal] = []
     per_portion_costs: list[Decimal] = []
     for recipe in recipes:
         if not recipe.ingredients:
             continue
-        cost_result = recipe_service.calculate_recipe_cost(session, recipe, portions=recipe.default_portions or 1)
+        cost_result = recipe_service.calculate_recipe_cost(
+            session, recipe, portions=recipe.default_portions or 1, price_lookup=price_lookup
+        )
         if cost_result.total_cost > 0:
             total_costs.append(cost_result.total_cost)
         if cost_result.cost_per_portion is not None and cost_result.cost_per_portion > 0:

@@ -352,8 +352,15 @@ class DaySummary:
     has_missing_prices: bool = False
 
 
-def day_summary(session: Session, camp_year: CampYear, day_date: date) -> DaySummary:
-    """Kalkulierte Auswertung eines einzelnen Tages: Gerichte, Portionen und Kosten (nicht abgesagte Gerichte)."""
+def day_summary(
+    session: Session, camp_year: CampYear, day_date: date, *, price_lookup: dict[int, list] | None = None
+) -> DaySummary:
+    """Kalkulierte Auswertung eines einzelnen Tages: Gerichte, Portionen und Kosten (nicht abgesagte Gerichte).
+
+    `price_lookup` kann vorab per price_service.prefetch_prices_by_ingredient() geladen werden -
+    wichtig fuer Aufrufer, die day_summary() in einer Schleife ueber mehrere Tage aufrufen (siehe
+    planning_view.PlanningView._populate_grid), sonst fragt jede Zutat einzeln bei der Datenbank
+    nach (bei einer Cloud-DB spuerbar langsam)."""
     entries = sorted(
         (
             entry
@@ -373,7 +380,7 @@ def day_summary(session: Session, camp_year: CampYear, day_date: date) -> DaySum
         has_missing_prices = False
         if portions:
             cost_result = recipe_service.calculate_recipe_cost(
-                session, entry.recipe, portions=portions, year=camp_year.year
+                session, entry.recipe, portions=portions, year=camp_year.year, price_lookup=price_lookup
             )
             cost = cost_result.total_cost
             has_missing_prices = bool(cost_result.missing_price_ingredients)

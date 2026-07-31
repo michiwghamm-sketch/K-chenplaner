@@ -18,10 +18,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 from sqlalchemy import select
+from sqlalchemy.orm import selectinload
 
 from app.context import AppContext
-from app.models import CampYear, MealPlanEntry, Recipe
-from app.services import export_service, planning_service, stats_service
+from app.models import CampYear, MealPlanEntry, Recipe, RecipeIngredient
+from app.services import export_service, planning_service, price_service, stats_service
 from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealSlotDialog, error_dialog, info_dialog
 from app.ui.theme import ORANGE, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, RankingEntry, RankingList
@@ -129,7 +130,15 @@ class PlanningView(QWidget):
 
         if camp_year_id is not None:
             with self.context.session() as session:
-                camp_year = session.get(CampYear, camp_year_id)
+                entries_recipe = selectinload(CampYear.meal_plan_entries).selectinload(MealPlanEntry.recipe)
+                camp_year = session.get(
+                    CampYear,
+                    camp_year_id,
+                    options=[
+                        entries_recipe.selectinload(Recipe.ingredients).selectinload(RecipeIngredient.ingredient),
+                        entries_recipe.selectinload(Recipe.ingredients).selectinload(RecipeIngredient.component),
+                    ],
+                )
                 if camp_year is not None:
                     self._populate_grid(session, camp_year)
                     self._reload_cost_ranking(session, camp_year)
@@ -162,6 +171,18 @@ class PlanningView(QWidget):
         for col in range(len(self._day_dates)):
             self.table.setColumnWidth(col, DAY_COLUMN_WIDTH)
 
+        # Preise fuer alle in dieser Woche geplanten Rezepte einmalig vorladen (nicht pro Tag),
+        # sonst fragt day_summary() unten fuer jede Zutat jedes Tages einzeln nach.
+        price_lookup = price_service.prefetch_prices_by_ingredient(
+            session,
+            (
+                item.ingredient_id
+                for entry in camp_year.meal_plan_entries
+                if entry.recipe is not None
+                for item in entry.recipe.ingredients
+            ),
+        )
+
         camp_days_by_date = {camp_day.day_date: camp_day for camp_day in camp_year.camp_days}
         summary_row = len(ROW_LABELS) - 1
 
@@ -175,7 +196,7 @@ class PlanningView(QWidget):
                 label = self._build_dish_cell(dishes)
                 self.table.setCellWidget(row, col, label)
 
-            summary = planning_service.day_summary(session, camp_year, day)
+            summary = planning_service.day_summary(session, camp_year, day, price_lookup=price_lookup)
             summary_label = self._build_summary_cell(summary)
             self.table.setCellWidget(summary_row, col, summary_label)
 

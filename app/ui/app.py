@@ -87,7 +87,9 @@ class MainWindow(QMainWindow):
             db_status_text = "Datenbank: Cloud (Neon Postgres)"
         status_bar.showMessage(db_status_text)
 
-        self._show_page("dashboard")
+        # refresh=False: DashboardView hat sich in seinem eigenen __init__ bereits geladen,
+        # ein erneutes Laden hier waere fuer den allerersten Seitenwechsel reine Verschwendung.
+        self._show_page("dashboard", refresh=False)
 
         # Verzoegert und im Hintergrund, damit ein langsames/fehlendes Internet den Start nie
         # ausbremst - bei Erfolg nur benachrichtigen, wenn es wirklich eine neuere Version gibt.
@@ -133,12 +135,12 @@ class MainWindow(QMainWindow):
             available.y() + (available.height() - height) // 2,
         )
 
-    def _show_page(self, key: str) -> None:
+    def _show_page(self, key: str, *, refresh: bool = True) -> None:
         page = self._pages.get(key)
         if page is None:
             return
         self.stack.setCurrentWidget(page)
-        if hasattr(page, "refresh"):
+        if refresh and hasattr(page, "refresh"):
             page.refresh()
 
         # Bei programmatischer Navigation (z. B. Klick auf einen Dashboard-Hinweis) muss die

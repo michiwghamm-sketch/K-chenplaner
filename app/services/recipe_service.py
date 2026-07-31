@@ -66,8 +66,21 @@ def scale_recipe(recipe: Recipe, target_portions: int) -> list[ScaledIngredientL
     return lines
 
 
-def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | None = None, year: int | None = None) -> RecipeCostResult:
-    """Berechnet Gesamtkosten, Kosten pro Portion und die Kosten je Zutat anhand der besten bekannten Preise."""
+def calculate_recipe_cost(
+    session: Session,
+    recipe: Recipe,
+    *,
+    portions: int | None = None,
+    year: int | None = None,
+    price_lookup: dict[int, list] | None = None,
+) -> RecipeCostResult:
+    """Berechnet Gesamtkosten, Kosten pro Portion und die Kosten je Zutat anhand der besten bekannten Preise.
+
+    `price_lookup` kann vorab per price_service.prefetch_prices_by_ingredient() geladen werden -
+    wichtig, wenn diese Funktion in einer Schleife ueber viele Rezepte aufgerufen wird (siehe
+    stats_service), sonst fragt jede Zutat einzeln bei der Datenbank nach (bei einer Cloud-DB
+    spuerbar langsam).
+    """
     target_portions = portions or recipe.default_portions or 1
     factor = Decimal(target_portions)
 
@@ -81,6 +94,7 @@ def calculate_recipe_cost(session: Session, recipe: Recipe, *, portions: int | N
             item.ingredient_id,
             year=year,
             fallback_latest=year is None,
+            prices=price_lookup.get(item.ingredient_id) if price_lookup is not None else None,
         )
         scaled_quantity = (item.quantity * factor).quantize(Decimal("0.001"))
         component_name = item.component.name if item.component else UNASSIGNED_COMPONENT_LABEL
