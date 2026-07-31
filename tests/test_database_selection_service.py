@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import time
+
 import pytest
 
 from app.config import AppConfig
@@ -91,6 +93,7 @@ def test_reachable_cloud_with_pending_offline_changes_stays_offline(tmp_path, cl
 
     cloud_engine = make_engine(cloud_config)
     sync_service.refresh_local_cache_from_cloud(cache_engine, cloud_engine, state_path)
+    time.sleep(2.5)  # deutlich ueber der Stale-Cache-Toleranz, damit die Aenderung erkannt wird
 
     with session_scope(create_session_factory(cache_engine)) as session:
         session.add(Ingredient(name="Offline-Zutat", normalized_name="offline-zutat"))
