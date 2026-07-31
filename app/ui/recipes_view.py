@@ -193,15 +193,17 @@ class RecipesView(QWidget):
         content_row.setSpacing(16)
 
         table_column = QVBoxLayout()
-        self.ingredients_table = QTableWidget(0, 5, tab)
-        self.ingredients_table.setHorizontalHeaderLabels(["Zutat", "Menge", "Einheit", "Preis/Einheit", "Gesamtpreis"])
+        self.ingredients_table = QTableWidget(0, 6, tab)
+        self.ingredients_table.setHorizontalHeaderLabels(
+            ["Zutat", "Menge", "Gesamtmenge", "Einheit", "Preis/Einheit", "Gesamtpreis"]
+        )
         self.ingredients_table.verticalHeader().setVisible(False)
         self.ingredients_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
         self.ingredients_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         header = self.ingredients_table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.ResizeMode.Interactive)
         self.ingredients_table.setColumnWidth(0, 200)
-        for col in range(1, 5):
+        for col in range(1, 6):
             header.setSectionResizeMode(col, QHeaderView.ResizeMode.ResizeToContents)
         header.setStretchLastSection(False)
         self.ingredients_table.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -507,6 +509,11 @@ class RecipesView(QWidget):
         if unassigned_items or not ordered_groups:
             ordered_groups.append((None, unassigned_items))
 
+        # Dieselbe Portionenzahl wie die bereits berechneten Kosten verwenden (cost_result kann
+        # z. B. ueber cost_portions_spin von der Standardportionenzahl des Rezepts abweichen) -
+        # sonst wuerden Gesamtmenge und Gesamtpreis in derselben Zeile zu unterschiedlichen
+        # Portionenzahlen gehoeren.
+        portions_for_totals = cost_result.portions if cost_result is not None else (recipe.default_portions or 1)
         banding_index = 0
         for component, items in ordered_groups:
             self._add_band_row(table, component)
@@ -514,7 +521,9 @@ class RecipesView(QWidget):
                 self._add_empty_row(table)
                 continue
             for item in items:
-                self._add_ingredient_row(table, item, lines_by_item_id.get(item.id), banding_index)
+                self._add_ingredient_row(
+                    table, item, lines_by_item_id.get(item.id), banding_index, portions_for_totals
+                )
                 banding_index += 1
 
         table.resizeRowsToContents()
@@ -522,8 +531,8 @@ class RecipesView(QWidget):
     def _add_band_row(self, table: QTableWidget, component) -> None:
         row = table.rowCount()
         table.insertRow(row)
-        table.setSpan(row, 0, 1, 3)
-        table.setSpan(row, 3, 1, 2)
+        table.setSpan(row, 0, 1, 4)
+        table.setSpan(row, 4, 1, 2)
 
         name = component.name if component is not None else recipe_service.UNASSIGNED_COMPONENT_LABEL
         name_label = QLabel(f"  {name}", table)
@@ -550,13 +559,13 @@ class RecipesView(QWidget):
             delete_button.setStyleSheet(band_button_style)
             delete_button.clicked.connect(lambda _checked=False, comp_id=component.id: self._delete_component(comp_id))
             button_layout.addWidget(delete_button)
-        table.setCellWidget(row, 3, button_bar)
+        table.setCellWidget(row, 4, button_bar)
         table.setRowHeight(row, 32)
 
     def _add_empty_row(self, table: QTableWidget) -> None:
         row = table.rowCount()
         table.insertRow(row)
-        table.setSpan(row, 0, 1, 5)
+        table.setSpan(row, 0, 1, 6)
         empty_item = QTableWidgetItem("Noch keine Zutaten in diesem Teilstück.")
         empty_item.setForeground(QColor(TEXT_MUTED))
         font = empty_item.font()
@@ -564,7 +573,7 @@ class RecipesView(QWidget):
         empty_item.setFont(font)
         table.setItem(row, 0, empty_item)
 
-    def _add_ingredient_row(self, table: QTableWidget, item, line, banding_index: int) -> None:
+    def _add_ingredient_row(self, table: QTableWidget, item, line, banding_index: int, portions_for_totals: int) -> None:
         row = table.rowCount()
         table.insertRow(row)
 
@@ -577,6 +586,13 @@ class RecipesView(QWidget):
 
         quantity_item = QTableWidgetItem("nach Geschmack" if is_to_taste else str(item.quantity))
         quantity_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
+
+        # line.quantity ist bereits die auf portions_for_totals hochgerechnete Menge (siehe
+        # calculate_recipe_cost) - direkt uebernehmen statt erneut zu multiplizieren, damit
+        # Rundung konsistent zum angezeigten Gesamtpreis bleibt.
+        total_quantity = line.quantity if line is not None else item.quantity * portions_for_totals
+        total_quantity_item = QTableWidgetItem("" if is_to_taste else str(total_quantity))
+        total_quantity_item.setTextAlignment(int(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter))
 
         unit_item = QTableWidgetItem("" if is_to_taste else item.unit)
         unit_item.setTextAlignment(int(Qt.AlignmentFlag.AlignCenter))
@@ -591,14 +607,15 @@ class RecipesView(QWidget):
             cost_item.setForeground(QColor(COLOR_CRITICAL))
 
         background = QColor(ORANGE_TINT) if banding_index % 2 == 1 else QColor("#FFFFFF")
-        for cell_item in (name_item, quantity_item, unit_item, price_item, cost_item):
+        for cell_item in (name_item, quantity_item, total_quantity_item, unit_item, price_item, cost_item):
             cell_item.setBackground(background)
 
         table.setItem(row, 0, name_item)
         table.setItem(row, 1, quantity_item)
-        table.setItem(row, 2, unit_item)
-        table.setItem(row, 3, price_item)
-        table.setItem(row, 4, cost_item)
+        table.setItem(row, 2, total_quantity_item)
+        table.setItem(row, 3, unit_item)
+        table.setItem(row, 4, price_item)
+        table.setItem(row, 5, cost_item)
 
     def _fit_table_height(self, table: QTableWidget) -> None:
         table.resizeRowsToContents()
