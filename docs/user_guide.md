@@ -24,7 +24,7 @@ Die Seitenleiste links schaltet zwischen den Modulen um:
 - **Preise** - aktuelle Preise je Zutat und Jahr, fehlende Preise, Uebernahme aus Vorjahr
 - **Einkaufsliste** - aus der Jahresplanung generierte Einkaufsliste, Status je Position, CSV-/Excel-Export
 - **Feedback** - Wochenplan einer Zeltlagerwoche durchgehen und je Mahlzeit Rueckmeldung erfassen
-- **Import/Export** - Excel erneut importieren, Rezepte exportieren, Backup/Restore, Datenbankpruefung
+- **Export & Backup** - Rezepte exportieren, Backup/Restore, Datenbankpruefung
 - **Einstellungen** - Datenbankpfad, Laufwerkswarnung, Version
 
 ## Der Wochenplan

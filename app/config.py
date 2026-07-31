@@ -12,7 +12,6 @@ DEFAULT_DB_FILENAME = "zeltlager_kueche.sqlite3"
 class AppConfig:
     project_root: Path
     data_dir: Path
-    docs_dir: Path
     instance_dir: Path
     database_path: Path
     database_url: str
@@ -29,7 +28,6 @@ class AppConfig:
         return cls(
             project_root=root,
             data_dir=root / "data",
-            docs_dir=root / "docs",
             instance_dir=instance_dir,
             database_path=resolved_database_path,
             database_url=build_sqlite_url(resolved_database_path),

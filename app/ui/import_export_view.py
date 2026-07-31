@@ -7,21 +7,19 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
-    QLabel,
-    QPlainTextEdit,
     QPushButton,
     QVBoxLayout,
     QWidget,
 )
 
 from app.context import AppContext
-from app.services import backup_service, export_service, import_service, recipe_service
+from app.services import backup_service, export_service, recipe_service
 from app.ui.dialogs import confirm_dialog, error_dialog, info_dialog
 from app.ui.widgets import PageHeader
 
 
 class ImportExportView(QWidget):
-    """Excel-Import, Datenexport, Backup und Restore."""
+    """Datenexport, Backup und Restore."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -31,18 +29,7 @@ class ImportExportView(QWidget):
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
-        layout.addWidget(PageHeader("Import/Export", "Excel-Import, Datenexport, Backup und Restore"))
-
-        import_group = QGroupBox("Excel-Import", self)
-        import_layout = QVBoxLayout(import_group)
-        import_button = QPushButton("Excel-Datei importieren", import_group)
-        import_button.clicked.connect(self._run_import)
-        self.import_report_text = QPlainTextEdit(import_group)
-        self.import_report_text.setReadOnly(True)
-        self.import_report_text.setFixedHeight(140)
-        import_layout.addWidget(import_button)
-        import_layout.addWidget(self.import_report_text)
-        layout.addWidget(import_group)
+        layout.addWidget(PageHeader("Export & Backup", "Datenexport, Backup und Restore"))
 
         export_group = QGroupBox("Export", self)
         export_layout = QHBoxLayout(export_group)
@@ -77,45 +64,12 @@ class ImportExportView(QWidget):
         layout.addStretch(1)
 
     def refresh(self) -> None:
-        report = import_service.get_last_import_report(self.context.config)
-        if report:
-            self._render_report(report)
         self._reload_backup_combo()
-
-    def _render_report(self, report: dict) -> None:
-        lines = [f"Quelle: {report.get('source_file', '-')}", f"Import am: {report.get('generated_at', '-')}", ""]
-        for key, value in report.get("counters", {}).items():
-            lines.append(f"{key}: {value}")
-        issues = report.get("issues", [])
-        lines.append("")
-        lines.append(f"Issues: {len(issues)}")
-        self.import_report_text.setPlainText("\n".join(lines))
 
     def _reload_backup_combo(self) -> None:
         self.backup_combo.clear()
         for backup_path in backup_service.list_backups(self.context.config):
             self.backup_combo.addItem(backup_path.name, str(backup_path))
-
-    def _run_import(self) -> None:
-        if not confirm_dialog(
-            self,
-            "Excel importieren",
-            "Der Import liest die Excel-Datei erneut ein und ergänzt die Datenbank. "
-            "Bestehende Daten werden dabei nicht überschrieben. Fortfahren?",
-        ):
-            return
-        try:
-            counters, issues, excel_path = import_service.run_excel_import(self.context.config)
-        except FileNotFoundError as exc:
-            error_dialog(self, str(exc))
-            return
-        lines = [f"Quelle: {excel_path}", ""]
-        for key, value in vars(counters).items():
-            lines.append(f"{key}: {value}")
-        lines.append("")
-        lines.append(f"Issues: {len(issues)}")
-        self.import_report_text.setPlainText("\n".join(lines))
-        info_dialog(self, "Import abgeschlossen. Details siehe Bericht.")
 
     def _export_recipes(self) -> None:
         path, _ = QFileDialog.getSaveFileName(self, "Rezepte exportieren", "rezepte.csv", "CSV-Dateien (*.csv)")

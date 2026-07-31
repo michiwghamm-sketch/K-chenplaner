@@ -137,7 +137,7 @@ Die Services unter `app/services/` kapseln alle Berechnungen und Validierungen, 
 | `feedback_service` | `list_feedback_candidates` listet alle Mahlzeiten eines Camp-Jahrs mit Rezept auf; `save_meal_feedback`/`get_or_create_meal_feedback` verwalten das Feedback je Mahlzeit-Slot; `calculate_quantity_factor` = gekochte / geplante Portionen |
 | `validation_service` | fehlende Preise/Einheiten, Rezepte ohne Zutaten, Planung ohne Portionen, 0-Preis-Positionen, moegliche Zutaten-Dubletten (Aehnlichkeitsvergleich via `difflib`) |
 | `backup_service` | zeitgestempeltes Backup, Restore nur mit expliziter Bestaetigung, SQLite-Integritaetspruefung |
-| `import_service` / `export_service` | UI-Wrapper fuer den Excel-Import bzw. CSV/Excel/PDF-Export; `export_recipe_to_pdf` erzeugt eine nach Teilstuecken gegliederte, Kolping-gebrandete Rezeptkarte (reportlab) mit Logo aus `app/assets/kolping_logo.jpeg` |
+| `export_service` | CSV/Excel/PDF-Export; `export_recipe_to_pdf` erzeugt eine nach Teilstuecken gegliederte, Kolping-gebrandete Rezeptkarte (reportlab) mit Logo aus `app/assets/kolping_logo.jpeg` |
 
 Alle Services sind reine Python-Funktionen ohne UI-Abhaengigkeit und werden in `tests/` mit pytest abgedeckt.
 

@@ -10,7 +10,7 @@ NAV_ITEMS = (
     ("ingredients", "Zutaten"),
     ("shopping", "Einkaufsliste"),
     ("feedback", "Feedback"),
-    ("import_export", "Import/Export"),
+    ("import_export", "Export & Backup"),
     ("settings", "Einstellungen"),
 )
 
