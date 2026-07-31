@@ -617,6 +617,27 @@ def import_feedback_sheet(ws: Worksheet, session, recipe_cache: dict[str, Recipe
             issues.append(ImportIssueRecord("warning", ws.title, f"B{row}", "Feedback-Rezept wurde nicht gefunden.", str(recipe_name)))
             continue
 
+        # Ein Feedback gilt pro (Camp-Jahr, Rezept), nicht mehr je Mahlzeit-Slot - eine zweite Zeile
+        # fuer dasselbe Jahr/Rezept in der Excel-Tabelle wuerde sonst am Unique-Constraint scheitern.
+        session.flush()
+        existing_feedback = session.execute(
+            select(RecipeFeedback).where(
+                RecipeFeedback.camp_year_id == camp_year.id, RecipeFeedback.recipe_id == recipe.id
+            )
+        ).scalar_one_or_none()
+        if existing_feedback is not None:
+            issues.append(
+                ImportIssueRecord(
+                    "warning",
+                    ws.title,
+                    f"A{row}",
+                    "Weiteres Feedback fuer dieselbe Jahr/Rezept-Kombination gefunden - uebersprungen "
+                    "(ein Feedback gilt jetzt pro Rezept und Jahr, nicht mehr je Mahlzeit-Slot).",
+                    f"{recipe_name} ({year})",
+                )
+            )
+            continue
+
         repeat_value = ws.cell(row=row, column=4).value
         repeat_next_time = None
         if isinstance(repeat_value, str):

@@ -275,7 +275,9 @@ def test_delete_meal_entry_removes_it_when_no_feedback(session_factory) -> None:
         assert session.get(MealPlanEntry, entry_id) is None
 
 
-def test_delete_meal_entry_blocks_when_it_has_feedback(session_factory) -> None:
+def test_delete_meal_entry_succeeds_even_when_recipe_has_feedback(session_factory) -> None:
+    """Feedback haengt seit der (Camp-Jahr, Rezept)-Umstellung nicht mehr an einem einzelnen Slot -
+    das Loeschen eines Slots darf ein bestehendes Feedback also nicht mehr blockieren."""
     with session_scope(session_factory) as session:
         camp_year = planning_service.create_camp_year(
             session, year=2026, start_date=date(2026, 8, 1), end_date=date(2026, 8, 1)
@@ -284,13 +286,15 @@ def test_delete_meal_entry_blocks_when_it_has_feedback(session_factory) -> None:
         session.add(recipe)
         session.flush()
         entry = planning_service.add_meal_entry(session, camp_year, date(2026, 8, 1), "Mittagessen", recipe=recipe)
-        session.add(RecipeFeedback(camp_year=camp_year, recipe=recipe, meal_plan_entry=entry))
+        session.add(RecipeFeedback(camp_year=camp_year, recipe=recipe))
         entry_id = entry.id
 
     with session_scope(session_factory) as session:
         entry = session.get(MealPlanEntry, entry_id)
-        with pytest.raises(ValueError, match="Feedback"):
-            planning_service.delete_meal_entry(session, entry)
+        planning_service.delete_meal_entry(session, entry)
+
+    with session_scope(session_factory) as session:
+        assert session.get(MealPlanEntry, entry_id) is None
 
 
 def test_day_summary_sums_portions_and_cost_across_dishes(session_factory) -> None:

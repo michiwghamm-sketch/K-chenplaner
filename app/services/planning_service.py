@@ -265,8 +265,9 @@ def add_meal_entry(
 
 
 def delete_meal_entry(session: Session, entry: MealPlanEntry) -> None:
-    if entry.feedback is not None:
-        raise ValueError("Dieses Gericht kann nicht entfernt werden: Es liegt bereits Feedback dazu vor.")
+    # Feedback haengt seit der (Camp-Jahr, Rezept)-Umstellung nicht mehr an einem einzelnen Slot -
+    # das Entfernen eines Mahlzeit-Slots kann also nie mehr ein bestehendes Feedback verwaisen
+    # lassen (anders als frueher, als Feedback 1:1 an einem Mahlzeit-Slot haengte).
     session.delete(entry)
     session.flush()
 

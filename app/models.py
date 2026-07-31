@@ -296,20 +296,18 @@ class MealPlanEntry(Base):
 
     camp_year: Mapped["CampYear"] = relationship(back_populates="meal_plan_entries")
     recipe: Mapped[Optional["Recipe"]] = relationship(back_populates="meal_plan_entries")
-    feedback: Mapped[Optional["RecipeFeedback"]] = relationship(back_populates="meal_plan_entry", uselist=False)
 
 
 class RecipeFeedback(Base):
+    """Rueckmeldung zu einem Rezept fuer ein Camp-Jahr - ein Eintrag je (Camp-Jahr, Rezept), auch
+    wenn das Rezept in dieser Woche mehrfach auf dem Plan stand (z. B. Fruehstueck an 5 Tagen)."""
+
     __tablename__ = "recipe_feedback"
+    __table_args__ = (UniqueConstraint("camp_year_id", "recipe_id", name="uq_recipe_feedback_camp_year_recipe"),)
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     camp_year_id: Mapped[int] = mapped_column(ForeignKey("camp_years.id"), nullable=False, index=True)
     recipe_id: Mapped[int] = mapped_column(ForeignKey("recipes.id"), nullable=False, index=True)
-    # Verknuepft das Feedback mit einer konkreten Mahlzeit im Wochenplan (ein Feedback je Mahlzeit-Slot).
-    # Nullable, weil aus Excel importiertes Alt-Feedback keiner konkreten Mahlzeit zugeordnet werden kann.
-    meal_plan_entry_id: Mapped[Optional[int]] = mapped_column(
-        ForeignKey("meal_plan_entries.id"), unique=True, index=True
-    )
     rating: Mapped[Optional[int]] = mapped_column(Integer)
     repeat_next_time: Mapped[Optional[bool]] = mapped_column(Boolean)
     quantity_sufficient: Mapped[Optional[str]] = mapped_column(String(50))
@@ -326,7 +324,6 @@ class RecipeFeedback(Base):
 
     camp_year: Mapped["CampYear"] = relationship(back_populates="feedback_entries")
     recipe: Mapped["Recipe"] = relationship(back_populates="feedback_entries")
-    meal_plan_entry: Mapped[Optional["MealPlanEntry"]] = relationship(back_populates="feedback")
 
 
 class ShoppingList(Base):

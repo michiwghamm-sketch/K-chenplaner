@@ -4,7 +4,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterator
 
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import UniqueConstraint, create_engine, inspect, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session, sessionmaker
 
@@ -65,6 +65,27 @@ def sync_schema(engine: Engine) -> None:
                     connection.execute(
                         text(f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" ON "{table.name}" ("{column.name}")')
                     )
+
+            # Mehrspaltige UniqueConstraints aus __table_args__ nachziehen, falls sie auf einer
+            # bestehenden SQLite-Datei noch fehlen - gleiches Problem wie bei fehlenden Spalten:
+            # create_all() legt sie nur auf brandneu erzeugten Tabellen an.
+            existing_unique_column_sets = {
+                tuple(sorted(uc["column_names"])) for uc in inspector.get_unique_constraints(table.name)
+            }
+            existing_unique_column_sets |= {
+                tuple(sorted(ix["column_names"])) for ix in inspector.get_indexes(table.name) if ix["unique"]
+            }
+            for constraint in table.constraints:
+                if not isinstance(constraint, UniqueConstraint):
+                    continue
+                column_names = tuple(sorted(col.name for col in constraint.columns))
+                if column_names in existing_unique_column_sets:
+                    continue
+                index_name = constraint.name or f"ux_{table.name}_{'_'.join(column_names)}"
+                columns_sql = ", ".join(f'"{name}"' for name in column_names)
+                connection.execute(
+                    text(f'CREATE UNIQUE INDEX IF NOT EXISTS "{index_name}" ON "{table.name}" ({columns_sql})')
+                )
 
 
 def initialize_database(

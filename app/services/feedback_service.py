@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
@@ -19,37 +20,77 @@ def calculate_quantity_factor(planned_portions: int | None, cooked_portions: int
     return (Decimal(cooked_portions) / Decimal(planned_portions)).quantize(Decimal("0.001"))
 
 
-def list_feedback_candidates(session: Session, camp_year: CampYear) -> list[MealPlanEntry]:
-    """Alle Mahlzeiten des Wochenplans, fuer die sinnvoll Feedback erfasst werden kann (Rezept gesetzt, aktiv)."""
+@dataclass(slots=True)
+class FeedbackCandidate:
+    """Ein Rezept, das in einem Camp-Jahr mindestens einmal aktiv eingeplant ist - Zeile in der
+    Feedback-Liste. Ein Rezept, das mehrfach auf dem Plan steht (z. B. Fruehstueck an 5 Tagen),
+    bekommt trotzdem nur einen Kandidaten/ein Formular statt einem je Mahlzeit-Slot."""
+
+    recipe_id: int
+    recipe_name: str
+    occurrences: list[MealPlanEntry] = field(default_factory=list)
+
+    @property
+    def occurrence_count(self) -> int:
+        return len(self.occurrences)
+
+    @property
+    def total_planned_portions(self) -> int:
+        return sum(entry.planned_portions or 0 for entry in self.occurrences)
+
+    @property
+    def first_date(self) -> date | None:
+        dates = [entry.meal_date for entry in self.occurrences if entry.meal_date]
+        return min(dates) if dates else None
+
+
+def list_feedback_candidates(session: Session, camp_year: CampYear) -> list[FeedbackCandidate]:
+    """Je Rezept, das in diesem Camp-Jahr mindestens einmal aktiv eingeplant ist, ein Kandidat."""
     entries = [
         entry
         for entry in camp_year.meal_plan_entries
         if entry.recipe is not None and planning_service.is_active_status(entry.status)
     ]
-    return sorted(entries, key=lambda entry: (entry.meal_date or date.min, entry.meal_type or ""))
+
+    by_recipe: dict[int, FeedbackCandidate] = {}
+    for entry in entries:
+        candidate = by_recipe.get(entry.recipe_id)
+        if candidate is None:
+            candidate = FeedbackCandidate(recipe_id=entry.recipe_id, recipe_name=entry.recipe.name)
+            by_recipe[entry.recipe_id] = candidate
+        candidate.occurrences.append(entry)
+
+    candidates = list(by_recipe.values())
+    for candidate in candidates:
+        candidate.occurrences.sort(key=lambda entry: (entry.meal_date or date.min, entry.meal_type or ""))
+    candidates.sort(key=lambda c: (c.first_date or date.min, c.recipe_name))
+    return candidates
 
 
-def get_or_create_meal_feedback(session: Session, meal_plan_entry: MealPlanEntry) -> RecipeFeedback:
-    """Holt oder legt das Feedback fuer eine konkrete Mahlzeit im Wochenplan an (ein Feedback je Mahlzeit-Slot)."""
-    session.flush()
-    feedback = session.execute(
-        select(RecipeFeedback).where(RecipeFeedback.meal_plan_entry_id == meal_plan_entry.id)
-    ).scalar_one_or_none()
-    if feedback is None:
-        feedback = RecipeFeedback(
-            camp_year_id=meal_plan_entry.camp_year_id,
-            recipe_id=meal_plan_entry.recipe_id,
-            meal_plan_entry_id=meal_plan_entry.id,
-            planned_portions=meal_plan_entry.planned_portions,
+def get_feedback(session: Session, camp_year_id: int, recipe_id: int) -> RecipeFeedback | None:
+    return session.execute(
+        select(RecipeFeedback).where(
+            RecipeFeedback.camp_year_id == camp_year_id, RecipeFeedback.recipe_id == recipe_id
         )
+    ).scalar_one_or_none()
+
+
+def get_or_create_feedback(session: Session, camp_year: CampYear, recipe: Recipe) -> RecipeFeedback:
+    """Holt oder legt das Feedback fuer ein Rezept in einem Camp-Jahr an (ein Feedback je
+    Rezept/Jahr, unabhaengig davon, wie oft es diese Woche auf dem Plan steht)."""
+    session.flush()
+    feedback = get_feedback(session, camp_year.id, recipe.id)
+    if feedback is None:
+        feedback = RecipeFeedback(camp_year_id=camp_year.id, recipe_id=recipe.id)
         session.add(feedback)
         session.flush()
     return feedback
 
 
-def save_meal_feedback(
+def save_feedback(
     session: Session,
-    meal_plan_entry: MealPlanEntry,
+    camp_year: CampYear,
+    recipe: Recipe,
     *,
     rating: int | None = None,
     repeat_next_time: bool | None = None,
@@ -65,15 +106,15 @@ def save_meal_feedback(
     if rating is not None and not (1 <= rating <= 5):
         raise ValueError("Bewertung muss zwischen 1 und 5 liegen.")
 
-    feedback = get_or_create_meal_feedback(session, meal_plan_entry)
+    feedback = get_or_create_feedback(session, camp_year, recipe)
     feedback.rating = rating
     feedback.repeat_next_time = repeat_next_time
     feedback.quantity_sufficient = quantity_sufficient
-    feedback.planned_portions = planned_portions if planned_portions is not None else meal_plan_entry.planned_portions
+    feedback.planned_portions = planned_portions
     feedback.cooked_portions = cooked_portions
+    feedback.quantity_factor_next_time = calculate_quantity_factor(planned_portions, cooked_portions)
     feedback.leftover_quantity = leftover_quantity
     feedback.leftover_unit = leftover_unit
-    feedback.quantity_factor_next_time = calculate_quantity_factor(feedback.planned_portions, cooked_portions)
     feedback.process_tips = process_tips
     feedback.what_went_well = what_went_well
     feedback.what_to_change = what_to_change

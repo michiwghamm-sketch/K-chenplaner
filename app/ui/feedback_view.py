@@ -24,7 +24,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy import select
 
 from app.context import AppContext
-from app.models import CampYear, MealPlanEntry
+from app.models import CampYear, Recipe
 from app.services import feedback_service
 from app.ui.dialogs import error_dialog, info_dialog
 from app.ui.theme import TEXT_MUTED
@@ -33,20 +33,30 @@ from app.ui.widgets import COLOR_OK, PageHeader
 REPEAT_OPTIONS = ("Unbekannt", "Ja", "Nein")
 
 
+def _format_occurrences(candidate: feedback_service.FeedbackCandidate) -> str:
+    dates = [entry.meal_date for entry in candidate.occurrences if entry.meal_date]
+    if not dates:
+        return f"{candidate.occurrence_count}x"
+    date_text = dates[0].isoformat() if len(dates) == 1 else f"{min(dates).isoformat()} – {max(dates).isoformat()}"
+    return f"{candidate.occurrence_count}x ({date_text})"
+
+
 class FeedbackView(QWidget):
-    """Feedback: Wochenplan eines Camp-Jahrs durchgehen und je Mahlzeit Rückmeldung erfassen."""
+    """Feedback: je Camp-Jahr ein Formular pro Rezept, unabhaengig davon, wie oft es diese Woche
+    auf dem Plan stand (z. B. Frühstück an 5 Tagen bekommt trotzdem nur ein Feedback)."""
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.context = context
-        self._current_entry_id: int | None = None
+        self._current_recipe_id: int | None = None
+        self._current_total_planned_portions: int | None = None
         self._build_ui()
         self.refresh()
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
         layout.addWidget(
-            PageHeader("Feedback", "Wochenplan durchgehen und je Mahlzeit Feedback erfassen")
+            PageHeader("Feedback", "Je Rezept, das im Camp-Jahr geplant war, eine Rückmeldung erfassen")
         )
 
         top_row = QHBoxLayout()
@@ -62,9 +72,9 @@ class FeedbackView(QWidget):
 
         left = QWidget(self)
         left_layout = QVBoxLayout(left)
-        left_layout.addWidget(QLabel("Mahlzeiten im Wochenplan", left))
-        self.meal_table = QTableWidget(0, 4, left)
-        self.meal_table.setHorizontalHeaderLabels(["Datum", "Mahlzeit", "Rezept", "Feedback"])
+        left_layout.addWidget(QLabel("Im Wochenplan eingesetzte Rezepte", left))
+        self.meal_table = QTableWidget(0, 3, left)
+        self.meal_table.setHorizontalHeaderLabels(["Rezept", "Geplant", "Feedback"])
         self.meal_table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.meal_table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.meal_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
@@ -75,7 +85,7 @@ class FeedbackView(QWidget):
         right = QWidget(self)
         right_layout = QVBoxLayout(right)
 
-        self.meal_info_label = QLabel("Bitte links eine Mahlzeit auswählen.", right)
+        self.meal_info_label = QLabel("Bitte links ein Rezept auswählen.", right)
         self.meal_info_label.setStyleSheet("font-weight: 600; font-size: 15px;")
         right_layout.addWidget(self.meal_info_label)
 
@@ -104,7 +114,7 @@ class FeedbackView(QWidget):
 
         form.addRow("Wie kam es an? (1-5)", self.rating_spin)
         form.addRow("Hat die Menge gereicht?", self.quantity_sufficient_combo)
-        form.addRow("Portionen gekocht", self.cooked_spin)
+        form.addRow("Portionen gekocht (insgesamt)", self.cooked_spin)
         form.addRow("Mengenfaktor nächstes Mal", self.factor_line)
         form.addRow("Restmenge", self.leftover_qty_spin)
         form.addRow("Einheit Rest", self.leftover_unit_edit)
@@ -145,7 +155,7 @@ class FeedbackView(QWidget):
 
     def _reload_meal_list(self) -> None:
         self.meal_table.setRowCount(0)
-        self._current_entry_id = None
+        self._current_recipe_id = None
         self._clear_form()
         self._set_form_enabled(False)
 
@@ -157,39 +167,47 @@ class FeedbackView(QWidget):
             camp_year = session.get(CampYear, camp_year_id)
             if camp_year is None:
                 return
-            for entry in feedback_service.list_feedback_candidates(session, camp_year):
+            for candidate in feedback_service.list_feedback_candidates(session, camp_year):
                 row = self.meal_table.rowCount()
                 self.meal_table.insertRow(row)
-                date_item = QTableWidgetItem(entry.meal_date.isoformat() if entry.meal_date else "")
-                date_item.setData(1000, entry.id)
-                self.meal_table.setItem(row, 0, date_item)
-                self.meal_table.setItem(row, 1, QTableWidgetItem(entry.meal_type or ""))
-                self.meal_table.setItem(row, 2, QTableWidgetItem(entry.recipe.name if entry.recipe else ""))
+                recipe_item = QTableWidgetItem(candidate.recipe_name)
+                recipe_item.setData(1000, candidate.recipe_id)
+                self.meal_table.setItem(row, 0, recipe_item)
+                self.meal_table.setItem(row, 1, QTableWidgetItem(_format_occurrences(candidate)))
 
-                has_feedback = entry.feedback is not None and entry.feedback.rating is not None
+                feedback = feedback_service.get_feedback(session, camp_year.id, candidate.recipe_id)
+                has_feedback = feedback is not None and feedback.rating is not None
                 status_item = QTableWidgetItem("Erledigt" if has_feedback else "Offen")
                 status_item.setForeground(QColor(COLOR_OK if has_feedback else TEXT_MUTED))
-                self.meal_table.setItem(row, 3, status_item)
+                self.meal_table.setItem(row, 2, status_item)
 
     def _on_meal_selected(self) -> None:
         row = self.meal_table.currentRow()
         if row < 0:
-            self._current_entry_id = None
+            self._current_recipe_id = None
+            self._current_total_planned_portions = None
             self._clear_form()
             self._set_form_enabled(False)
             return
 
-        self._current_entry_id = self.meal_table.item(row, 0).data(1000)
+        self._current_recipe_id = self.meal_table.item(row, 0).data(1000)
+        camp_year_id = self.context.current_camp_year_id
         with self.context.session() as session:
-            entry = session.get(MealPlanEntry, self._current_entry_id)
-            if entry is None:
+            camp_year = session.get(CampYear, camp_year_id)
+            recipe = session.get(Recipe, self._current_recipe_id)
+            if camp_year is None or recipe is None:
                 return
-            date_text = entry.meal_date.isoformat() if entry.meal_date else "ohne Datum"
-            self.meal_info_label.setText(
-                f"{entry.recipe.name if entry.recipe else '-'} - {entry.meal_type} am {date_text} "
-                f"(geplant: {entry.planned_portions or '-'} Portionen)"
+
+            candidate = next(
+                (c for c in feedback_service.list_feedback_candidates(session, camp_year) if c.recipe_id == recipe.id),
+                None,
             )
-            feedback = entry.feedback
+            self._current_total_planned_portions = candidate.total_planned_portions if candidate else None
+            occurrence_text = _format_occurrences(candidate) if candidate else ""
+            portions_text = f" (insgesamt geplant: {self._current_total_planned_portions} Portionen)" if self._current_total_planned_portions else ""
+            self.meal_info_label.setText(f"{recipe.name} - {occurrence_text}{portions_text}")
+
+            feedback = feedback_service.get_feedback(session, camp_year.id, recipe.id)
             self.rating_spin.setValue(feedback.rating if feedback and feedback.rating else 1)
             quantity_index = self.quantity_sufficient_combo.findText(
                 feedback.quantity_sufficient if feedback and feedback.quantity_sufficient else "Unbekannt"
@@ -211,7 +229,7 @@ class FeedbackView(QWidget):
         self._update_factor_preview()
 
     def _clear_form(self) -> None:
-        self.meal_info_label.setText("Bitte links eine Mahlzeit auswählen.")
+        self.meal_info_label.setText("Bitte links ein Rezept auswählen.")
         self.rating_spin.setValue(1)
         self.quantity_sufficient_combo.setCurrentIndex(0)
         self.cooked_spin.setValue(0)
@@ -238,18 +256,12 @@ class FeedbackView(QWidget):
             widget.setEnabled(enabled)
 
     def _update_factor_preview(self) -> None:
-        if self._current_entry_id is None:
-            self.factor_line.setText("-")
-            return
-        with self.context.session() as session:
-            entry = session.get(MealPlanEntry, self._current_entry_id)
-            planned = entry.planned_portions if entry else None
-        factor = feedback_service.calculate_quantity_factor(planned, self.cooked_spin.value())
+        factor = feedback_service.calculate_quantity_factor(self._current_total_planned_portions, self.cooked_spin.value())
         self.factor_line.setText(str(factor) if factor is not None else "-")
 
     def _save_feedback(self) -> None:
-        if self._current_entry_id is None:
-            error_dialog(self, "Bitte zuerst eine Mahlzeit auswählen.")
+        if self._current_recipe_id is None:
+            error_dialog(self, "Bitte zuerst ein Rezept auswählen.")
             return
 
         repeat_value = self.repeat_combo.currentText()
@@ -257,16 +269,19 @@ class FeedbackView(QWidget):
         quantity_sufficient = self.quantity_sufficient_combo.currentText()
 
         with self.context.session() as session:
-            entry = session.get(MealPlanEntry, self._current_entry_id)
-            if entry is None:
+            camp_year = session.get(CampYear, self.context.current_camp_year_id)
+            recipe = session.get(Recipe, self._current_recipe_id)
+            if camp_year is None or recipe is None:
                 return
             try:
-                feedback_service.save_meal_feedback(
+                feedback_service.save_feedback(
                     session,
-                    entry,
+                    camp_year,
+                    recipe,
                     rating=self.rating_spin.value(),
                     repeat_next_time=repeat_next_time,
                     quantity_sufficient=quantity_sufficient if quantity_sufficient != "Unbekannt" else None,
+                    planned_portions=self._current_total_planned_portions,
                     cooked_portions=self.cooked_spin.value() or None,
                     leftover_quantity=Decimal(str(self.leftover_qty_spin.value())) if self.leftover_qty_spin.value() else None,
                     leftover_unit=self.leftover_unit_edit.text().strip() or None,
@@ -278,14 +293,14 @@ class FeedbackView(QWidget):
                 error_dialog(self, str(exc))
                 return
         info_dialog(self, "Feedback gespeichert.")
-        saved_entry_id = self._current_entry_id
+        saved_recipe_id = self._current_recipe_id
         self._reload_meal_list()
-        self._select_meal_by_entry_id(saved_entry_id)
+        self._select_meal_by_recipe_id(saved_recipe_id)
 
-    def _select_meal_by_entry_id(self, entry_id: int | None) -> None:
-        if entry_id is None:
+    def _select_meal_by_recipe_id(self, recipe_id: int | None) -> None:
+        if recipe_id is None:
             return
         for row in range(self.meal_table.rowCount()):
-            if self.meal_table.item(row, 0).data(1000) == entry_id:
+            if self.meal_table.item(row, 0).data(1000) == recipe_id:
                 self.meal_table.setCurrentCell(row, 0)
                 return

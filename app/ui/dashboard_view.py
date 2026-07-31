@@ -412,7 +412,9 @@ class DashboardView(QWidget):
             missing_recipe_count = sum(1 for e in active_entries if e.recipe_id is None)
             missing_portions = validation_service.find_meal_plan_without_portions(session, camp_year)
             feedback_pending = [
-                entry for entry in feedback_service.list_feedback_candidates(session, camp_year) if entry.feedback is None
+                candidate
+                for candidate in feedback_service.list_feedback_candidates(session, camp_year)
+                if feedback_service.get_feedback(session, camp_year.id, candidate.recipe_id) is None
             ]
 
             self._reload_action_list(

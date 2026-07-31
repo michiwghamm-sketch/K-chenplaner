@@ -1240,7 +1240,6 @@ class MealSlotDialog(QDialog):
         for recipe_id, name in self._recipes:
             recipe_combo.addItem(name, recipe_id)
         recipe_combo.setProperty("entry_id", dish["id"] if dish else None)
-        recipe_combo.setProperty("has_feedback", bool(dish and dish.get("has_feedback")))
         if dish and dish.get("recipe_id"):
             index = recipe_combo.findData(dish["recipe_id"])
             recipe_combo.setCurrentIndex(index if index >= 0 else 0)
@@ -1282,13 +1281,6 @@ class MealSlotDialog(QDialog):
             return
         recipe_combo = self.table.cellWidget(row, 0)
         entry_id = recipe_combo.property("entry_id")
-        if entry_id is not None and recipe_combo.property("has_feedback"):
-            error_dialog(
-                self,
-                "Für dieses Gericht liegt bereits Feedback vor und es kann daher nicht entfernt werden. "
-                "Bitte zuerst das Feedback löschen.",
-            )
-            return
         if entry_id is not None:
             self._removed_ids.append(entry_id)
         self.table.removeRow(row)

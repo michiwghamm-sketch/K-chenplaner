@@ -339,7 +339,6 @@ class PlanningView(QWidget):
                     "target_group": entry.target_group or "",
                     "status": entry.status or "geplant",
                     "notes": entry.notes or "",
-                    "has_feedback": entry.feedback is not None,
                 }
                 for entry in planning_service.meal_entries_for_slot(camp_year, day, meal_type)
             ]
