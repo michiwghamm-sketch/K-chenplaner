@@ -386,6 +386,88 @@ def test_grouped_by_store_ordered_sorts_alphabetically_with_none_last(session_fa
         assert [store for store, _ in ordered] == ["Aldi", "Rewe", None]
 
 
+def test_aggregated_items_sorted_combines_same_ingredient_and_sorts_alphabetically(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        zwiebeln = Ingredient(name="Zwiebeln", normalized_name="zwiebeln", default_unit="kg")
+        kartoffeln = Ingredient(name="Kartoffeln", normalized_name="kartoffeln", default_unit="kg")
+        session.add_all([zwiebeln, kartoffeln])
+        session.flush()
+        shopping_list.items.extend(
+            [
+                # Absichtlich nicht alphabetisch eingefuegt, und Kartoffeln zweimal (zwei
+                # Einkaufstage) - genau das Szenario aus der ungruppierten PDF-Ansicht.
+                ShoppingListItem(
+                    ingredient=zwiebeln, quantity=Decimal("1.000"), unit="kg",
+                    estimated_price_per_unit=Decimal("1.00"), estimated_total_price=Decimal("1.00"),
+                    shopping_date=date(2026, 8, 1),
+                ),
+                ShoppingListItem(
+                    ingredient=kartoffeln, quantity=Decimal("2.000"), unit="kg",
+                    estimated_price_per_unit=Decimal("1.50"), estimated_total_price=Decimal("3.00"),
+                    shopping_date=date(2026, 8, 1),
+                ),
+                ShoppingListItem(
+                    ingredient=kartoffeln, quantity=Decimal("3.000"), unit="kg",
+                    estimated_price_per_unit=Decimal("1.50"), estimated_total_price=Decimal("4.50"),
+                    shopping_date=date(2026, 8, 3),
+                ),
+            ]
+        )
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        aggregated = shopping_service.aggregated_items_sorted(shopping_list)
+
+        assert [row.ingredient_name for row in aggregated] == ["Kartoffeln", "Zwiebeln"]
+
+        kartoffeln_row = aggregated[0]
+        assert kartoffeln_row.quantity == Decimal("5.000")
+        assert kartoffeln_row.estimated_total_price == Decimal("7.50")
+        assert kartoffeln_row.has_missing_price is False
+
+
+def test_aggregated_items_sorted_flags_missing_price_when_any_contributing_item_lacks_one(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        mehl = Ingredient(name="Mehl", normalized_name="mehl", default_unit="kg")
+        session.add(mehl)
+        session.flush()
+        shopping_list.items.extend(
+            [
+                ShoppingListItem(
+                    ingredient=mehl, quantity=Decimal("1.000"), unit="kg",
+                    estimated_price_per_unit=Decimal("1.00"), estimated_total_price=Decimal("1.00"),
+                    shopping_date=date(2026, 8, 1),
+                ),
+                ShoppingListItem(
+                    ingredient=mehl, quantity=Decimal("2.000"), unit="kg",
+                    estimated_price_per_unit=None, estimated_total_price=None,
+                    shopping_date=date(2026, 8, 3),
+                ),
+            ]
+        )
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        aggregated = shopping_service.aggregated_items_sorted(shopping_list)
+
+        assert len(aggregated) == 1
+        assert aggregated[0].quantity == Decimal("3.000")
+        assert aggregated[0].estimated_total_price is None
+        assert aggregated[0].has_missing_price is True
+
+
 def test_set_item_store_normalizes_blank_to_none(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

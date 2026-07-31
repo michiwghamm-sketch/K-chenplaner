@@ -146,6 +146,45 @@ def grouped_by_store_ordered(shopping_list: ShoppingList) -> list[tuple[str | No
     return sorted(groups.items(), key=lambda pair: (pair[0] is None, (pair[0] or "").lower()))
 
 
+@dataclass(slots=True)
+class AggregatedShoppingItem:
+    ingredient_name: str
+    quantity: Decimal
+    unit: str
+    estimated_total_price: Decimal | None
+    has_missing_price: bool
+
+
+def aggregated_items_sorted(shopping_list: ShoppingList) -> list[AggregatedShoppingItem]:
+    """Fasst Positionen derselben Zutat+Einheit zu einer Zeile mit Gesamtmenge zusammen (z. B.
+    wenn dieselbe Zutat an mehreren Einkaufstagen gebraucht wird) und sortiert alphabetisch nach
+    Zutatname - fuer die ungruppierte Ansicht/den PDF-Export ohne Tag/Händler-Gliederung, wo
+    dieselbe Zutat sonst mehrfach als unsortierte Teilmenge auftaucht statt als eine Gesamtmenge."""
+    groups: dict[tuple[object, str], list[ShoppingListItem]] = defaultdict(list)
+    for item in shopping_list.items:
+        group_key = item.ingredient_id if item.ingredient_id is not None else f"_item_{item.id}"
+        groups[(group_key, item.unit or "")].append(item)
+
+    aggregated: list[AggregatedShoppingItem] = []
+    for items in groups.values():
+        name = items[0].ingredient.name if items[0].ingredient else ""
+        total_quantity = sum((item.quantity for item in items), Decimal("0"))
+        total_price = None
+        if all(item.estimated_total_price is not None for item in items):
+            total_price = sum((item.estimated_total_price for item in items), Decimal("0"))
+        aggregated.append(
+            AggregatedShoppingItem(
+                ingredient_name=name,
+                quantity=total_quantity,
+                unit=items[0].unit or "",
+                estimated_total_price=total_price,
+                has_missing_price=any(item.estimated_price_per_unit is None for item in items),
+            )
+        )
+    aggregated.sort(key=lambda row: row.ingredient_name.lower())
+    return aggregated
+
+
 UNASSIGNED_STORE_LABEL = "Ohne Händler"
 GERMAN_WEEKDAYS = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
 

@@ -484,7 +484,10 @@ def export_shopping_list_to_pdf(shopping_list: ShoppingList, path: Path, group_b
         groups = list(shopping_service.grouped_by_store_ordered(shopping_list))
         group_labels = [key or shopping_service.UNASSIGNED_STORE_LABEL for key, _ in groups]
     else:
-        groups = [(None, list(shopping_list.items))]
+        # Ohne Gruppierung nach Tag/Händler: Positionen derselben Zutat zusammenfassen (sonst
+        # taucht eine Zutat, die an mehreren Einkaufstagen gebraucht wird, mehrfach mit
+        # Teilmengen statt einer Gesamtmenge auf) und alphabetisch sortieren.
+        groups = [(None, shopping_service.aggregated_items_sorted(shopping_list))]
         group_labels = [None]
 
     column_widths = [8 * mm, 78 * mm, 22 * mm, 20 * mm, 30 * mm]
@@ -508,8 +511,14 @@ def export_shopping_list_to_pdf(shopping_list: ShoppingList, path: Path, group_b
             story.append(band)
 
         table_data = [header_row]
+        missing_price_flags = []
         for item in items:
-            name = item.ingredient.name if item.ingredient else ""
+            if isinstance(item, shopping_service.AggregatedShoppingItem):
+                name = item.ingredient_name
+                missing_price_flags.append(item.has_missing_price)
+            else:
+                name = item.ingredient.name if item.ingredient else ""
+                missing_price_flags.append(item.estimated_price_per_unit is None)
             price_text = f"{item.estimated_total_price:.2f} EUR" if item.estimated_total_price is not None else "-"
             table_data.append(["", name, str(item.quantity), item.unit or "", price_text])
 
@@ -526,8 +535,8 @@ def export_shopping_list_to_pdf(shopping_list: ShoppingList, path: Path, group_b
             ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
             ("BOX", (0, 1), (0, -1), 1, PDF_TEXT_DARK),
         ]
-        for row_index, item in enumerate(items, start=1):
-            if item.estimated_price_per_unit is None:
+        for row_index, missing_price in enumerate(missing_price_flags, start=1):
+            if missing_price:
                 style_commands.append(("TEXTCOLOR", (4, row_index), (4, row_index), PDF_CRITICAL))
             if row_index % 2 == 0:
                 style_commands.append(("BACKGROUND", (0, row_index), (-1, row_index), colors.HexColor("#FCFCFB")))
