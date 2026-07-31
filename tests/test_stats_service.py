@@ -1,6 +1,8 @@
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from app.db import session_scope
 from app.models import CampYear, Ingredient, IngredientPrice, MealPlanEntry, Recipe, RecipeIngredient
 from app.services import stats_service
@@ -104,6 +106,33 @@ def test_camp_year_costs_sums_non_cancelled_entries(session_factory) -> None:
         assert costs[0].total_portions == 10
         # Rezeptmenge ist pro Portion: 1kg * 10 Portionen * 2.00 EUR/kg.
         assert costs[0].total_cost == Decimal("20.00")
+
+
+def test_recipe_cost_ranking_orders_by_cost_per_portion_and_skips_unpriced(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        expensive = _recipe_with_ingredient(session, "Rinderfilet", diet_type="Fleisch", price=Decimal("40.00"))
+        cheap = _recipe_with_ingredient(session, "Nudeln", diet_type="Vegetarisch", price=Decimal("2.00"))
+        unpriced = _recipe_with_ingredient(session, "Geheimrezept", diet_type=None, price=None)
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Mittagessen", recipe=expensive, planned_portions=10, status="geplant"),
+                # Zweimal geplant - darf in der Rangliste trotzdem nur einmal auftauchen.
+                MealPlanEntry(meal_date=date(2026, 8, 2), meal_type="Mittagessen", recipe=expensive, planned_portions=10, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 3), meal_type="Mittagessen", recipe=cheap, planned_portions=10, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 4), meal_type="Mittagessen", recipe=unpriced, planned_portions=10, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 5), meal_type="Mittagessen", recipe=cheap, planned_portions=10, status="keine Mahlzeit"),
+            ]
+        )
+        session.add(camp_year)
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        ranking = stats_service.recipe_cost_ranking_for_camp_year(session, camp_year)
+        assert [(r.recipe_name, r.cost_per_portion) for r in ranking] == [
+            ("Rinderfilet", Decimal("40.00")),
+            ("Nudeln", Decimal("2.00")),
+        ]
 
 
 def test_average_recipe_cost_ignores_unpriced_recipes(session_factory) -> None:

@@ -96,6 +96,47 @@ def camp_year_costs(session: Session) -> list[CampYearCost]:
 
 
 @dataclass(slots=True)
+class RecipeCostRank:
+    recipe_id: int
+    recipe_name: str
+    diet_type: str | None
+    cost_per_portion: Decimal
+
+
+def recipe_cost_ranking_for_camp_year(session: Session, camp_year: CampYear) -> list[RecipeCostRank]:
+    """Rangliste der in diesem Camp-Jahr eingeplanten Rezepte nach Kosten pro Portion, teuerstes
+    zuerst - zeigt auf einen Blick, welches Gericht das Budget am staerksten belastet.
+
+    Rezepte mit fehlenden Zutatenpreisen werden ausgelassen statt mit einem irrefuehrend
+    niedrigen (unvollstaendigen) Preis gelistet zu werden.
+    """
+    recipe_ids = {
+        entry.recipe_id
+        for entry in camp_year.meal_plan_entries
+        if entry.recipe_id is not None and planning_service.is_active_status(entry.status)
+    }
+
+    ranking: list[RecipeCostRank] = []
+    for recipe_id in recipe_ids:
+        recipe = session.get(Recipe, recipe_id)
+        if recipe is None:
+            continue
+        result = recipe_service.calculate_recipe_cost(session, recipe, year=camp_year.year)
+        if result.cost_per_portion is None or result.missing_price_ingredients:
+            continue
+        ranking.append(
+            RecipeCostRank(
+                recipe_id=recipe.id,
+                recipe_name=recipe.name,
+                diet_type=recipe.diet_type,
+                cost_per_portion=result.cost_per_portion,
+            )
+        )
+    ranking.sort(key=lambda r: (-r.cost_per_portion, r.recipe_name))
+    return ranking
+
+
+@dataclass(slots=True)
 class AverageRecipeCost:
     recipes_considered: int
     recipes_total: int

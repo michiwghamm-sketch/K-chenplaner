@@ -21,10 +21,10 @@ from sqlalchemy import select
 
 from app.context import AppContext
 from app.models import CampYear, MealPlanEntry, Recipe
-from app.services import export_service, planning_service
+from app.services import export_service, planning_service, stats_service
 from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealSlotDialog, error_dialog, info_dialog
-from app.ui.theme import TEXT_MUTED
-from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader
+from app.ui.theme import ORANGE, TEXT_MUTED
+from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, RankingEntry, RankingList
 
 ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES + ("Auswertung",)
 DAY_COLUMN_WIDTH = 210
@@ -86,6 +86,18 @@ class PlanningView(QWidget):
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self.table)
+
+        self.cost_ranking_title = QLabel("Gerichte nach Preis", self)
+        self.cost_ranking_title.setStyleSheet("font-weight: 600; font-size: 15px; padding-top: 10px;")
+        layout.addWidget(self.cost_ranking_title)
+        cost_ranking_hint = QLabel(
+            "Kosten pro Portion der in diesem Zeltlager eingeplanten Rezepte, teuerstes zuerst.", self
+        )
+        cost_ranking_hint.setStyleSheet(f"color: {TEXT_MUTED};")
+        layout.addWidget(cost_ranking_hint)
+        self.cost_ranking = RankingList(self)
+        layout.addWidget(self.cost_ranking)
+
         layout.addStretch(1)
 
     def refresh(self) -> None:
@@ -120,9 +132,26 @@ class PlanningView(QWidget):
                 camp_year = session.get(CampYear, camp_year_id)
                 if camp_year is not None:
                     self._populate_grid(session, camp_year)
+                    self._reload_cost_ranking(session, camp_year)
+        else:
+            self.cost_ranking.set_entries([])
 
         self._resize_rows_to_content()
         self._update_table_fixed_height()
+
+    def _reload_cost_ranking(self, session, camp_year: CampYear) -> None:
+        self.cost_ranking_title.setText(f"Gerichte nach Preis ({camp_year.year})")
+        ranking = stats_service.recipe_cost_ranking_for_camp_year(session, camp_year)
+        entries = [
+            RankingEntry(
+                label=item.recipe_name,
+                value=float(item.cost_per_portion),
+                value_text=f"{item.cost_per_portion:.2f} €",
+                color=DIET_TYPE_COLORS.get(item.diet_type or "", ORANGE),
+            )
+            for item in ranking
+        ]
+        self.cost_ranking.set_entries(entries)
 
     def _populate_grid(self, session, camp_year: CampYear) -> None:
         self._day_dates = planning_service.camp_day_range(camp_year)
