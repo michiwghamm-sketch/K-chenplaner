@@ -61,6 +61,10 @@ class MainWindow(QMainWindow):
             self.stack.addWidget(page)
         layout.addWidget(self.stack)
 
+        dashboard_page = self._pages.get("dashboard")
+        if dashboard_page is not None and hasattr(dashboard_page, "navigate_requested"):
+            dashboard_page.navigate_requested.connect(self._show_page)
+
         self.setCentralWidget(central)
 
         status_bar = QStatusBar(self)
@@ -101,3 +105,14 @@ class MainWindow(QMainWindow):
         self.stack.setCurrentWidget(page)
         if hasattr(page, "refresh"):
             page.refresh()
+
+        # Bei programmatischer Navigation (z. B. Klick auf einen Dashboard-Hinweis) muss die
+        # Seitenleisten-Markierung mitziehen - sonst zeigt sie noch "Dashboard" an, waehrend
+        # bereits eine andere Seite sichtbar ist. blockSignals verhindert, dass das Setzen hier
+        # selbst wieder page_selected ausloest (waere ein harmloser, aber unnoetiger Re-Eintritt).
+        for row in range(self.sidebar.count()):
+            if self.sidebar.item(row).data(1000) == key:
+                self.sidebar.blockSignals(True)
+                self.sidebar.setCurrentRow(row)
+                self.sidebar.blockSignals(False)
+                break

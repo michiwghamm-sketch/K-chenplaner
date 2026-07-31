@@ -394,6 +394,9 @@ class PlanningView(QWidget):
                 "name": camp_year.name,
                 "start_date": camp_year.start_date,
                 "end_date": camp_year.end_date,
+                "location": camp_year.location,
+                "participant_count_children": camp_year.participant_count_children,
+                "participant_count_adults": camp_year.participant_count_adults,
                 "notes": camp_year.notes,
             }
 

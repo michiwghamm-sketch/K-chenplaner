@@ -1082,6 +1082,17 @@ class CampYearDialog(QDialog):
         self.end_date_edit.setCalendarPopup(True)
         self.end_date_edit.setDate(QDate(end_date.year, end_date.month, end_date.day) if end_date else QDate(default_year, 8, 10))
 
+        self.children_spin = QSpinBox(self)
+        self.children_spin.setRange(0, 1000)
+        self.children_spin.setValue(initial.get("participant_count_children") or 0)
+
+        self.adults_spin = QSpinBox(self)
+        self.adults_spin.setRange(0, 1000)
+        self.adults_spin.setValue(initial.get("participant_count_adults") or 0)
+
+        self.location_edit = QLineEdit(self)
+        self.location_edit.setText(initial.get("location") or "")
+
         self.notes_edit = QTextEdit(self)
         self.notes_edit.setPlainText(initial.get("notes") or "")
         self.notes_edit.setFixedHeight(60)
@@ -1091,6 +1102,9 @@ class CampYearDialog(QDialog):
         form.addRow("Name", self.name_edit)
         form.addRow("Startdatum", self.start_date_edit)
         form.addRow("Enddatum", self.end_date_edit)
+        form.addRow("Ort", self.location_edit)
+        form.addRow("Teilnehmer Kinder", self.children_spin)
+        form.addRow("Teilnehmer Erwachsene", self.adults_spin)
         form.addRow("Notizen", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1107,6 +1121,9 @@ class CampYearDialog(QDialog):
             "name": self.name_edit.text().strip() or None,
             "start_date": self.start_date_edit.date().toPython(),
             "end_date": self.end_date_edit.date().toPython(),
+            "location": self.location_edit.text().strip() or None,
+            "participant_count_children": self.children_spin.value() or None,
+            "participant_count_adults": self.adults_spin.value() or None,
             "notes": self.notes_edit.toPlainText().strip() or None,
         }
 

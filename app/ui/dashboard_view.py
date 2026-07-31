@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+from datetime import date, datetime
+
 from PySide6.QtCharts import (
     QBarCategoryAxis,
     QBarSeries,
@@ -10,8 +13,8 @@ from PySide6.QtCharts import (
     QPieSeries,
     QValueAxis,
 )
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QColor, QPainter
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QCursor, QPainter
 from PySide6.QtWidgets import (
     QAbstractItemView,
     QComboBox,
@@ -20,7 +23,12 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
+    QPushButton,
     QScrollArea,
+    QSizePolicy,
+    QStackedWidget,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -29,9 +37,10 @@ from PySide6.QtWidgets import (
 from sqlalchemy import select
 
 from app.context import AppContext
-from app.models import CampYear, Recipe
-from app.services import price_service, recipe_service, stats_service, validation_service
-from app.ui.theme import BG_SURFACE, ORANGE, TEXT_DARK, TEXT_MUTED
+from app.models import CampYear
+from app.services import feedback_service, planning_service, price_service, stats_service, validation_service
+from app.ui.dialogs import CampYearDialog, error_dialog
+from app.ui.theme import BG_SURFACE, BORDER, ORANGE, TEXT_DARK, TEXT_MUTED
 from app.ui.widgets import (
     COLOR_CRITICAL,
     COLOR_INFO,
@@ -43,13 +52,30 @@ from app.ui.widgets import (
     UNKNOWN_DIET_TYPE_COLOR,
 )
 
-_SEVERITY_LABELS = {"kritisch": "Kritisch", "warnung": "Warnung", "hinweis": "Hinweis"}
-_SEVERITY_COLORS = {"kritisch": COLOR_CRITICAL, "warnung": COLOR_WARNING, "hinweis": COLOR_INFO}
-_SEVERITY_ORDER = ("kritisch", "warnung", "hinweis")
+_NAV_LABELS = {
+    "planning": "Wochenplan",
+    "ingredients": "Zutaten",
+    "shopping": "Einkaufsliste",
+    "feedback": "Feedback",
+    "recipes": "Rezepte",
+}
+
+
+@dataclass(slots=True)
+class ActionItem:
+    """Eine Zeile in der 'Nächste Schritte'-Liste: was fehlt noch, wie dringend, wohin fuehrt der Klick."""
+
+    text: str
+    level: str
+    nav_key: str | None
 
 
 class DashboardView(QWidget):
-    """Übersicht: Rezept-/Kosten-Statistiken über alle Camp-Jahre sowie Details je ausgewähltem Camp-Jahr."""
+    """Übersicht fuer die Vorbereitung des ausgewaehlten Zeltlagers: Status, offene Punkte und
+    naechste Schritte stehen vorn: Rezeptbuch-weite Statistiken sind als Referenz nach unten
+    verschoben - beim Vorbereiten EINES Zeltlagers interessiert zuerst dessen eigener Stand."""
+
+    navigate_requested = Signal(str)
 
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -57,11 +83,9 @@ class DashboardView(QWidget):
         self._build_ui()
         self.refresh()
 
+    # --- Aufbau ------------------------------------------------------------------------
+
     def _build_ui(self) -> None:
-        # Genug Inhalt (KPIs, drei Diagramme, zwei Tabellen), um auf kleineren Bildschirmen
-        # (z. B. 14"-Notebook) mehr Platz zu brauchen, als das Fenster hat - ohne Scroll-Bereich
-        # wuerde Qt sonst versuchen, das ganze Fenster auf die Mindestgroesse des Inhalts
-        # aufzublasen, was auf einem kleinen Bildschirm Inhalte abschneidet.
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         scroll = QScrollArea(self)
@@ -72,9 +96,137 @@ class DashboardView(QWidget):
         content = QWidget(scroll)
         scroll.setWidget(content)
         layout = QVBoxLayout(content)
-        layout.addWidget(PageHeader("Dashboard", "Statistiken über alle Rezepte und Camp-Jahre"))
+        layout.addWidget(PageHeader("Dashboard", "Status des ausgewählten Zeltlagers auf einen Blick"))
 
-        layout.addWidget(self._section_title("Rezepte im Überblick"))
+        self._state_stack = QStackedWidget(content)
+        layout.addWidget(self._state_stack)
+        self._state_stack.addWidget(self._build_empty_state())
+        self._state_stack.addWidget(self._build_camp_year_content())
+
+        layout.addWidget(self._divider())
+        self._build_recipe_book_section(layout)
+        layout.addStretch(1)
+
+    def _divider(self) -> QFrame:
+        line = QFrame(self)
+        line.setFrameShape(QFrame.Shape.HLine)
+        line.setStyleSheet(f"color: {BORDER};")
+        return line
+
+    def _build_empty_state(self) -> QWidget:
+        widget = QWidget(self)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(40, 40, 40, 40)
+        layout.addStretch(1)
+
+        title = QLabel("Noch kein Zeltlager angelegt", widget)
+        title.setStyleSheet("font-size: 20px; font-weight: 600;")
+        title.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        layout.addWidget(title)
+
+        subtitle = QLabel(
+            "Lege ein Zeltlager mit Zeitraum und Teilnehmerzahl an, um mit der Wochenplanung "
+            "und der Kostenkalkulation zu starten.",
+            widget,
+        )
+        subtitle.setStyleSheet(f"color: {TEXT_MUTED};")
+        subtitle.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        subtitle.setWordWrap(True)
+        layout.addWidget(subtitle)
+
+        button_row = QHBoxLayout()
+        button_row.addStretch(1)
+        create_button = QPushButton("Neues Zeltlager anlegen", widget)
+        create_button.setMinimumHeight(36)
+        create_button.clicked.connect(self._create_camp_year)
+        button_row.addWidget(create_button)
+        button_row.addStretch(1)
+        layout.addLayout(button_row)
+
+        layout.addStretch(2)
+        return widget
+
+    def _build_camp_year_content(self) -> QWidget:
+        widget = QWidget(self)
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        # Kontextzeile: welches Zeltlager, Zeitraum/Countdown/Teilnehmer, anlegen/bearbeiten.
+        context_frame = QFrame(widget)
+        context_frame.setStyleSheet(
+            f"QFrame {{ background-color: {BG_SURFACE}; border: 1px solid {BORDER}; border-radius: 6px; }}"
+        )
+        context_layout = QVBoxLayout(context_frame)
+
+        selector_row = QHBoxLayout()
+        selector_row.addWidget(QLabel("Zeltlager:", context_frame))
+        self.camp_year_combo = QComboBox(context_frame)
+        self.camp_year_combo.setMinimumWidth(220)
+        self.camp_year_combo.currentIndexChanged.connect(self._on_camp_year_changed)
+        selector_row.addWidget(self.camp_year_combo)
+        new_button = QPushButton("Neues Zeltlager", context_frame)
+        new_button.clicked.connect(self._create_camp_year)
+        selector_row.addWidget(new_button)
+        edit_button = QPushButton("Bearbeiten...", context_frame)
+        edit_button.clicked.connect(self._edit_camp_year)
+        selector_row.addWidget(edit_button)
+        selector_row.addStretch(1)
+        context_layout.addLayout(selector_row)
+
+        self.countdown_label = QLabel("", context_frame)
+        self.countdown_label.setStyleSheet("font-size: 16px; font-weight: 600;")
+        context_layout.addWidget(self.countdown_label)
+
+        self.camp_info_label = QLabel("", context_frame)
+        self.camp_info_label.setStyleSheet(f"color: {TEXT_MUTED};")
+        self.camp_info_label.setWordWrap(True)
+        context_layout.addWidget(self.camp_info_label)
+
+        layout.addWidget(context_frame)
+
+        # Zweispaltig: links KPIs, rechts naechste Schritte - nutzt breite Bildschirme besser aus
+        # und vermeidet eine lange, einspaltige Liste, durch die man scrollen muesste.
+        columns_row = QHBoxLayout()
+        columns_row.setSpacing(16)
+        layout.addLayout(columns_row)
+
+        kpi_column = QVBoxLayout()
+        columns_row.addLayout(kpi_column, stretch=3)
+        kpi_grid = QGridLayout()
+        self.kpi_plan_progress = KpiCard("Wochenplan-Fortschritt")
+        self.kpi_portions = KpiCard("Geplante Portionen")
+        self.kpi_budget = KpiCard("Geplantes Budget (EUR)")
+        self.kpi_portion_cost = KpiCard("Ø Kosten je Portion (EUR)")
+        self.kpi_missing_prices = KpiCard("Fehlende Preise")
+        self.kpi_open_shopping = KpiCard("Offene Einkäufe")
+        for index, card in enumerate(
+            (
+                self.kpi_plan_progress,
+                self.kpi_portions,
+                self.kpi_budget,
+                self.kpi_portion_cost,
+                self.kpi_missing_prices,
+                self.kpi_open_shopping,
+            )
+        ):
+            kpi_grid.addWidget(card, index // 3, index % 3)
+        kpi_column.addLayout(kpi_grid)
+        kpi_column.addStretch(1)
+
+        action_column = QVBoxLayout()
+        columns_row.addLayout(action_column, stretch=2)
+        action_column.addWidget(self._section_title("Nächste Schritte"))
+        self.action_list = QListWidget(widget)
+        self.action_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.action_list.setCursor(QCursor(Qt.CursorShape.PointingHandCursor))
+        self.action_list.itemClicked.connect(self._on_action_item_clicked)
+        action_column.addWidget(self.action_list, stretch=1)
+
+        return widget
+
+    def _build_recipe_book_section(self, layout: QVBoxLayout) -> None:
+        layout.addWidget(self._section_title("Rezeptbuch & Historie", muted=True))
+
         recipe_grid = QGridLayout()
         self.kpi_recipes_total = KpiCard("Rezepte gesamt")
         self.kpi_recipes_fleisch = KpiCard("Fleisch")
@@ -119,11 +271,11 @@ class DashboardView(QWidget):
         camp_year_row = QHBoxLayout()
         camp_year_row.setSpacing(12)
 
-        self.camp_year_chart_view = self._make_chart_view("Kosten je Camp-Jahr (EUR)", legend=False)
+        self.camp_year_chart_view = self._make_chart_view("Kosten je Zeltlager (EUR)", legend=False)
         camp_year_row.addWidget(self.camp_year_chart_view, 1)
 
         camp_year_table_column = QVBoxLayout()
-        camp_year_table_column.addWidget(self._section_title("Camp-Jahre im Überblick"))
+        camp_year_table_column.addWidget(QLabel("Zeltlager im Überblick", self))
         self.camp_year_table = QTableWidget(0, 4, self)
         self.camp_year_table.setHorizontalHeaderLabels(["Jahr", "Portionen", "Kosten (EUR)", "Ø je Portion (EUR)"])
         self.camp_year_table.verticalHeader().setVisible(False)
@@ -133,50 +285,10 @@ class DashboardView(QWidget):
 
         layout.addLayout(camp_year_row)
 
-        layout.addWidget(self._section_title("Details für ausgewähltes Camp-Jahr"))
-
-        top_row = QHBoxLayout()
-        top_row.addWidget(QLabel("Camp-Jahr:", self))
-        self.camp_year_combo = QComboBox(self)
-        self.camp_year_combo.currentIndexChanged.connect(self._on_camp_year_changed)
-        top_row.addWidget(self.camp_year_combo)
-        self.period_label = QLabel("", self)
-        top_row.addWidget(self.period_label)
-        top_row.addStretch(1)
-        layout.addLayout(top_row)
-
-        grid = QGridLayout()
-        self.kpi_meals = KpiCard("Geplante Mahlzeiten")
-        self.kpi_portions = KpiCard("Geplante Portionen")
-        self.kpi_budget = KpiCard("Geplantes Budget (EUR)")
-        self.kpi_open_shopping = KpiCard("Offene Einkäufe")
-        self.kpi_missing_prices = KpiCard("Fehlende Preise")
-        self.kpi_missing_feedback = KpiCard("Rezepte ohne Feedback")
-        for index, card in enumerate(
-            (
-                self.kpi_meals,
-                self.kpi_portions,
-                self.kpi_budget,
-                self.kpi_open_shopping,
-                self.kpi_missing_prices,
-                self.kpi_missing_feedback,
-            )
-        ):
-            grid.addWidget(card, index // 3, index % 3)
-        layout.addLayout(grid)
-
-        layout.addWidget(self._section_title("Warnungen und Hinweise"))
-        self.warnings_table = QTableWidget(0, 1, self)
-        self.warnings_table.horizontalHeader().setVisible(False)
-        self.warnings_table.verticalHeader().setVisible(False)
-        self.warnings_table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
-        self.warnings_table.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
-        self.warnings_table.horizontalHeader().setStretchLastSection(True)
-        layout.addWidget(self.warnings_table, stretch=1)
-
-    def _section_title(self, text: str) -> QLabel:
+    def _section_title(self, text: str, *, muted: bool = False) -> QLabel:
         label = QLabel(text, self)
-        label.setStyleSheet("font-weight: 600; font-size: 15px; padding-top: 6px;")
+        color = f"color: {TEXT_MUTED};" if muted else ""
+        label.setStyleSheet(f"font-weight: 600; font-size: 15px; padding-top: 6px; {color}")
         return label
 
     def _make_chart_view(self, title: str, *, legend: bool) -> QChartView:
@@ -188,12 +300,17 @@ class DashboardView(QWidget):
         chart.setBackgroundVisible(False)
         view = QChartView(chart, self)
         view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        view.setMinimumHeight(240)
+        view.setMinimumHeight(220)
+        view.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Fixed)
         return view
+
+    # --- Laden ---------------------------------------------------------------------------
 
     def refresh(self) -> None:
         self._reload_global_stats()
+        self._reload_camp_year_combo()
 
+    def _reload_camp_year_combo(self) -> None:
         self.camp_year_combo.blockSignals(True)
         self.camp_year_combo.clear()
         with self.context.session() as session:
@@ -202,11 +319,204 @@ class DashboardView(QWidget):
                 self.camp_year_combo.addItem(camp_year.name or str(camp_year.year), camp_year.id)
         self.camp_year_combo.blockSignals(False)
 
+        if not camp_years:
+            self._state_stack.setCurrentIndex(0)
+            return
+        self._state_stack.setCurrentIndex(1)
+
         if self.context.current_camp_year_id is not None:
             index = self.camp_year_combo.findData(self.context.current_camp_year_id)
             if index >= 0:
                 self.camp_year_combo.setCurrentIndex(index)
         self._on_camp_year_changed()
+
+    def _create_camp_year(self) -> None:
+        dialog = CampYearDialog(datetime.now().year, self)
+        if dialog.exec() != CampYearDialog.DialogCode.Accepted:
+            return
+        data = dialog.result_data()
+        with self.context.session() as session:
+            try:
+                camp_year = planning_service.create_camp_year(session, **data)
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+            self.context.current_camp_year_id = camp_year.id
+        self._reload_camp_year_combo()
+
+    def _edit_camp_year(self) -> None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            return
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            if camp_year is None:
+                return
+            initial = {
+                "year": camp_year.year,
+                "name": camp_year.name,
+                "start_date": camp_year.start_date,
+                "end_date": camp_year.end_date,
+                "location": camp_year.location,
+                "participant_count_children": camp_year.participant_count_children,
+                "participant_count_adults": camp_year.participant_count_adults,
+                "notes": camp_year.notes,
+            }
+
+        dialog = CampYearDialog(datetime.now().year, self, initial=initial, allow_year_edit=False)
+        if dialog.exec() != CampYearDialog.DialogCode.Accepted:
+            return
+        data = dialog.result_data()
+        data.pop("year", None)
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            if camp_year is not None:
+                planning_service.update_camp_year(session, camp_year, **data)
+        self._reload_camp_year_combo()
+
+    def _on_camp_year_changed(self) -> None:
+        self.context.current_camp_year_id = self.camp_year_combo.currentData()
+        self._reload_camp_year_details()
+
+    def _reload_camp_year_details(self) -> None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            return
+
+        with self.context.session() as session:
+            camp_year = session.get(CampYear, camp_year_id)
+            if camp_year is None:
+                return
+
+            self.countdown_label.setText(self._format_countdown(camp_year))
+            self.camp_info_label.setText(self._format_camp_info(camp_year))
+
+            filled, total = planning_service.meal_plan_completeness(camp_year)
+            self.kpi_plan_progress.set_value(f"{filled} / {total}" if total else "0 / 0")
+            self.kpi_plan_progress.set_level("ok" if total and filled == total else "warnung" if total else "info")
+
+            active_entries = [e for e in camp_year.meal_plan_entries if e.status != "abgesagt"]
+            total_portions = sum(e.planned_portions or 0 for e in active_entries)
+            self.kpi_portions.set_value(str(total_portions))
+
+            camp_costs = {c.camp_year_id: c for c in stats_service.camp_year_costs(session)}
+            cost_entry = camp_costs.get(camp_year.id)
+            total_budget = cost_entry.total_cost if cost_entry else 0
+            self.kpi_budget.set_value(f"{total_budget:.2f}")
+            per_portion = (total_budget / total_portions) if total_portions else None
+            self.kpi_portion_cost.set_value(f"{per_portion:.2f}" if per_portion else "-")
+
+            missing_prices = price_service.missing_price_ingredients(session, year=camp_year.year)
+            self.kpi_missing_prices.set_value(str(len(missing_prices)))
+            self.kpi_missing_prices.set_level("kritisch" if missing_prices else "ok")
+
+            open_items = sum(
+                1
+                for shopping_list in camp_year.shopping_lists
+                for item in shopping_list.items
+                if item.status == "offen"
+            )
+            self.kpi_open_shopping.set_value(str(open_items))
+            self.kpi_open_shopping.set_level("warnung" if open_items else "ok")
+
+            missing_recipe_count = sum(1 for e in active_entries if e.recipe_id is None)
+            missing_portions = validation_service.find_meal_plan_without_portions(session, camp_year)
+            feedback_pending = [
+                entry for entry in feedback_service.list_feedback_candidates(session, camp_year) if entry.feedback is None
+            ]
+
+            self._reload_action_list(
+                camp_year,
+                missing_recipe_count=missing_recipe_count,
+                missing_portions_count=len(missing_portions),
+                missing_prices_count=len(missing_prices),
+                open_shopping_count=open_items,
+                feedback_pending_count=len(feedback_pending),
+            )
+
+    def _format_countdown(self, camp_year: CampYear) -> str:
+        days = planning_service.days_until_start(camp_year)
+        if days is None:
+            return "Kein Startdatum hinterlegt."
+        if camp_year.end_date and camp_year.start_date and camp_year.start_date <= date.today() <= camp_year.end_date:
+            return "Das Zeltlager läuft gerade!"
+        if days > 1:
+            return f"Noch {days} Tage bis zum Zeltlagerstart"
+        if days == 1:
+            return "Zeltlager startet morgen!"
+        if days == 0:
+            return "Zeltlager startet heute!"
+        return "Zeltlager ist beendet."
+
+    def _format_camp_info(self, camp_year: CampYear) -> str:
+        parts = []
+        if camp_year.start_date and camp_year.end_date:
+            parts.append(f"Zeitraum: {camp_year.start_date} bis {camp_year.end_date}")
+        if camp_year.location:
+            parts.append(f"Ort: {camp_year.location}")
+        if camp_year.participant_count_total:
+            parts.append(
+                f"Teilnehmer: {camp_year.participant_count_total} "
+                f"({camp_year.participant_count_children or 0} Kinder, {camp_year.participant_count_adults or 0} Erwachsene)"
+            )
+        else:
+            parts.append("Teilnehmerzahl noch nicht hinterlegt")
+        return " · ".join(parts)
+
+    def _reload_action_list(
+        self,
+        camp_year: CampYear,
+        *,
+        missing_recipe_count: int,
+        missing_portions_count: int,
+        missing_prices_count: int,
+        open_shopping_count: int,
+        feedback_pending_count: int,
+    ) -> None:
+        items: list[ActionItem] = []
+        if missing_recipe_count:
+            items.append(
+                ActionItem(f"{missing_recipe_count} Mahlzeiten ohne Rezept", "kritisch", "planning")
+            )
+        if missing_portions_count:
+            items.append(
+                ActionItem(f"{missing_portions_count} Mahlzeiten ohne Portionenzahl", "warnung", "planning")
+            )
+        if missing_prices_count:
+            items.append(
+                ActionItem(
+                    f"{missing_prices_count} Zutaten ohne Preis für {camp_year.year}", "kritisch", "ingredients"
+                )
+            )
+        if open_shopping_count:
+            items.append(ActionItem(f"{open_shopping_count} offene Einkäufe", "warnung", "shopping"))
+        if feedback_pending_count:
+            items.append(
+                ActionItem(f"{feedback_pending_count} Mahlzeiten ohne Feedback", "hinweis", "feedback")
+            )
+
+        self.action_list.clear()
+        if not items:
+            list_item = QListWidgetItem("Alles im grünen Bereich für dieses Zeltlager!")
+            list_item.setForeground(QColor(COLOR_OK))
+            self.action_list.addItem(list_item)
+            return
+
+        colors = {"kritisch": COLOR_CRITICAL, "warnung": COLOR_WARNING, "hinweis": COLOR_INFO}
+        for action in items:
+            nav_label = f"  ->  {_NAV_LABELS.get(action.nav_key, '')}" if action.nav_key else ""
+            list_item = QListWidgetItem(f"{action.text}{nav_label}")
+            list_item.setForeground(QColor(colors.get(action.level, COLOR_INFO)))
+            if action.nav_key:
+                list_item.setData(Qt.ItemDataRole.UserRole, action.nav_key)
+            self.action_list.addItem(list_item)
+
+    def _on_action_item_clicked(self, item: QListWidgetItem) -> None:
+        nav_key = item.data(Qt.ItemDataRole.UserRole)
+        if nav_key:
+            self.navigate_requested.emit(nav_key)
+
+    # --- Rezeptbuch & Historie (global, alle Zeltlager) -----------------------------------
 
     def _reload_global_stats(self) -> None:
         with self.context.session() as session:
@@ -331,90 +641,3 @@ class DashboardView(QWidget):
         axis_y.setRange(0, max_cost * 1.15 if max_cost else 1)
         chart.addAxis(axis_y, Qt.AlignmentFlag.AlignLeft)
         series.attachAxis(axis_y)
-
-    def _on_camp_year_changed(self) -> None:
-        self.context.current_camp_year_id = self.camp_year_combo.currentData()
-        self._reload_kpis()
-
-    def _reload_kpis(self) -> None:
-        camp_year_id = self.context.current_camp_year_id
-        if camp_year_id is None:
-            self.period_label.setText("Kein Camp-Jahr angelegt.")
-            self.warnings_table.setRowCount(0)
-            return
-
-        with self.context.session() as session:
-            camp_year = session.get(CampYear, camp_year_id)
-            if camp_year is None:
-                return
-
-            self.period_label.setText(
-                f"Zeitraum: {camp_year.start_date or '-'} bis {camp_year.end_date or '-'}"
-            )
-
-            active_entries = [e for e in camp_year.meal_plan_entries if e.status != "abgesagt"]
-            self.kpi_meals.set_value(str(len(active_entries)))
-            total_portions = sum(e.planned_portions or 0 for e in active_entries)
-            self.kpi_portions.set_value(str(total_portions))
-
-            total_budget = 0
-            for entry in active_entries:
-                if entry.recipe is None or not entry.planned_portions:
-                    continue
-                result = recipe_service.calculate_recipe_cost(
-                    session, entry.recipe, portions=entry.planned_portions, year=camp_year.year
-                )
-                total_budget += result.total_cost
-            self.kpi_budget.set_value(f"{total_budget:.2f}")
-
-            open_items = sum(
-                1
-                for shopping_list in camp_year.shopping_lists
-                for item in shopping_list.items
-                if item.status == "offen"
-            )
-            self.kpi_open_shopping.set_value(str(open_items))
-            self.kpi_open_shopping.set_level("warnung" if open_items else "ok")
-
-            missing_prices = price_service.missing_price_ingredients(session, year=camp_year.year)
-            self.kpi_missing_prices.set_value(str(len(missing_prices)))
-            self.kpi_missing_prices.set_level("kritisch" if missing_prices else "ok")
-
-            active_recipes = session.execute(select(Recipe).where(Recipe.active.is_(True))).scalars().all()
-            recipes_without_feedback = [r for r in active_recipes if not r.feedback_entries]
-            self.kpi_missing_feedback.set_value(str(len(recipes_without_feedback)))
-            self.kpi_missing_feedback.set_level("warnung" if recipes_without_feedback else "ok")
-
-            report = validation_service.run_all_checks(session, camp_year=camp_year, year=camp_year.year)
-            self._reload_warnings_table(report)
-
-    def _reload_warnings_table(self, report: validation_service.ValidationReport) -> None:
-        table = self.warnings_table
-        table.setRowCount(0)
-
-        if not report.issues:
-            self._add_warnings_band("Alles in Ordnung - keine Warnungen für dieses Camp-Jahr.", COLOR_OK)
-            return
-
-        issues_by_severity: dict[str, list] = {severity: [] for severity in _SEVERITY_ORDER}
-        for issue in report.issues:
-            issues_by_severity.setdefault(issue.severity, []).append(issue)
-
-        for severity in _SEVERITY_ORDER:
-            issues = issues_by_severity.get(severity) or []
-            if not issues:
-                continue
-            label = _SEVERITY_LABELS.get(severity, severity.title())
-            self._add_warnings_band(f"{label} ({len(issues)})", _SEVERITY_COLORS.get(severity, COLOR_INFO))
-            for issue in issues:
-                row = table.rowCount()
-                table.insertRow(row)
-                table.setItem(row, 0, QTableWidgetItem(f"[{issue.category}] {issue.message}"))
-
-    def _add_warnings_band(self, text: str, color: str) -> None:
-        table = self.warnings_table
-        row = table.rowCount()
-        table.insertRow(row)
-        band_label = QLabel(f"  {text}", table)
-        band_label.setStyleSheet(f"background-color: {color}; color: white; font-weight: 600; padding: 5px;")
-        table.setCellWidget(row, 0, band_label)

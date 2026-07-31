@@ -75,7 +75,30 @@ def update_camp_year(session: Session, camp_year: CampYear, *, year: int | None 
         if not hasattr(camp_year, key):
             raise AttributeError(f"Unbekanntes Camp-Jahr-Feld: {key}")
         setattr(camp_year, key, value)
+
+    # Gesamtzahl bei jeder Aenderung der Einzelwerte neu ableiten, wie beim Anlegen - sonst
+    # veraltet participant_count_total stillschweigend, sobald Kinder/Erwachsene bearbeitet werden.
+    if "participant_count_children" in fields or "participant_count_adults" in fields:
+        camp_year.participant_count_total = (camp_year.participant_count_children or 0) + (
+            camp_year.participant_count_adults or 0
+        )
     return camp_year
+
+
+def days_until_start(camp_year: CampYear, *, today: date | None = None) -> int | None:
+    """Tage bis Zeltlagerbeginn (negativ, wenn es schon begonnen hat). None ohne Startdatum."""
+    if camp_year.start_date is None:
+        return None
+    reference = today or date.today()
+    return (camp_year.start_date - reference).days
+
+
+def meal_plan_completeness(camp_year: CampYear) -> tuple[int, int]:
+    """(Anzahl Slots mit zugewiesenem Rezept, Anzahl aktiver Slots insgesamt) - fuer eine
+    'X von Y Mahlzeiten geplant'-Anzeige. Abgesagte Slots zaehlen nicht mit."""
+    active_entries = [entry for entry in camp_year.meal_plan_entries if entry.status != "abgesagt"]
+    filled = sum(1 for entry in active_entries if entry.recipe is not None)
+    return filled, len(active_entries)
 
 
 def generate_daily_meal_slots(

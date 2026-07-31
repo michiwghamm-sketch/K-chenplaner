@@ -48,6 +48,51 @@ def test_update_camp_year_rejects_rename_to_existing_year(session_factory) -> No
             planning_service.update_camp_year(session, camp_year_2026, year=2025)
 
 
+def test_update_camp_year_recomputes_participant_total(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        planning_service.create_camp_year(
+            session, year=2026, participant_count_children=10, participant_count_adults=2
+        )
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        assert camp_year.participant_count_total == 12
+        planning_service.update_camp_year(session, camp_year, participant_count_children=15)
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        assert camp_year.participant_count_total == 17
+
+
+def test_days_until_start(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = planning_service.create_camp_year(
+            session, year=2026, start_date=date(2026, 8, 10), end_date=date(2026, 8, 15)
+        )
+        assert planning_service.days_until_start(camp_year, today=date(2026, 8, 1)) == 9
+        assert planning_service.days_until_start(camp_year, today=date(2026, 8, 20)) == -10
+
+        no_dates_camp_year = planning_service.create_camp_year(session, year=2027)
+        assert planning_service.days_until_start(no_dates_camp_year) is None
+
+
+def test_meal_plan_completeness_ignores_cancelled_entries(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        recipe = Recipe(name="Nudeln", normalized_name="nudeln")
+        camp_year = planning_service.create_camp_year(session, year=2026)
+        session.add(recipe)
+        session.flush()
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(meal_type="Mittagessen", recipe=recipe, status="geplant"),
+                MealPlanEntry(meal_type="Abendessen", recipe=None, status="geplant"),
+                MealPlanEntry(meal_type="Frühstück", recipe=None, status="abgesagt"),
+            ]
+        )
+        filled, total = planning_service.meal_plan_completeness(camp_year)
+        assert (filled, total) == (1, 2)
+
+
 def test_generate_daily_meal_slots_creates_one_entry_per_day_and_meal_type(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = planning_service.create_camp_year(
