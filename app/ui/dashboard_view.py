@@ -349,7 +349,11 @@ class DashboardView(QWidget):
                 "end_date": camp_year.end_date,
                 "location": camp_year.location,
                 "participant_count_children": camp_year.participant_count_children,
+                "participant_count_children_vegetarian": camp_year.participant_count_children_vegetarian,
+                "participant_count_children_meat": camp_year.participant_count_children_meat,
                 "participant_count_adults": camp_year.participant_count_adults,
+                "participant_count_adults_vegetarian": camp_year.participant_count_adults_vegetarian,
+                "participant_count_adults_meat": camp_year.participant_count_adults_meat,
                 "notes": camp_year.notes,
             }
 
@@ -447,13 +451,24 @@ class DashboardView(QWidget):
         if camp_year.location:
             parts.append(f"Ort: {camp_year.location}")
         if camp_year.participant_count_total:
-            parts.append(
-                f"Teilnehmer: {camp_year.participant_count_total} "
-                f"({camp_year.participant_count_children or 0} Kinder, {camp_year.participant_count_adults or 0} Erwachsene)"
+            children_text = self._format_diet_group(
+                "Kinder", camp_year.participant_count_children,
+                camp_year.participant_count_children_vegetarian, camp_year.participant_count_children_meat,
             )
+            adults_text = self._format_diet_group(
+                "Betreuer", camp_year.participant_count_adults,
+                camp_year.participant_count_adults_vegetarian, camp_year.participant_count_adults_meat,
+            )
+            parts.append(f"Teilnehmer: {camp_year.participant_count_total} ({children_text}, {adults_text})")
         else:
             parts.append("Teilnehmerzahl noch nicht hinterlegt")
         return " · ".join(parts)
+
+    def _format_diet_group(self, label: str, count: int | None, vegetarian: int | None, meat: int | None) -> str:
+        text = f"{count or 0} {label}"
+        if vegetarian or meat:
+            text += f" ({vegetarian or 0} Veg./{meat or 0} Fleisch)"
+        return text
 
     def _reload_action_list(
         self,

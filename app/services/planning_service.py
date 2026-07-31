@@ -47,6 +47,10 @@ def create_camp_year(
     end_date: date | None = None,
     participant_count_children: int | None = None,
     participant_count_adults: int | None = None,
+    participant_count_children_vegetarian: int | None = None,
+    participant_count_children_meat: int | None = None,
+    participant_count_adults_vegetarian: int | None = None,
+    participant_count_adults_meat: int | None = None,
     location: str | None = None,
     notes: str | None = None,
 ) -> CampYear:
@@ -66,6 +70,10 @@ def create_camp_year(
         participant_count_children=participant_count_children,
         participant_count_adults=participant_count_adults,
         participant_count_total=total,
+        participant_count_children_vegetarian=participant_count_children_vegetarian,
+        participant_count_children_meat=participant_count_children_meat,
+        participant_count_adults_vegetarian=participant_count_adults_vegetarian,
+        participant_count_adults_meat=participant_count_adults_meat,
         location=location,
         notes=notes,
     )

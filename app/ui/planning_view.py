@@ -426,7 +426,11 @@ class PlanningView(QWidget):
                 "end_date": camp_year.end_date,
                 "location": camp_year.location,
                 "participant_count_children": camp_year.participant_count_children,
+                "participant_count_children_vegetarian": camp_year.participant_count_children_vegetarian,
+                "participant_count_children_meat": camp_year.participant_count_children_meat,
                 "participant_count_adults": camp_year.participant_count_adults,
+                "participant_count_adults_vegetarian": camp_year.participant_count_adults_vegetarian,
+                "participant_count_adults_meat": camp_year.participant_count_adults_meat,
                 "notes": camp_year.notes,
             }
 

@@ -247,6 +247,13 @@ class CampYear(Base):
     participant_count_children: Mapped[Optional[int]] = mapped_column(Integer)
     participant_count_adults: Mapped[Optional[int]] = mapped_column(Integer)
     participant_count_total: Mapped[Optional[int]] = mapped_column(Integer)
+    # Ernaehrungsaufteilung getrennt fuer Kinder und Betreuer (Erwachsene) erfasst, weil beide
+    # Gruppen oft an unterschiedlichen Mahlzeiten teilnehmen (siehe MealPlanEntry.target_group) und
+    # daher unterschiedlich viele vegetarische/fleischhaltige Portionen pro Mahlzeit noetig sind.
+    participant_count_children_vegetarian: Mapped[Optional[int]] = mapped_column(Integer)
+    participant_count_children_meat: Mapped[Optional[int]] = mapped_column(Integer)
+    participant_count_adults_vegetarian: Mapped[Optional[int]] = mapped_column(Integer)
+    participant_count_adults_meat: Mapped[Optional[int]] = mapped_column(Integer)
     location: Mapped[Optional[str]] = mapped_column(String(255))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = created_timestamp_column()

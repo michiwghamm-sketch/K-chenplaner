@@ -101,6 +101,29 @@ def test_is_active_status() -> None:
     assert planning_service.is_active_status(planning_service.NO_MEAL_STATUS) is False
 
 
+def test_create_camp_year_stores_diet_breakdown_per_group(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        planning_service.create_camp_year(
+            session,
+            year=2026,
+            participant_count_children=30,
+            participant_count_children_vegetarian=10,
+            participant_count_children_meat=20,
+            participant_count_adults=10,
+            participant_count_adults_vegetarian=4,
+            participant_count_adults_meat=6,
+        )
+
+    with session_scope(session_factory) as session:
+        camp_year = session.execute(select(CampYear).where(CampYear.year == 2026)).scalar_one()
+        assert camp_year.participant_count_children_vegetarian == 10
+        assert camp_year.participant_count_children_meat == 20
+        assert camp_year.participant_count_adults_vegetarian == 4
+        assert camp_year.participant_count_adults_meat == 6
+        # Die Gesamtzahl bleibt weiterhin nur aus Kinder/Erwachsene abgeleitet.
+        assert camp_year.participant_count_total == 40
+
+
 def test_generate_daily_meal_slots_creates_one_entry_per_day_and_meal_type(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = planning_service.create_camp_year(

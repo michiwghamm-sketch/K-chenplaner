@@ -1086,9 +1086,25 @@ class CampYearDialog(QDialog):
         self.children_spin.setRange(0, 1000)
         self.children_spin.setValue(initial.get("participant_count_children") or 0)
 
+        self.children_vegetarian_spin = QSpinBox(self)
+        self.children_vegetarian_spin.setRange(0, 1000)
+        self.children_vegetarian_spin.setValue(initial.get("participant_count_children_vegetarian") or 0)
+
+        self.children_meat_spin = QSpinBox(self)
+        self.children_meat_spin.setRange(0, 1000)
+        self.children_meat_spin.setValue(initial.get("participant_count_children_meat") or 0)
+
         self.adults_spin = QSpinBox(self)
         self.adults_spin.setRange(0, 1000)
         self.adults_spin.setValue(initial.get("participant_count_adults") or 0)
+
+        self.adults_vegetarian_spin = QSpinBox(self)
+        self.adults_vegetarian_spin.setRange(0, 1000)
+        self.adults_vegetarian_spin.setValue(initial.get("participant_count_adults_vegetarian") or 0)
+
+        self.adults_meat_spin = QSpinBox(self)
+        self.adults_meat_spin.setRange(0, 1000)
+        self.adults_meat_spin.setValue(initial.get("participant_count_adults_meat") or 0)
 
         self.location_edit = QLineEdit(self)
         self.location_edit.setText(initial.get("location") or "")
@@ -1104,7 +1120,11 @@ class CampYearDialog(QDialog):
         form.addRow("Enddatum", self.end_date_edit)
         form.addRow("Ort", self.location_edit)
         form.addRow("Teilnehmer Kinder", self.children_spin)
-        form.addRow("Teilnehmer Erwachsene", self.adults_spin)
+        form.addRow("   davon Vegetarier", self.children_vegetarian_spin)
+        form.addRow("   davon Fleischesser", self.children_meat_spin)
+        form.addRow("Teilnehmer Betreuer", self.adults_spin)
+        form.addRow("   davon Vegetarier", self.adults_vegetarian_spin)
+        form.addRow("   davon Fleischesser", self.adults_meat_spin)
         form.addRow("Notizen", self.notes_edit)
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
@@ -1123,7 +1143,11 @@ class CampYearDialog(QDialog):
             "end_date": self.end_date_edit.date().toPython(),
             "location": self.location_edit.text().strip() or None,
             "participant_count_children": self.children_spin.value() or None,
+            "participant_count_children_vegetarian": self.children_vegetarian_spin.value() or None,
+            "participant_count_children_meat": self.children_meat_spin.value() or None,
             "participant_count_adults": self.adults_spin.value() or None,
+            "participant_count_adults_vegetarian": self.adults_vegetarian_spin.value() or None,
+            "participant_count_adults_meat": self.adults_meat_spin.value() or None,
             "notes": self.notes_edit.toPlainText().strip() or None,
         }
 
