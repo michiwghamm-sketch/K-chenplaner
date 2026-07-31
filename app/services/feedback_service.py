@@ -49,7 +49,7 @@ def list_feedback_candidates(session: Session, camp_year: CampYear) -> list[Feed
     entries = [
         entry
         for entry in camp_year.meal_plan_entries
-        if entry.recipe is not None and planning_service.is_active_status(entry.status)
+        if entry.recipe is not None and planning_service.is_scheduled_entry(entry)
     ]
 
     by_recipe: dict[int, FeedbackCandidate] = {}

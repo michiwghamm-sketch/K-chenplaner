@@ -400,7 +400,7 @@ def export_weekly_recipe_sheets_to_pdf(session, camp_year: CampYear, path: Path)
     entries = [
         entry
         for entry in camp_year.meal_plan_entries
-        if entry.recipe is not None and planning_service.is_active_status(entry.status) and entry.planned_portions
+        if entry.recipe is not None and planning_service.is_scheduled_entry(entry) and entry.planned_portions
     ]
     if not entries:
         raise ValueError("Für diese Zeltlagerwoche sind keine Rezepte mit Portionenzahl geplant.")

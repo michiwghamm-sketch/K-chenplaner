@@ -84,10 +84,11 @@ def test_meal_plan_completeness_ignores_cancelled_and_no_meal_entries(session_fa
         session.flush()
         camp_year.meal_plan_entries.extend(
             [
-                MealPlanEntry(meal_type="Mittagessen", recipe=recipe, status="geplant"),
-                MealPlanEntry(meal_type="Abendessen", recipe=None, status="geplant"),
-                MealPlanEntry(meal_type="Frühstück", recipe=None, status="abgesagt"),
-                MealPlanEntry(meal_type="Brotzeit", recipe=None, status="keine Mahlzeit"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Mittagessen", recipe=recipe, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Abendessen", recipe=None, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Frühstück", recipe=None, status="abgesagt"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Brotzeit", recipe=None, status="keine Mahlzeit"),
+                MealPlanEntry(meal_date=None, meal_type="Mittagessen", recipe=None, status="geplant"),
             ]
         )
         filled, total = planning_service.meal_plan_completeness(camp_year)
@@ -98,6 +99,19 @@ def test_is_active_status() -> None:
     assert planning_service.is_active_status("geplant") is True
     assert planning_service.is_active_status(None) is True
     assert planning_service.is_active_status("abgesagt") is False
+
+
+def test_is_scheduled_entry_requires_a_real_date() -> None:
+    """Regression: verwaiste Importreste ohne Datum koennen im Wochenplan-Raster nie auftauchen
+    (meal_entries_for_slot filtert strikt nach Datum) und duerfen Zaehlungen daher nicht verfaelschen."""
+    dated = MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Mittagessen", status="geplant")
+    assert planning_service.is_scheduled_entry(dated) is True
+
+    dateless = MealPlanEntry(meal_date=None, meal_type="Mittagessen", status="geplant")
+    assert planning_service.is_scheduled_entry(dateless) is False
+
+    cancelled = MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Mittagessen", status="abgesagt")
+    assert planning_service.is_scheduled_entry(cancelled) is False
     assert planning_service.is_active_status(planning_service.NO_MEAL_STATUS) is False
 
 

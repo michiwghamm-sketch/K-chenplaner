@@ -1,3 +1,4 @@
+from datetime import date
 from decimal import Decimal
 
 from app.db import session_scope
@@ -36,9 +37,9 @@ def test_find_meal_plan_without_portions_ignores_cancelled_entries(session_facto
         camp_year = CampYear(year=2026, name="Zeltlager 2026")
         camp_year.meal_plan_entries.extend(
             [
-                MealPlanEntry(meal_type="Mittagessen", recipe=recipe, planned_portions=None, status="geplant"),
-                MealPlanEntry(meal_type="Abendessen", recipe=recipe, planned_portions=None, status="abgesagt"),
-                MealPlanEntry(meal_type="Fruehstueck", recipe=recipe, planned_portions=10, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Mittagessen", recipe=recipe, planned_portions=None, status="geplant"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Abendessen", recipe=recipe, planned_portions=None, status="abgesagt"),
+                MealPlanEntry(meal_date=date(2026, 8, 1), meal_type="Fruehstueck", recipe=recipe, planned_portions=10, status="geplant"),
             ]
         )
         session.add_all([recipe, camp_year])

@@ -23,6 +23,19 @@ DEFAULT_MEAL_TYPES = ("Frühstück", "Mittagessen", "Abendessen")
 def is_active_status(status: str | None) -> bool:
     return status not in INACTIVE_STATUSES
 
+
+def is_scheduled_entry(entry: MealPlanEntry) -> bool:
+    """Wie is_active_status(), zusaetzlich muss der Slot ein echtes Datum haben.
+
+    meal_entries_for_slot() (das Wochenplan-Raster) filtert strikt nach Datum - ein Eintrag ohne
+    meal_date kann dort also nie auftauchen und nie bearbeitet werden. Ohne diese Zusatzpruefung
+    wuerden solche verwaisten Eintraege (z. B. Reste eines Excel-Imports ohne zugewiesenes Datum)
+    Zaehlungen wie 'X Mahlzeiten ohne Rezept' verfaelschen, obwohl niemand sie je zu Gesicht
+    bekommt oder ausfuellen kann.
+    """
+    return entry.meal_date is not None and is_active_status(entry.status)
+
+
 WEEKDAY_NAMES_DE = (
     "Montag",
     "Dienstag",
@@ -114,7 +127,7 @@ def days_until_start(camp_year: CampYear, *, today: date | None = None) -> int |
 def meal_plan_completeness(camp_year: CampYear) -> tuple[int, int]:
     """(Anzahl Slots mit zugewiesenem Rezept, Anzahl aktiver Slots insgesamt) - fuer eine
     'X von Y Mahlzeiten geplant'-Anzeige. Abgesagte und 'keine Mahlzeit'-Slots zaehlen nicht mit."""
-    active_entries = [entry for entry in camp_year.meal_plan_entries if is_active_status(entry.status)]
+    active_entries = [entry for entry in camp_year.meal_plan_entries if is_scheduled_entry(entry)]
     filled = sum(1 for entry in active_entries if entry.recipe is not None)
     return filled, len(active_entries)
 
