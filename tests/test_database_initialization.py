@@ -1,7 +1,7 @@
 from sqlalchemy import inspect
 
 from app.config import AppConfig
-from app.db import check_sqlite_integrity, create_engine_from_config, init_database
+from app.db import check_connectivity, check_sqlite_integrity, create_engine_from_config, init_database
 
 
 def test_init_database_creates_expected_tables(tmp_path) -> None:
@@ -30,3 +30,4 @@ def test_init_database_creates_expected_tables(tmp_path) -> None:
         "import_issues",
     }.issubset(table_names)
     assert check_sqlite_integrity(engine) == "ok"
+    assert check_connectivity(engine) == "ok"

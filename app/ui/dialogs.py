@@ -26,6 +26,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSpinBox,
     QTableWidget,
+    QTableWidgetItem,
     QTextEdit,
     QVBoxLayout,
     QWidget,
@@ -39,6 +40,7 @@ from app.services.open_prices_service import (
     suggest_matches_for_query,
 )
 from app.services import open_prices_category_service, open_prices_service
+from app.services.sync_service import SyncConflict
 from app.ui.widgets import UnitComboBox
 
 
@@ -1445,3 +1447,59 @@ class RecipeStepDialog(QDialog):
             "description": description or None,
             "duration_minutes": self.duration_spin.value() or None,
         }
+
+
+class SyncConflictDialog(QDialog):
+    """Zeigt Datensaetze, die seit dem letzten Cloud-Sync sowohl offline als auch von jemand
+    anderem in der Cloud veraendert wurden - pro Zeile muss entschieden werden, welche Version
+    gelten soll (siehe sync_service.analyze/apply)."""
+
+    def __init__(self, conflicts: list[SyncConflict], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Sync-Konflikte")
+        self.setMinimumSize(760, 420)
+        self._conflicts = conflicts
+
+        info = QLabel(
+            f"{len(conflicts)} Eintrag/Einträge wurden seit dem letzten Abgleich sowohl offline "
+            "als auch in der Cloud verändert. Bitte pro Zeile auswählen, welche Version gelten soll "
+            "- die jeweils andere Version geht dabei verloren.",
+            self,
+        )
+        info.setWordWrap(True)
+
+        self.table = QTableWidget(len(conflicts), 4, self)
+        self.table.setHorizontalHeaderLabels(["Tabelle", "Eintrag", "Zeitpunkte", "Auswahl"])
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(2, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().setSectionResizeMode(3, QHeaderView.ResizeMode.ResizeToContents)
+        self.table.verticalHeader().setVisible(False)
+
+        self._choice_combos: list[QComboBox] = []
+        for row, conflict in enumerate(conflicts):
+            self.table.setItem(row, 0, QTableWidgetItem(conflict.table_name))
+            self.table.setItem(row, 1, QTableWidgetItem(conflict.label))
+            local_time = conflict.local_row.get("updated_at", "-")
+            cloud_time = conflict.cloud_row.get("updated_at", "-")
+            self.table.setItem(row, 2, QTableWidgetItem(f"Du: {local_time}\nCloud: {cloud_time}"))
+
+            combo = QComboBox(self.table)
+            combo.addItem("Meine Version behalten", "local")
+            combo.addItem("Cloud-Version behalten", "cloud")
+            self.table.setCellWidget(row, 3, combo)
+            self._choice_combos.append(combo)
+        self.table.resizeRowsToContents()
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel, self)
+        buttons.button(QDialogButtonBox.StandardButton.Ok).setText("Übernehmen und synchronisieren")
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(info)
+        layout.addWidget(self.table, stretch=1)
+        layout.addWidget(buttons)
+
+    def resolutions(self) -> dict[tuple[str, tuple], str]:
+        return {conflict.key: combo.currentData() for conflict, combo in zip(self._conflicts, self._choice_combos)}

@@ -1,9 +1,11 @@
 from __future__ import annotations
 
-from PySide6.QtGui import QGuiApplication
-from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QStatusBar, QStackedWidget, QWidget
+from PySide6.QtCore import QTimer, QUrl
+from PySide6.QtGui import QDesktopServices, QGuiApplication
+from PySide6.QtWidgets import QHBoxLayout, QMainWindow, QMessageBox, QStatusBar, QStackedWidget, QWidget
 
 from app.context import AppContext
+from app.services.update_service import UpdateInfo
 from app.ui.dashboard_view import DashboardView
 from app.ui.feedback_view import FeedbackView
 from app.ui.import_export_view import ImportExportView
@@ -14,6 +16,8 @@ from app.ui.planning_view import PlanningView
 from app.ui.recipes_view import RecipesView
 from app.ui.settings_view import SettingsView
 from app.ui.shopping_view import ShoppingView
+from app.ui.cache_priming import prime_offline_cache_async
+from app.ui.update_check import run_update_check_async
 from app.utils.drive_detection import get_drive_warning
 
 VIEW_CLASSES = {
@@ -69,13 +73,44 @@ class MainWindow(QMainWindow):
 
         status_bar = QStatusBar(self)
         self.setStatusBar(status_bar)
-        db_status_text = f"Datenbank: {context.config.database_path}"
-        warning = get_drive_warning(context.config.database_path)
-        if warning:
-            db_status_text += "  |  WARNUNG: Datenbank liegt auf einem Cloud-Sync- oder Netzlaufwerk."
+        if context.is_offline_mode:
+            db_status_text = (
+                f"Offline-Modus: {context.config.database_path}  |  "
+                "Ungesyncte Änderungen - siehe Einstellungen > Jetzt synchronisieren"
+            )
+        elif context.config.is_sqlite:
+            db_status_text = f"Datenbank: {context.config.database_path}"
+            warning = get_drive_warning(context.config.database_path)
+            if warning:
+                db_status_text += "  |  WARNUNG: Datenbank liegt auf einem Cloud-Sync- oder Netzlaufwerk."
+        else:
+            db_status_text = "Datenbank: Cloud (Neon Postgres)"
         status_bar.showMessage(db_status_text)
 
         self._show_page("dashboard")
+
+        # Verzoegert und im Hintergrund, damit ein langsames/fehlendes Internet den Start nie
+        # ausbremst - bei Erfolg nur benachrichtigen, wenn es wirklich eine neuere Version gibt.
+        QTimer.singleShot(2000, lambda: run_update_check_async(self, self._on_update_check_result))
+
+        # Im Live-Cloud-Modus den Offline-Cache im Hintergrund auf dem aktuellen Stand halten,
+        # damit ein spaeterer Internetausfall nahtlos in den Offline-Modus uebergehen kann.
+        if context.cloud_database_url and not context.is_offline_mode:
+            QTimer.singleShot(3000, lambda: prime_offline_cache_async(self, context.engine))
+
+    def _on_update_check_result(self, update_info: UpdateInfo | None) -> None:
+        if update_info is None:
+            return
+        result = QMessageBox.information(
+            self,
+            "Update verfügbar",
+            f"Eine neuere Version ist verfügbar: {update_info.latest_version}\n\n"
+            "Jetzt die Release-Seite zum Herunterladen öffnen?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if result == QMessageBox.StandardButton.Yes:
+            QDesktopServices.openUrl(QUrl(update_info.download_url))
 
     def _apply_initial_geometry(self) -> None:
         """Startgroesse an den tatsaechlichen Bildschirm anpassen (85% der verfuegbaren Flaeche,

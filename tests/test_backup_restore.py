@@ -9,6 +9,18 @@ def test_app_config_builds_sqlite_url(tmp_path) -> None:
     config = AppConfig.load(project_root=tmp_path, database_path=tmp_path / "backup.sqlite3")
     assert config.database_path == tmp_path / "backup.sqlite3"
     assert config.database_url == build_sqlite_url(tmp_path / "backup.sqlite3")
+    assert config.is_sqlite is True
+
+
+def test_app_config_prefers_database_url_over_path(tmp_path) -> None:
+    config = AppConfig.load(
+        project_root=tmp_path,
+        database_path=tmp_path / "unused.sqlite3",
+        database_url="postgresql://user:pw@example.neon.tech/dbname",
+    )
+    assert config.database_path is None
+    assert config.is_sqlite is False
+    assert config.database_url == "postgresql+psycopg://user:pw@example.neon.tech/dbname"
 
 
 @pytest.fixture()
@@ -56,6 +68,18 @@ def test_list_backups_returns_newest_first(initialized_config) -> None:
 
 def test_verify_integrity_reports_ok_for_fresh_database(initialized_config) -> None:
     engine = create_engine_from_config(initialized_config)
-    ok, result = backup_service.verify_integrity(engine)
+    ok, result = backup_service.verify_integrity(engine, initialized_config)
     assert ok is True
     assert result == "ok"
+
+
+def test_backup_operations_raise_in_cloud_mode(tmp_path) -> None:
+    config = AppConfig.load(
+        project_root=tmp_path,
+        database_url="postgresql://user:pw@example.neon.tech/dbname",
+    )
+    with pytest.raises(backup_service.CloudModeNotSupportedError):
+        backup_service.create_backup(config)
+    with pytest.raises(backup_service.CloudModeNotSupportedError):
+        backup_service.restore_backup(config, tmp_path / "irrelevant.sqlite3", confirm=True)
+    assert backup_service.list_backups(config) == []

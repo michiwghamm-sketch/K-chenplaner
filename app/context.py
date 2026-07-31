@@ -19,6 +19,10 @@ class AppContext:
     engine: Engine
     session_factory: sessionmaker[Session]
     current_camp_year_id: int | None = None
+    # Gesetzt, sobald irgendwann eine Cloud-Verbindung konfiguriert wurde (siehe
+    # database_selection_service) - auch waehrend die App gerade im Offline-Cache laeuft.
+    cloud_database_url: str | None = None
+    is_offline_mode: bool = False
 
     @contextmanager
     def session(self) -> Iterator[Session]:

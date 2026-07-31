@@ -7,7 +7,7 @@ from pathlib import Path
 from sqlalchemy.engine import Engine
 
 from app.config import AppConfig
-from app.db import check_sqlite_integrity
+from app.db import check_connectivity, check_sqlite_integrity
 from app.utils.paths import get_backups_dir
 
 BACKUP_TIMESTAMP_FORMAT = "%Y%m%d_%H%M%S"
@@ -17,8 +17,17 @@ class RestoreNotConfirmedError(Exception):
     """Wird ausgeloest, wenn ein Restore ohne explizite Bestaetigung angefragt wird."""
 
 
+class CloudModeNotSupportedError(Exception):
+    """Datei-basiertes Backup/Restore ist im Cloud-Datenbank-Modus nicht anwendbar - Neon
+    macht dort automatische Point-in-Time-Backups (siehe README)."""
+
+
 def create_backup(config: AppConfig) -> Path:
     """Kopiert die aktuelle SQLite-Datenbank in einen zeitgestempelten Backup-Ordner."""
+    if not config.is_sqlite or config.database_path is None:
+        raise CloudModeNotSupportedError(
+            "Im Cloud-Datenbank-Modus gibt es kein lokales Datei-Backup - Neon sichert automatisch."
+        )
     if not config.database_path.exists():
         raise FileNotFoundError(f"Keine Datenbank unter '{config.database_path}' gefunden.")
 
@@ -36,12 +45,18 @@ def create_backup(config: AppConfig) -> Path:
 
 
 def list_backups(config: AppConfig) -> list[Path]:
+    if not config.is_sqlite or config.database_path is None:
+        return []
     backups_dir = get_backups_dir(config.project_root)
     return sorted(backups_dir.glob(f"{config.database_path.stem}_*{config.database_path.suffix}"), reverse=True)
 
 
 def restore_backup(config: AppConfig, backup_path: Path, *, confirm: bool) -> None:
     """Stellt eine Datenbank aus einem Backup wieder her. Erfordert explizite Bestaetigung durch den Aufrufer (UI-Dialog)."""
+    if not config.is_sqlite or config.database_path is None:
+        raise CloudModeNotSupportedError(
+            "Im Cloud-Datenbank-Modus gibt es kein lokales Datei-Restore - Neon sichert automatisch."
+        )
     if not confirm:
         raise RestoreNotConfirmedError("Restore muss explizit bestätigt werden.")
     if not backup_path.exists():
@@ -54,6 +69,6 @@ def restore_backup(config: AppConfig, backup_path: Path, *, confirm: bool) -> No
     shutil.copy2(backup_path, config.database_path)
 
 
-def verify_integrity(engine: Engine) -> tuple[bool, str]:
-    result = check_sqlite_integrity(engine)
+def verify_integrity(engine: Engine, config: AppConfig) -> tuple[bool, str]:
+    result = check_sqlite_integrity(engine) if config.is_sqlite else check_connectivity(engine)
     return result == "ok", result

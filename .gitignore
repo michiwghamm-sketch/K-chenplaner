@@ -9,6 +9,7 @@ env/
 .ruff_cache/
 dist/
 build/
+Output/
 *.spec
 *.sqlite
 *.sqlite3

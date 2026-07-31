@@ -7,6 +7,7 @@ from PySide6.QtWidgets import (
     QFileDialog,
     QGroupBox,
     QHBoxLayout,
+    QLabel,
     QPushButton,
     QVBoxLayout,
     QWidget,
@@ -42,28 +43,42 @@ class ImportExportView(QWidget):
         backup_group = QGroupBox("Backup und Restore", self)
         backup_layout = QVBoxLayout(backup_group)
 
+        self.cloud_mode_hint = QLabel(
+            "Im Cloud-Datenbank-Modus (Neon Postgres) gibt es kein lokales Datei-Backup - "
+            "Neon sichert automatisch (Point-in-Time-Restore ueber das Neon-Dashboard).",
+            backup_group,
+        )
+        self.cloud_mode_hint.setWordWrap(True)
+        self.cloud_mode_hint.hide()
+        backup_layout.addWidget(self.cloud_mode_hint)
+
         backup_row = QHBoxLayout()
-        backup_button = QPushButton("Backup erstellen", backup_group)
-        backup_button.clicked.connect(self._create_backup)
+        self.backup_button = QPushButton("Backup erstellen", backup_group)
+        self.backup_button.clicked.connect(self._create_backup)
         integrity_button = QPushButton("Datenbank prüfen", backup_group)
         integrity_button.clicked.connect(self._check_integrity)
-        backup_row.addWidget(backup_button)
+        backup_row.addWidget(self.backup_button)
         backup_row.addWidget(integrity_button)
         backup_row.addStretch(1)
         backup_layout.addLayout(backup_row)
 
         restore_row = QHBoxLayout()
         self.backup_combo = QComboBox(backup_group)
-        restore_button = QPushButton("Aus Backup wiederherstellen", backup_group)
-        restore_button.clicked.connect(self._restore_backup)
+        self.restore_button = QPushButton("Aus Backup wiederherstellen", backup_group)
+        self.restore_button.clicked.connect(self._restore_backup)
         restore_row.addWidget(self.backup_combo)
-        restore_row.addWidget(restore_button)
+        restore_row.addWidget(self.restore_button)
         backup_layout.addLayout(restore_row)
 
         layout.addWidget(backup_group)
         layout.addStretch(1)
 
     def refresh(self) -> None:
+        is_sqlite = self.context.config.is_sqlite
+        self.cloud_mode_hint.setVisible(not is_sqlite)
+        self.backup_button.setEnabled(is_sqlite)
+        self.backup_combo.setEnabled(is_sqlite)
+        self.restore_button.setEnabled(is_sqlite)
         self._reload_backup_combo()
 
     def _reload_backup_combo(self) -> None:
@@ -110,7 +125,7 @@ class ImportExportView(QWidget):
         self._reload_backup_combo()
 
     def _check_integrity(self) -> None:
-        ok, result = backup_service.verify_integrity(self.context.engine)
+        ok, result = backup_service.verify_integrity(self.context.engine, self.context.config)
         if ok:
             info_dialog(self, "Datenbankintegrität: OK")
         else:

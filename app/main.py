@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -14,28 +13,28 @@ from app.config import AppConfig  # noqa: E402
 from app.context import AppContext  # noqa: E402
 from app.db import initialize_database  # noqa: E402
 from app.services.backup_service import verify_integrity  # noqa: E402
+from app.services.database_selection_service import (  # noqa: E402
+    OfflineWithoutCacheError,
+    resolve_cloud_or_offline_mode,
+)
 from app.ui.app import MainWindow  # noqa: E402
 from app.ui.theme import apply_theme  # noqa: E402
 from app.utils.drive_detection import get_drive_warning  # noqa: E402
 from app.utils.logging_config import get_logger, setup_logging  # noqa: E402
-from app.utils.paths import get_logs_dir, get_user_settings_path  # noqa: E402
+from app.utils.paths import get_logs_dir, load_user_settings, save_user_settings  # noqa: E402
 
 
 def load_saved_database_path() -> Path | None:
-    settings_path = get_user_settings_path()
-    if not settings_path.exists():
-        return None
-    try:
-        data = json.loads(settings_path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, OSError):
-        return None
-    raw_path = data.get("database_path")
+    raw_path = load_user_settings().get("database_path")
     return Path(raw_path) if raw_path else None
 
 
+def load_saved_database_url() -> str | None:
+    return load_user_settings().get("database_url") or None
+
+
 def save_database_path(path: Path) -> None:
-    settings_path = get_user_settings_path()
-    settings_path.write_text(json.dumps({"database_path": str(path)}, indent=2), encoding="utf-8")
+    save_user_settings({"database_path": str(path)})
 
 
 def choose_database_path_first_run(default_path: Path) -> Path | None:
@@ -79,28 +78,48 @@ def main() -> int:
     setup_logging(get_logs_dir(PROJECT_ROOT))
     logger = get_logger("main")
 
-    saved_path = load_saved_database_path()
-    if saved_path is None:
-        chosen_path = choose_database_path_first_run(default_config.database_path)
-        if chosen_path is None:
-            logger.info("Ersteinrichtung abgebrochen: kein Datenbankpfad gewaehlt.")
-            return 0
-        save_database_path(chosen_path)
-        saved_path = chosen_path
+    saved_url = load_saved_database_url()
+    cloud_database_url: str | None = None
+    is_offline_mode = False
+    if saved_url:
+        # Cloud-Modus (siehe Einstellungen > "Mit Cloud-Datenbank verbinden..."): kein Datei-Dialog,
+        # keine Drive-Warnung - beide gelten nur fuer eine lokale SQLite-Datei. Faellt automatisch
+        # auf den lokalen Offline-Cache zurueck, wenn die Cloud gerade nicht erreichbar ist oder
+        # noch ungesyncte Offline-Aenderungen vorliegen (siehe database_selection_service).
+        try:
+            selection = resolve_cloud_or_offline_mode(PROJECT_ROOT, saved_url)
+        except OfflineWithoutCacheError as exc:
+            logger.warning("Offline-Start ohne vorhandenen Cache: %s", exc)
+            QMessageBox.critical(None, "Keine Internetverbindung", str(exc))
+            return 1
+        config = selection.config
+        target_description = selection.target_description
+        is_offline_mode = selection.is_offline_mode
+        cloud_database_url = selection.cloud_database_url
+    else:
+        saved_path = load_saved_database_path()
+        if saved_path is None:
+            chosen_path = choose_database_path_first_run(default_config.database_path)
+            if chosen_path is None:
+                logger.info("Ersteinrichtung abgebrochen: kein Datenbankpfad gewaehlt.")
+                return 0
+            save_database_path(chosen_path)
+            saved_path = chosen_path
+        config = AppConfig.load(project_root=PROJECT_ROOT, database_path=saved_path)
+        target_description = str(saved_path)
 
     try:
-        config = AppConfig.load(project_root=PROJECT_ROOT, database_path=saved_path)
         config, engine, session_factory = initialize_database(config)
     except Exception as exc:  # noqa: BLE001 - Nicht-Entwickler sollen eine verstaendliche Meldung sehen
         logger.exception("Datenbank konnte nicht initialisiert werden.")
         QMessageBox.critical(
             None,
             "Datenbankfehler",
-            f"Die Datenbank unter\n{saved_path}\nkonnte nicht geoeffnet werden.\n\nDetails: {exc}",
+            f"Die Datenbank unter\n{target_description}\nkonnte nicht geoeffnet werden.\n\nDetails: {exc}",
         )
         return 1
 
-    ok, integrity_result = verify_integrity(engine)
+    ok, integrity_result = verify_integrity(engine, config)
     if not ok:
         logger.error("Datenbankintegritaetspruefung fehlgeschlagen: %s", integrity_result)
         QMessageBox.warning(
@@ -110,7 +129,13 @@ def main() -> int:
             "Ein Restore aus einem Backup wird empfohlen (Import/Export > Wiederherstellen).",
         )
 
-    context = AppContext(config=config, engine=engine, session_factory=session_factory)
+    context = AppContext(
+        config=config,
+        engine=engine,
+        session_factory=session_factory,
+        cloud_database_url=cloud_database_url,
+        is_offline_mode=is_offline_mode,
+    )
     window = MainWindow(context)
     window.show()
 

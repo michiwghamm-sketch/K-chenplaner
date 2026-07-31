@@ -119,5 +119,16 @@ def check_sqlite_integrity(engine: Engine) -> str:
     return row[0] if row else "unknown"
 
 
+def check_connectivity(engine: Engine) -> str:
+    """Einfacher Erreichbarkeits-Check fuer Nicht-SQLite-Verbindungen (z. B. Cloud-Postgres),
+    wo es kein Aequivalent zu PRAGMA integrity_check gibt."""
+    try:
+        with engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as exc:  # noqa: BLE001 - Fehlertext soll 1:1 an die UI durchgereicht werden
+        return str(exc)
+    return "ok"
+
+
 def database_exists(database_path: Path) -> bool:
     return database_path.exists()

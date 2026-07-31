@@ -17,6 +17,7 @@ from reportlab.platypus import Image, KeepInFrame, PageBreak, Paragraph, SimpleD
 from app.models import CampYear, Recipe, ShoppingList
 from app.services import planning_service, recipe_service, shopping_service
 from app.services.recipe_service import RecipeCostResult, UNASSIGNED_COMPONENT_LABEL
+from app.utils.paths import get_assets_dir
 
 SHOPPING_LIST_COLUMNS = (
     "Zutat",
@@ -99,7 +100,7 @@ def export_recipes_to_csv(recipes: list[Recipe], path: Path) -> Path:
 
 # --- Rezept-PDF (druckfähige Rezeptkarte) --------------------------------------------
 
-ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
+ASSETS_DIR = get_assets_dir()
 LOGO_PATH = ASSETS_DIR / "kolping_logo.jpeg"
 
 PDF_ORANGE = colors.HexColor("#FF8C00")

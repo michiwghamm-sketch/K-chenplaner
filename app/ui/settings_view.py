@@ -1,7 +1,7 @@
 from __future__ import annotations
 
-import json
-
+from PySide6.QtCore import QUrl
+from PySide6.QtGui import QDesktopServices
 from PySide6.QtWidgets import (
     QDialog,
     QDialogButtonBox,
@@ -17,15 +17,20 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from app import __version__
+from app.config import AppConfig
 from app.context import AppContext
+from app.db import check_connectivity, create_engine_from_config
 from app.models import Unit
-from app.services import unit_service
-from app.ui.dialogs import confirm_dialog, error_dialog, info_dialog, prompt_text
+from app.services import sync_service, unit_service
+from app.services.update_service import UpdateInfo
+from app.ui.dialogs import SyncConflictDialog, confirm_dialog, error_dialog, info_dialog, prompt_text
+from app.ui.update_check import run_update_check_async
 from app.ui.widgets import PageHeader, StatusBadge
 from app.utils.drive_detection import get_drive_warning
-from app.utils.paths import get_user_settings_path
+from app.utils.paths import clear_user_setting, get_offline_sync_state_path, save_user_settings
 
-APP_VERSION = "0.1.0 (Prototyp)"
+APP_VERSION = __version__
 
 
 class UnitsManagementDialog(QDialog):
@@ -192,22 +197,54 @@ class SettingsView(QWidget):
         layout.addWidget(PageHeader("Einstellungen", "Datenbankpfad und Systeminformationen"))
 
         form = QFormLayout()
+        self.db_mode_label = QLabel(self)
+        form.addRow("Datenbank-Modus", self.db_mode_label)
+
         self.db_path_edit = QLineEdit(self)
         self.db_path_edit.setReadOnly(True)
         change_row = QHBoxLayout()
         change_row.addWidget(self.db_path_edit)
-        change_button = QPushButton("Ändern...", self)
-        change_button.clicked.connect(self._change_database_path)
-        change_row.addWidget(change_button)
+        self.change_path_button = QPushButton("Ändern...", self)
+        self.change_path_button.clicked.connect(self._change_database_path)
+        change_row.addWidget(self.change_path_button)
         form.addRow("Datenbankpfad", change_row)
 
         self.backups_dir_label = QLabel(self)
         form.addRow("Backup-Ordner", self.backups_dir_label)
 
+        version_row = QHBoxLayout()
         self.version_label = QLabel(APP_VERSION, self)
-        form.addRow("Version", self.version_label)
+        version_row.addWidget(self.version_label)
+        self.check_update_button = QPushButton("Nach Updates suchen", self)
+        self.check_update_button.clicked.connect(self._check_for_update)
+        version_row.addWidget(self.check_update_button)
+        version_row.addStretch(1)
+        form.addRow("Version", version_row)
 
         layout.addLayout(form)
+
+        cloud_row = QHBoxLayout()
+        self.connect_cloud_button = QPushButton("Mit Cloud-Datenbank verbinden...", self)
+        self.connect_cloud_button.clicked.connect(self._connect_cloud_database)
+        self.disconnect_cloud_button = QPushButton("Zurück zu lokaler Datenbank", self)
+        self.disconnect_cloud_button.clicked.connect(self._disconnect_cloud_database)
+        self.sync_button = QPushButton("Jetzt synchronisieren", self)
+        self.sync_button.clicked.connect(self._sync_now)
+        cloud_row.addWidget(self.connect_cloud_button)
+        cloud_row.addWidget(self.disconnect_cloud_button)
+        cloud_row.addWidget(self.sync_button)
+        cloud_row.addStretch(1)
+        layout.addLayout(cloud_row)
+
+        self.offline_hint = QLabel(
+            "Offline-Modus: die Cloud-Datenbank war beim Start nicht erreichbar oder es liegen "
+            "noch ungesyncte Änderungen vor. Mit Internetverbindung auf \"Jetzt synchronisieren\" "
+            "klicken, um deine Änderungen mit dem Team zu teilen.",
+            self,
+        )
+        self.offline_hint.setWordWrap(True)
+        self.offline_hint.hide()
+        layout.addWidget(self.offline_hint)
 
         units_row = QHBoxLayout()
         units_row.addWidget(QLabel("Einheiten-Pool", self))
@@ -223,10 +260,36 @@ class SettingsView(QWidget):
         layout.addStretch(1)
 
     def refresh(self) -> None:
-        self.db_path_edit.setText(str(self.context.config.database_path))
-        self.backups_dir_label.setText(str(self.context.config.project_root / "backups"))
+        config = self.context.config
+        is_sqlite = config.is_sqlite
+        is_offline = self.context.is_offline_mode
 
-        warning = get_drive_warning(self.context.config.database_path)
+        if is_offline:
+            self.db_mode_label.setText("Offline (ungesynct)")
+        else:
+            self.db_mode_label.setText("Lokal (SQLite)" if is_sqlite else "Cloud (Neon Postgres)")
+        self.db_path_edit.setText(str(config.database_path) if is_sqlite else "- (Cloud-Datenbank) -")
+        self.change_path_button.setEnabled(is_sqlite and not is_offline)
+        self.connect_cloud_button.setEnabled(is_sqlite and not is_offline)
+        self.disconnect_cloud_button.setEnabled(not is_sqlite or is_offline)
+        self.sync_button.setVisible(is_offline)
+        self.offline_hint.setVisible(is_offline)
+        self.backups_dir_label.setText(str(config.project_root / "backups"))
+
+        if is_offline:
+            self.drive_warning_badge.hide()
+            return
+
+        if not is_sqlite:
+            self.drive_warning_badge.setText(
+                "Cloud-Datenbank aktiv - lokale Backup-/Laufwerkspruefungen gelten hier nicht "
+                "(siehe Export & Backup)."
+            )
+            self.drive_warning_badge.set_level("info")
+            self.drive_warning_badge.show()
+            return
+
+        warning = get_drive_warning(config.database_path)
         if warning:
             self.drive_warning_badge.setText(warning)
             self.drive_warning_badge.set_level("kritisch")
@@ -250,10 +313,102 @@ class SettingsView(QWidget):
         if not path:
             return
 
-        settings_path = get_user_settings_path()
-        settings_path.write_text(json.dumps({"database_path": path}, indent=2), encoding="utf-8")
+        save_user_settings({"database_path": path})
         info_dialog(
             self,
             "Der neue Datenbankpfad wurde gespeichert. Bitte die Anwendung neu starten, "
             "damit die Änderung wirksam wird.",
         )
+
+    def _connect_cloud_database(self) -> None:
+        connection_string = prompt_text(
+            self,
+            "Mit Cloud-Datenbank verbinden",
+            "Connection-String der Cloud-Datenbank (z. B. von neon.tech, beginnt mit "
+            "'postgresql://'). Wie ein Passwort behandeln - nicht weitergeben außer an "
+            "vertraute Team-Mitglieder:",
+        )
+        if not connection_string:
+            return
+        if not (connection_string.startswith("postgresql://") or connection_string.startswith("postgres://")):
+            error_dialog(self, "Der Connection-String muss mit 'postgresql://' beginnen.")
+            return
+
+        save_user_settings({"database_url": connection_string})
+        info_dialog(
+            self,
+            "Cloud-Verbindung gespeichert. Bitte die Anwendung neu starten, damit die "
+            "Änderung wirksam wird.",
+        )
+
+    def _disconnect_cloud_database(self) -> None:
+        if not confirm_dialog(
+            self,
+            "Zurück zu lokaler Datenbank",
+            "Die App verwendet nach dem Neustart wieder die zuletzt genutzte lokale "
+            "SQLite-Datei statt der Cloud-Datenbank. Fortfahren?",
+        ):
+            return
+        clear_user_setting("database_url")
+        info_dialog(self, "Cloud-Verbindung entfernt. Bitte die Anwendung neu starten.")
+
+    def _sync_now(self) -> None:
+        cloud_url = self.context.cloud_database_url
+        if not cloud_url:
+            return
+
+        self.sync_button.setEnabled(False)
+        self.sync_button.setText("Synchronisiere...")
+        try:
+            cloud_config = AppConfig.load(project_root=self.context.config.project_root, database_url=cloud_url)
+            cloud_engine = create_engine_from_config(cloud_config)
+            if check_connectivity(cloud_engine) != "ok":
+                error_dialog(self, "Die Cloud-Datenbank ist weiterhin nicht erreichbar. Bitte später erneut versuchen.")
+                return
+
+            sync_state_path = get_offline_sync_state_path()
+            last_synced_at = sync_service.read_last_synced_at(sync_state_path)
+            plan = sync_service.analyze(self.context.engine, cloud_engine, last_synced_at)
+
+            resolutions: dict = {}
+            if plan.conflicts:
+                dialog = SyncConflictDialog(plan.conflicts, self)
+                if dialog.exec() != QDialog.DialogCode.Accepted:
+                    info_dialog(self, "Sync abgebrochen - es wurde nichts verändert.")
+                    return
+                resolutions = dialog.resolutions()
+
+            report = sync_service.apply(self.context.engine, cloud_engine, plan, resolutions, sync_state_path)
+            conflict_text = (
+                f" ({report.conflicts_resolved_local} Konflikt(e) zu deinen Gunsten, "
+                f"{report.conflicts_resolved_cloud} zugunsten der Cloud entschieden)"
+                if plan.conflicts
+                else ""
+            )
+            info_dialog(
+                self,
+                f"Sync abgeschlossen: {report.pushed_rows} Zeile(n) hochgeladen{conflict_text}.\n\n"
+                "Bitte die Anwendung neu starten, um live mit der Cloud weiterzuarbeiten.",
+            )
+        finally:
+            self.sync_button.setEnabled(True)
+            self.sync_button.setText("Jetzt synchronisieren")
+
+    def _check_for_update(self) -> None:
+        self.check_update_button.setEnabled(False)
+        self.check_update_button.setText("Suche läuft...")
+        run_update_check_async(self, self._on_update_check_result)
+
+    def _on_update_check_result(self, update_info: UpdateInfo | None) -> None:
+        self.check_update_button.setEnabled(True)
+        self.check_update_button.setText("Nach Updates suchen")
+        if update_info is None:
+            info_dialog(self, f"Du hast bereits die neueste Version ({APP_VERSION}).")
+            return
+        if confirm_dialog(
+            self,
+            "Update verfügbar",
+            f"Eine neuere Version ist verfügbar: {update_info.latest_version}\n\n"
+            "Jetzt die Release-Seite zum Herunterladen öffnen?",
+        ):
+            QDesktopServices.openUrl(QUrl(update_info.download_url))

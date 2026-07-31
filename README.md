@@ -1,108 +1,171 @@
-# Zeltlager Verpflegung
+# ZelaKüche – Verpflegungsplanung fürs Zeltlager
 
-Desktop-Anwendung zur Migration und langfristigen Ablösung einer Excel-basierten Verpflegungsplanung fuer Zeltlager.
+Windows-Desktop-App für die Küchenplanung im Kolping-Zeltlager: Rezepte, Wochenplan,
+Zutaten & Preise, Einkaufslisten und Feedback nach dem Lager - an einem Ort statt verteilt
+über Excel-Dateien. Optional kann die Datenbank in einer kostenlosen Cloud-Datenbank liegen,
+damit mehrere Leute gleichzeitig daran arbeiten.
 
-## Projektziel
+## Was die App kann
 
-Das Projekt ueberfuehrt eine bestehende Excel-Arbeitsmappe in eine installierbare Python-Desktop-App mit spaeterer Datenbankbasis. Phase 1 konzentriert sich bewusst nur auf die strukturierte Analyse der vorhandenen Excel-Datei.
+- **Wochenplan**: Rasteransicht der Zeltlagerwoche (Tag × Mahlzeit), mit Tagesverantwortlichen
+- **Rezepte**: Teilstücke, Mengen-Historie/Skalierung, Kosten je Zutat, PDF-Export
+- **Zutaten & Preise**: Preisrecherche über Open Prices (Barcode-Suche)
+- **Einkaufsliste**: automatisch aus dem Wochenplan generiert, gruppiert nach Laden/Einkaufstag
+- **Feedback**: Rückmeldung je Rezept und Zeltlagerjahr (kam's an, Menge passend, Notizen)
+- **Dashboard**: Überblick über das aktuelle Zeltlagerjahr
 
-## Aktueller Stand
+## Installation
 
-- Phase 1 (Excel-Inspektion) und Phase 3 (Excel-Migration) abgeschlossen: die urspruengliche Excel-Arbeitsmappe wurde einmalig analysiert und nach SQLite uebernommen. Die dafuer genutzten Skripte/Berichte sind aus dem fertigen Projekt entfernt, da sie nur fuer die einmalige Migration gebraucht wurden.
-- Phase 2 (Datenmodell/DB) abgeschlossen:
-  - SQLAlchemy-Konfiguration in [`app/config.py`](app/config.py)
-  - Datenbankinitialisierung in [`app/db.py`](app/db.py)
-  - relationales Datenmodell in [`app/models.py`](app/models.py), siehe [`docs/data_model.md`](docs/data_model.md)
-- Phase 4 (Fachlogik-Services) abgeschlossen:
-  - Services unter [`app/services/`](app/services) (Rezeptskalierung/-kosten, Preisermittlung, Einkaufsaggregation, Feedback, Validierung, Backup/Restore, Export)
-- Phase 5 (UI-Prototyp) abgeschlossen:
-  - Desktop-UI mit **PySide6 (Qt 6)** unter [`app/ui/`](app/ui) - alle neun Module (Dashboard, Wochenplan, Rezepte, Zutaten, Preise, Einkaufsliste, Feedback, Export & Backup, Einstellungen)
-  - Design angelehnt an [kolpingjugend-regensburg.de](https://www.kolpingjugend-regensburg.de/) (Farben, Typografie), siehe [`app/ui/theme.py`](app/ui/theme.py)
-  - Wochenplan-Raster statt Jahresplanung (ein Camp-Jahr = eine Zeltlagerwoche), Tagesverantwortliche, meal-genaues Feedback
-  - Rezepte mit Teilstuecken, Kosten je Zutat, Mengen-Historie/Skalierung und PDF-Export ([`app/assets/kolping_logo.jpeg`](app/assets/kolping_logo.jpeg))
-  - siehe [`docs/user_guide.md`](docs/user_guide.md)
-- Phase 6 (Installer/Build) noch offen.
-- Testsuite: `pytest` unter [`tests/`](tests) (siehe "Tests ausfuehren").
+1. Aktuelles Setup von der Releases-Seite herunterladen:
+   **https://github.com/michiwghamm-sketch/K-chenplaner/releases/latest**
+   (Datei `ZelaKueche-Setup.exe`, ca. 50 MB)
+2. `ZelaKueche-Setup.exe` ausführen. Braucht **keine Admin-Rechte** (installiert nur für den
+   eigenen Nutzer-Account nach `%LOCALAPPDATA%\Programs\ZelaKueche`) - falls Windows/der
+   Virenscanner vor einer unbekannten .exe warnt: "Weitere Informationen" > "Trotzdem ausführen"
+   (die App ist nicht code-signiert, das ist bei einer kleinen kostenlosen Vereins-App normal).
+3. App über das neue Startmenü-Symbol "ZelaKueche" öffnen.
+4. Beim allerersten Start fragt die App nach einem Speicherort für die Datenbank - den
+   vorgeschlagenen Pfad einfach mit "Speichern" bestätigen. Das reicht für den Soloeinsatz.
 
-## Entwickler-Setup
+Zum Deinstallieren: Windows-Einstellungen > Apps > "ZelaKueche" > Deinstallieren (oder
+Startmenü-Ordner "ZelaKueche" > Uninstall).
 
-1. Python 3.12 oder neuer installieren (Windows: `winget install --id Python.Python.3.12 --source winget --accept-package-agreements --accept-source-agreements -e`, falls kein `python`/`py` im `PATH` verfuegbar ist).
-2. Git installieren oder den vorhandenen Git-for-Windows-Pfad nutzen.
-3. Virtuelle Umgebung anlegen:
+## Gemeinsam an einer Datenbank arbeiten (Team-Modus)
 
-```powershell
-py -3.12 -m venv .venv
-.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-```
+Standardmäßig legt jede installierte App ihre eigene lokale Datenbank an - gut zum
+Ausprobieren, aber jeder sieht nur seine eigenen Einträge. Für ein Team, das gemeinsam am
+selben Wochenplan arbeitet, gibt es eine kostenlose Cloud-Datenbank (Neon Postgres):
 
-## Git Setup
+1. Von der Person, die die Cloud-Datenbank eingerichtet hat, den **Connection-String**
+   bekommen (sieht aus wie `postgresql://...`). **Diesen String wie ein Passwort behandeln** -
+   nicht in Gruppenchats posten, nur direkt privat weitergeben. Er ist der einzige
+   Zugangsschutz zur gemeinsamen Datenbank.
+2. In der App: **Einstellungen > "Mit Cloud-Datenbank verbinden..."** > String einfügen >
+   Anwendung neu starten.
+3. Fertig - alle mit demselben Connection-String sehen und bearbeiten denselben Wochenplan,
+   Änderungen sind sofort für alle sichtbar.
 
-Die Schritt-fuer-Schritt-Anleitung steht in [`docs/git_setup.md`](docs/git_setup.md).
+Wie man eine eigene Cloud-Datenbank für ein neues Team einrichtet, steht unter
+["Cloud-Datenbank einrichten" weiter unten](#cloud-datenbank-einrichten-für-entwickleradmins).
 
-## App starten
+### Offline arbeiten
+
+Der Team-Modus braucht **nicht** durchgehend Internet. Ist die Cloud-Datenbank beim Start nicht
+erreichbar (z. B. schlechtes Netz im Zeltlager), wechselt die App automatisch in einen lokalen
+Offline-Cache - man kann normal weiterarbeiten, nur eben ohne dass andere die Änderungen sofort
+sehen. Sobald wieder Internet da ist, zeigen die Einstellungen einen Button
+**"Jetzt synchronisieren"**.
+
+Wichtig zu wissen:
+
+- Wurde derselbe Eintrag **sowohl offline als auch von jemand anderem in der Cloud** verändert,
+  fragt die App beim Sync nach, welche Version gelten soll - nichts wird stillschweigend
+  überschrieben.
+- Offline gelöschte Einträge werden beim Sync **nicht** als Löschung übertragen - sie tauchen
+  danach wieder auf, wenn sie in der Cloud noch existieren. Lieber ein ungewollt
+  wieder­aufgetauchter Eintrag als ein versehentlich verlorener.
+
+## Worauf man sonst achten sollte
+
+- **Lokale Datenbank nicht in einem synchronisierten Ordner** (OneDrive, Google Drive, Dropbox)
+  ablegen, wenn mehrere Leute/Geräte gleichzeitig darauf zugreifen könnten - die App warnt davor,
+  aber gleichzeitiges Schreiben kann die Datei beschädigen. Für "mehrere Leute gleichzeitig" ist
+  der Cloud-Modus (siehe oben) der richtige Weg, nicht ein geteilter Ordner.
+- **Backups**: unter **Export & Backup** manuell erstellbar (nur im lokalen Modus - die
+  Cloud-Datenbank sichert Neon automatisch, siehe deren Dashboard für Point-in-Time-Restore).
+- **Updates**: die App prüft automatisch kurz nach dem Start (und manuell über
+  **Einstellungen > "Nach Updates suchen"**), ob es eine neuere Version gibt, und verlinkt dann
+  auf die Releases-Seite zum Herunterladen. Kein automatisches Selbst-Update - neue Version
+  einfach wie oben herunterladen und drüberinstallieren.
+
+## Cloud-Datenbank einrichten (für Entwickler/Admins)
+
+Nur nötig, wenn noch keine gemeinsame Cloud-Datenbank existiert:
+
+1. Kostenlosen Account auf [neon.tech](https://neon.tech) anlegen, Projekt + Datenbank
+   erstellen.
+2. Einen eigenen, eingeschränkten Datenbank-Nutzer für die App anlegen (nicht den
+   Neon-Admin-Nutzer verwenden) und dessen Connection-String kopieren.
+3. Falls schon lokal Daten erfasst wurden, einmalig migrieren:
+
+   ```powershell
+   .venv\Scripts\python.exe scripts\migrate_sqlite_to_postgres.py --sqlite-path instance\zeltlager_kueche.sqlite3 --postgres-url "postgresql://user:pw@host/dbname"
+   ```
+
+4. Connection-String an die Team-Mitglieder weitergeben (siehe Sicherheitshinweis oben) - jede:r
+   trägt ihn unter Einstellungen ein.
+
+## Für Entwickler
+
+### Setup
+
+1. Python 3.12+ installieren (Windows: `winget install --id Python.Python.3.12 --source winget --accept-package-agreements --accept-source-agreements -e`).
+2. Virtuelle Umgebung anlegen:
+
+   ```powershell
+   py -3.12 -m venv .venv
+   .venv\Scripts\Activate.ps1
+   pip install -r requirements.txt
+   ```
+
+3. Git-Setup: siehe [`docs/git_setup.md`](docs/git_setup.md).
+
+### App aus dem Quellcode starten
 
 ```powershell
 .venv\Scripts\python.exe app\main.py
 ```
 
-Oder unter Windows einfach per Doppelklick / Terminal:
+Oder per Doppelklick auf `start_app.bat`.
 
-```powershell
-.\start_app.bat
-```
-
-Beim ersten Start fragt die App nach einem Datenbankpfad (siehe [`docs/user_guide.md`](docs/user_guide.md)). Der Pfad wird unter `%APPDATA%\ZelaKueche\settings.json` gespeichert und beim naechsten Start wiederverwendet.
-
-## Zutaten-Dubletten zusammenfuehren
-
-```powershell
-.venv\Scripts\python.exe scripts\dedupe_ingredients.py --dry-run   # nur anzeigen
-.venv\Scripts\python.exe scripts\dedupe_ingredients.py             # anwenden
-```
-
-Findet hochsichere Zutaten-Dubletten (Singular/Plural wie "Zwiebel"/"Zwiebeln", eindeutige
-Tippfehler) und fuehrt sie zusammen: die zusammengefuehrte Zutat wird zum Alias, alle
-Rezepte/Preise/Einkaufslisten-Positionen werden umgehaengt. Report unter
-[`docs/ingredient_merge_report.md`](docs/ingredient_merge_report.md). Vor dem Anwenden
-empfiehlt sich ein Backup (siehe unten).
-
-## Tests ausfuehren
+### Tests ausführen
 
 ```powershell
 .venv\Scripts\python.exe -m pytest
 ```
 
-## Build erstellen
+### Windows-Installer bauen
 
-Noch nicht implementiert. Geplant ist ein Build mit PyInstaller ueber [`scripts/build_exe.py`](scripts/build_exe.py).
+```powershell
+.venv\Scripts\python.exe scripts\build_exe.py
+```
 
-## Datenbank initialisieren
+erzeugt `dist\ZelaKueche\ZelaKueche.exe` (PyInstaller). Danach mit
+[Inno Setup](https://jrsoftware.org/isinfo.php) (`winget install --id JRSoftware.InnoSetup -e`)
+zu einem Setup packen:
 
-Die Datenbank wird beim App-Start automatisch erzeugt (Tabellen ueber `app.db.initialize_database`). Fuer eigene Skripte/Tests kann `AppConfig.load(...)` + `initialize_database(...)` direkt verwendet werden.
+```powershell
+& "$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe" installer\zelakueche.iss
+```
 
-## SQLite auf Drive-Laufwerken
+Ergebnis: `Output\ZelaKueche-Setup.exe`. Für ein neues Release: Versionsnummer in
+`app/__init__.py` (`__version__`) und `installer/zelakueche.iss` (`MyAppVersion`) hochzählen,
+neu bauen, als GitHub Release mit dem Setup als Anhang veröffentlichen (das ist auch die Quelle,
+gegen die der Auto-Update-Check in der App prüft).
 
-SQLite-Dateien auf OneDrive, Dropbox, Google Drive oder Netzlaufwerken koennen bei Synchronisation und gleichzeitiger Nutzung beschaedigt werden. Die spaetere App wird deshalb:
+### Architektur-Kurzüberblick
 
-- einen frei waehlbaren Datenbankpfad unterstuetzen
-- vor problematischen Speicherorten warnen
-- Backup- und Restore-Funktionen anbieten
-- keine echte Mehrbenutzer-Gleichzeitigkeit mit SQLite versprechen
+- **PySide6 (Qt 6)** Desktop-UI unter [`app/ui/`](app/ui), Design angelehnt an
+  [kolpingjugend-regensburg.de](https://www.kolpingjugend-regensburg.de/).
+- **SQLAlchemy**-Datenmodell in [`app/models.py`](app/models.py), siehe
+  [`docs/data_model.md`](docs/data_model.md). Datenbank-Setup in
+  [`app/config.py`](app/config.py) / [`app/db.py`](app/db.py) - unterstützt lokales SQLite
+  und Postgres (Cloud) über dieselbe `database_url`.
+  - Für neue nullable Spalten/Unique-Constraints an bestehenden Tabellen übernimmt
+    `app.db.sync_schema` automatisch ein leichtgewichtiges Nachziehen (Ersatz für Alembic).
+- Fachlogik in [`app/services/`](app/services) (Rezeptskalierung/-kosten, Preisermittlung,
+  Einkaufsaggregation, Feedback, Validierung, Backup/Restore, Export, Cloud-Sync
+  ([`sync_service.py`](app/services/sync_service.py)), Datenbank-Modus-Entscheidung
+  ([`database_selection_service.py`](app/services/database_selection_service.py))).
+- Nutzerdoku: [`docs/user_guide.md`](docs/user_guide.md).
 
-## Backup und Restore
+### Bekannte Grenzen
 
-Ueber die App unter **Export & Backup**, oder direkt per Service:
-
-- `app.services.backup_service.create_backup(config)` kopiert die SQLite-Datei zeitgestempelt nach `backups/`.
-- `restore_backup(config, backup_path, confirm=True)` ersetzt die aktuelle Datenbank, sichert den bisherigen Stand vorher automatisch zusaetzlich und verlangt eine explizite Bestaetigung.
-- `verify_integrity(engine)` fuehrt `PRAGMA integrity_check` aus.
-
-Backups werden nicht committet (`backups/` steht in `.gitignore`).
-
-## Bekannte Grenzen
-
-- `git` ist lokal vorhanden, aber in dieser Umgebung nicht im `PATH`. Der direkte Pfad zu Git for Windows kann verwendet werden.
-- Das Standard-`python`/`py` im `PATH` war in dieser Umgebung urspruenglich nicht benutzbar; ein passendes Python 3.12 wurde per `winget` installiert und ein projektlokales `.venv` angelegt (siehe [`docs/technical_notes.md`](docs/technical_notes.md)).
-- Die Tests setzen installierte Abhaengigkeiten aus `requirements.txt` voraus.
-- Die UI ist ein Prototyp: kein PyInstaller-Build, keine Mehrbenutzer-Gleichzeitigkeit (SQLite), Einheiten werden bei der Einkaufsaggregation nicht automatisch umgerechnet.
+- Lokaler Standardmodus (SQLite) hat keine echte Mehrbenutzer-Gleichzeitigkeit - dafür den
+  Cloud-Modus nutzen.
+- Cloud-Sync überträgt keine Löschungen (siehe "Offline arbeiten" oben) und löst nur echte
+  Bearbeitungskonflikte auf Zeilenebene auf (ganze Zeile "meine" oder "Cloud", kein
+  Feld-für-Feld-Merge).
+- Einheiten werden bei der Einkaufsaggregation nicht automatisch umgerechnet.
+- `git` ist in manchen Entwicklungsumgebungen hier nicht im `PATH` - direkter Pfad zu
+  Git for Windows funktioniert.
