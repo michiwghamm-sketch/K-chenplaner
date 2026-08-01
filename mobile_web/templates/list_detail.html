@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}{{ shopping_list.name }}{% endblock %}
+{% block body %}
+<header>
+  <h1>{{ shopping_list.name }}</h1>
+  <a href="{{ url_for('all_lists') }}">Listen</a>
+</header>
+<main>
+  <div class="karte" style="padding: 0.9rem 1rem;">
+    <div id="fortschritt-text" style="font-size:0.85rem; color: var(--text-schwach); margin-bottom: 0.4rem;">
+      <span id="anzahl-gekauft">{{ bought_items }}</span> von {{ total_items }} erledigt
+    </div>
+    <div style="height: 8px; border-radius: 999px; background: var(--rand); overflow:hidden;">
+      <div id="fortschritt-balken" style="height:100%; background: var(--grün); width: {{ (bought_items / total_items * 100) if total_items else 0 }}%;"></div>
+    </div>
+  </div>
+
+  {% for group in groups %}
+    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">{{ group.store }}</h2>
+    <div class="karte">
+      {% for item in group.positionen %}
+        <label
+          class="position"
+          data-item-id="{{ item.id }}"
+          style="display:flex; align-items:flex-start; gap: 0.8rem; padding: 0.8rem 1rem; border-bottom: 1px solid var(--rand); cursor: pointer;"
+        >
+          <input
+            type="checkbox"
+            class="position-checkbox"
+            {% if item.status == 'gekauft' %}checked{% endif %}
+            style="width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; flex-shrink: 0; accent-color: var(--grün);"
+          >
+          <span style="flex:1; {% if item.status == 'gekauft' %}opacity: 0.45; text-decoration: line-through;{% endif %}" class="position-text">
+            <span style="font-weight: 600;">{{ item.ingredient.name if item.ingredient else "?" }}</span>
+            <span style="color: var(--text-schwach);">— {{ item.quantity|menge }} {{ item.unit or "" }}</span>
+            {% if item.linked_recipes_text %}
+              <br><span style="font-size: 0.78rem; color: var(--text-schwach);">{{ item.linked_recipes_text }}</span>
+            {% endif %}
+          </span>
+        </label>
+      {% endfor %}
+    </div>
+  {% endfor %}
+</main>
+<script>
+  const gesamt = {{ total_items }};
+  let gekauft = {{ bought_items }};
+  const zaehler = document.getElementById('anzahl-gekauft');
+  const balken = document.getElementById('fortschritt-balken');
+
+  document.querySelectorAll('.position-checkbox').forEach((box) => {
+    box.addEventListener('change', async () => {
+      const label = box.closest('.position');
+      const itemId = label.dataset.itemId;
+      const text = label.querySelector('.position-text');
+      const wirdGekauft = box.checked;
+
+      box.disabled = true;
+      try {
+        const antwort = await fetch(`/position/${itemId}/umschalten`, { method: 'POST' });
+        if (!antwort.ok) throw new Error('Fehler beim Speichern');
+        text.style.opacity = wirdGekauft ? '0.45' : '1';
+        text.style.textDecoration = wirdGekauft ? 'line-through' : 'none';
+        gekauft += wirdGekauft ? 1 : -1;
+        zaehler.textContent = gekauft;
+        balken.style.width = gesamt ? `${(gekauft / gesamt) * 100}%` : '0%';
+      } catch (fehler) {
+        box.checked = !wirdGekauft;
+        alert('Konnte nicht gespeichert werden - Internetverbindung prüfen und nochmal versuchen.');
+      } finally {
+        box.disabled = false;
+      }
+    });
+  });
+</script>
+{% endblock %}

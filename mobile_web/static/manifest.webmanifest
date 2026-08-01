@@ -1,0 +1,9 @@
+{
+  "name": "ZelaKüche Einkaufsliste",
+  "short_name": "Einkaufsliste",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f7f8f7",
+  "theme_color": "#1f6f4a",
+  "lang": "de"
+}

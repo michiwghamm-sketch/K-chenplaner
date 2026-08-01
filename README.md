@@ -65,6 +65,58 @@ Wichtig zu wissen:
   danach wieder auf, wenn sie in der Cloud noch existieren. Lieber ein ungewollt
   wieder­aufgetauchter Eintrag als ein versehentlich verlorener.
 
+## Einkaufsliste am Handy (Mobile-Web-App)
+
+Zusätzlich zur Desktop-App gibt es eine schlanke, mobil-optimierte Webseite ([`mobile_web/`](mobile_web)),
+die die aktuelle Einkaufsliste zeigt - zum entspannten Abhaken im Geschäft, ohne PDF-Ausdruck.
+Sie greift auf **dieselbe Cloud-Datenbank** zu wie die Desktop-App (kein eigenes Datenmodell, keine
+eigene Synchronisation) - braucht also den Team-/Cloud-Modus von oben. Mit rein lokaler SQLite-Datei
+ergibt sie wenig Sinn, da dann nur das Gerät, auf dem sie läuft, etwas sieht.
+
+Was sie kann: aktuelle Einkaufsliste nach Händler gruppiert anzeigen, Positionen per Fingertipp als
+"gekauft" abhaken (wird sofort in der Cloud-DB gespeichert und taucht in der Desktop-App als Status
+"gekauft" auf), als App-Icon auf den Home-Bildschirm legbar (PWA). Mengen/Preise/Händler bearbeiten
+bleibt Aufgabe der Desktop-App.
+
+### Einmalig einrichten (für Entwickler/Admins)
+
+Kostenlos z. B. über [render.com](https://render.com) hostbar:
+
+1. Auf render.com anmelden (geht mit dem GitHub-Account) und **"New" > "Web Service"** wählen, dieses
+   GitHub-Repo (`michiwghamm-sketch/K-chenplaner`) verbinden.
+2. Einstellungen:
+   - **Build Command**: `pip install -r requirements.txt`
+   - **Start Command**: `gunicorn mobile_web.wsgi:app`
+3. Unter **Environment** folgende Variablen setzen:
+   - `DATABASE_URL` - derselbe Neon-Connection-String wie beim Cloud-Modus oben (**wie ein Passwort
+     behandeln**).
+   - `MOBILE_WEB_PIN` - frei wählbarer PIN (z. B. 4-6 Ziffern), den alle Nutzer:innen zum Anmelden
+     brauchen. Ohne diese Variable läuft die Seite **ohne jeden Zugriffsschutz** - für den echten
+     Einsatz also unbedingt setzen.
+   - `FLASK_SECRET_KEY` - beliebiger zufälliger Text zum Signieren der Login-Session, z. B. erzeugt
+     mit `python -c "import secrets; print(secrets.token_hex(32))"`.
+4. Deployen - Render vergibt eine URL wie `https://zelakueche-einkauf.onrender.com`. Diese URL und
+   den PIN an die Küchen-Crew weitergeben (auch das wie Zugangsdaten behandeln, nicht öffentlich
+   posten).
+
+Der kostenlose Render-Tier legt den Dienst nach Inaktivität schlafen - der erste Aufruf nach einer
+Pause kann daher 30-60 Sekunden dauern, bis die Seite reagiert. Das ist normal.
+
+### Nutzung (fürs Team)
+
+1. Die von Render vergebene URL am Handy im Browser öffnen, PIN eingeben.
+2. Optional zum Home-Bildschirm hinzufügen, damit es wie eine App aussieht: **iPhone** - Teilen-Symbol
+   > "Zum Home-Bildschirm"; **Android (Chrome)** - Menü (⋮) > "App installieren" bzw. "Zum
+   Startbildschirm hinzufügen".
+3. Die Seite zeigt automatisch die neueste Einkaufsliste, nach Händler gruppiert - beim Einkaufen
+   einfach Positionen antippen, um sie abzuhaken.
+
+### Bekannte Grenzen
+
+- Kein Offline-Modus - im Laden wird eine Internetverbindung gebraucht (anders als die Desktop-App).
+- Ein gemeinsamer PIN fürs ganze Team, keine einzelnen Benutzerkonten.
+- Nur zum Anzeigen/Abhaken gedacht, nicht zum Bearbeiten von Mengen, Preisen oder Händlern.
+
 ## Worauf man sonst achten sollte
 
 - **Lokale Datenbank nicht in einem synchronisierten Ordner** (OneDrive, Google Drive, Dropbox)
@@ -118,6 +170,13 @@ Nur nötig, wenn noch keine gemeinsame Cloud-Datenbank existiert:
 
 Oder per Doppelklick auf `start_app.bat`.
 
+Mobile Web-Ansicht lokal starten (ohne PIN läuft sie offen, nur zum Testen):
+
+```powershell
+$env:FLASK_APP = "mobile_web.wsgi"
+.venv\Scripts\flask.exe run --port 5055
+```
+
 ### Tests ausführen
 
 ```powershell
@@ -157,6 +216,10 @@ gegen die der Auto-Update-Check in der App prüft).
   Einkaufsaggregation, Feedback, Validierung, Backup/Restore, Export, Cloud-Sync
   ([`sync_service.py`](app/services/sync_service.py)), Datenbank-Modus-Entscheidung
   ([`database_selection_service.py`](app/services/database_selection_service.py))).
+- **Mobile Einkaufslisten-Ansicht** (Flask) unter [`mobile_web/`](mobile_web) - eigenständig
+  deploybare, schlanke Zusatz-Webseite fürs Handy, siehe
+  ["Einkaufsliste am Handy" oben](#einkaufsliste-am-handy-mobile-web-app). Nutzt `app.models`/
+  `app.db` direkt mit, kein eigenes Datenmodell.
 - Nutzerdoku: [`docs/user_guide.md`](docs/user_guide.md).
 
 ### Bekannte Grenzen

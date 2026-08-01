@@ -1,0 +1,23 @@
+{% extends "base.html" %}
+{% block title %}Anmelden{% endblock %}
+{% block body %}
+<header><h1>ZelaKüche Einkaufsliste</h1></header>
+<main>
+  <div class="karte" style="padding: 1.5rem;">
+    <form method="post">
+      <label for="pin" style="display:block; margin-bottom: 0.5rem; font-weight: 600;">PIN eingeben</label>
+      <input
+        id="pin" name="pin" type="password" inputmode="numeric" autocomplete="off" autofocus
+        style="width:100%; font-size: 1.4rem; padding: 0.7rem; border-radius: 10px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text); letter-spacing: 0.3rem; text-align: center;"
+      >
+      {% if error %}
+        <p style="color:#c0392b; margin-top: 0.6rem;">{{ error }}</p>
+      {% endif %}
+      <button
+        type="submit"
+        style="width:100%; margin-top: 1rem; padding: 0.9rem; font-size: 1.05rem; font-weight: 600; border: none; border-radius: 10px; background: var(--grün); color: #fff;"
+      >Anmelden</button>
+    </form>
+  </div>
+</main>
+{% endblock %}
