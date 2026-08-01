@@ -63,6 +63,14 @@ class RecipesView(QWidget):
         super().__init__(parent)
         self.context = context
         self._current_recipe_id: int | None = None
+        # Welches Rezept aktuell tatsaechlich im Formular angezeigt wird (im Unterschied zu
+        # _current_recipe_id, das von aufrufenden Methoden z.B. beim Neuanlegen schon vorab
+        # gesetzt wird, bevor das Formular nachzieht) - siehe _on_recipe_selected().
+        self._loaded_recipe_id: int | None = None
+        # True, sobald ein Formularfeld seit dem letzten Laden/Speichern geaendert wurde -
+        # verhindert, dass ein Rezeptwechsel oder "Abbrechen" ungespeicherte Aenderungen
+        # kommentarlos verwirft (siehe _confirm_discard_changes()).
+        self._detail_dirty: bool = False
         self._build_ui()
         self.refresh()
 
@@ -113,14 +121,20 @@ class RecipesView(QWidget):
         self.diet_type_combo.addItem(NO_DIET_TYPE_LABEL)
         self.diet_type_combo.addItems(recipe_service.DIET_TYPES)
         self.diet_type_combo.currentTextChanged.connect(self._style_diet_combo)
+        self.diet_type_combo.currentTextChanged.connect(self._mark_detail_dirty)
         self.meal_type_combo = QComboBox(meta_group)
         self.meal_type_combo.setEditable(True)
         self.meal_type_combo.addItems(MEAL_TYPES)
+        self.meal_type_combo.currentTextChanged.connect(self._mark_detail_dirty)
         self.portions_spin = QSpinBox(meta_group)
         self.portions_spin.setRange(1, 2000)
+        self.portions_spin.valueChanged.connect(self._mark_detail_dirty)
         self.active_checkbox = QCheckBox("Aktiv", meta_group)
+        self.active_checkbox.stateChanged.connect(self._mark_detail_dirty)
         self.notes_edit = QPlainTextEdit(meta_group)
         self.notes_edit.setFixedHeight(70)
+        self.notes_edit.textChanged.connect(self._mark_detail_dirty)
+        self.name_edit.textChanged.connect(self._mark_detail_dirty)
 
         form = QFormLayout()
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
@@ -142,7 +156,7 @@ class RecipesView(QWidget):
         save_button = QPushButton("Speichern", meta_group)
         save_button.clicked.connect(self._save_recipe)
         cancel_button = QPushButton("Abbrechen", meta_group)
-        cancel_button.clicked.connect(self._reload_detail)
+        cancel_button.clicked.connect(self._cancel_edit)
         deactivate_button = QPushButton("Deaktivieren", meta_group)
         deactivate_button.clicked.connect(self._deactivate_recipe)
         deactivate_button.setProperty("role", "secondary")
@@ -412,12 +426,42 @@ class RecipesView(QWidget):
                     return
         self.recipe_list.setCurrentRow(0)
 
-    def _on_recipe_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
-        if current is None:
-            self._current_recipe_id = None
+    def _on_recipe_selected(self, current: QListWidgetItem | None, previous: QListWidgetItem | None) -> None:
+        new_recipe_id = current.data(1000) if current is not None else None
+        if new_recipe_id == self._loaded_recipe_id:
+            # Nur die Liste wurde neu aufgebaut (z. B. Suchtext geaendert), die Auswahl zeigt
+            # aber weiterhin auf dasselbe, bereits geladene Rezept - nichts tun. Sonst wuerde
+            # jeder Tastendruck im Suchfeld ungespeicherte Formular-Aenderungen gefaehrden.
+            self._current_recipe_id = new_recipe_id
+            return
+        if not self._confirm_discard_changes():
+            self.recipe_list.blockSignals(True)
+            self.recipe_list.setCurrentItem(previous)
+            self.recipe_list.blockSignals(False)
+            return
+        self._current_recipe_id = new_recipe_id
+        if new_recipe_id is None:
             self._clear_detail()
             return
-        self._current_recipe_id = current.data(1000)
+        self._reload_detail()
+
+    def _confirm_discard_changes(self) -> bool:
+        """Vor Rezeptwechsel/Abbrechen pruefen, ob ungespeicherte Formular-Aenderungen
+        stillschweigend verworfen wuerden - siehe _mark_detail_dirty()."""
+        if not self._detail_dirty:
+            return True
+        return confirm_dialog(
+            self,
+            "Ungespeicherte Änderungen",
+            "Es gibt ungespeicherte Änderungen an diesem Rezept. Wirklich verwerfen?",
+        )
+
+    def _mark_detail_dirty(self, *_args: object) -> None:
+        self._detail_dirty = True
+
+    def _cancel_edit(self) -> None:
+        if not self._confirm_discard_changes():
+            return
         self._reload_detail()
 
     def _style_diet_combo(self, diet_type: str) -> None:
@@ -445,6 +489,8 @@ class RecipesView(QWidget):
         self.cost_label.setText("Kosten: -")
         self.feedback_table.setRowCount(0)
         self.feedback_detail_label.setText("")
+        self._loaded_recipe_id = None
+        self._detail_dirty = False
 
     def _reload_detail(self) -> None:
         if self._current_recipe_id is None:
@@ -478,6 +524,8 @@ class RecipesView(QWidget):
             self._reload_feedback(recipe)
 
         self._set_cost_label(cost_result)
+        self._loaded_recipe_id = self._current_recipe_id
+        self._detail_dirty = False
 
     def _set_cost_label(self, cost_result: recipe_service.RecipeCostResult | None) -> None:
         if cost_result is None:
@@ -1147,6 +1195,11 @@ class RecipesView(QWidget):
             )
         self._reload_list()
         self._select_recipe_by_id(self._current_recipe_id)
+        # Liste/Auswahl zeigen nach dem Speichern weiterhin auf dasselbe Rezept - das loest
+        # in _on_recipe_selected() keinen Reload aus (siehe dortiger _loaded_recipe_id-Vergleich),
+        # daher hier explizit neu laden, damit z. B. cost_portions_spin die neue
+        # Standardportionenzahl uebernimmt.
+        self._reload_detail()
 
     def _deactivate_recipe(self) -> None:
         if self._current_recipe_id is None:
