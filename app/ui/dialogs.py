@@ -328,115 +328,6 @@ class AddPriceDialog(QDialog):
         }
 
 
-class OpenPricesImportDialog(QDialog):
-    """Dialog für den Import eines externen Preises über einen Barcode."""
-
-    def __init__(
-        self,
-        ingredients: list[tuple[int, str]],
-        default_year: int,
-        parent: QWidget | None = None,
-        *,
-        selected_ingredient_id: int | None = None,
-        default_barcode: str | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Preis aus Open Prices importieren")
-
-        self.ingredient_combo = QComboBox(self)
-        for ingredient_id, name in ingredients:
-            self.ingredient_combo.addItem(name, ingredient_id)
-        if selected_ingredient_id is not None:
-            index = self.ingredient_combo.findData(selected_ingredient_id)
-            if index >= 0:
-                self.ingredient_combo.setCurrentIndex(index)
-            self.ingredient_combo.setEnabled(False)
-
-        self.barcode_edit = QLineEdit(self)
-        self.barcode_edit.setPlaceholderText("z. B. 3017620422003")
-        if default_barcode:
-            self.barcode_edit.setText(default_barcode)
-
-        self.year_spin = QSpinBox(self)
-        self.year_spin.setRange(2000, 2100)
-        self.year_spin.setValue(default_year)
-
-        self.notes_edit = QLineEdit(self)
-        self.notes_edit.setPlaceholderText("optional, z. B. Packungsware / Testimport")
-
-        form = QFormLayout()
-        form.addRow("Zutat", self.ingredient_combo)
-        form.addRow("Barcode", self.barcode_edit)
-        form.addRow("Jahr", self.year_spin)
-        form.addRow("Notiz", self.notes_edit)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QFormLayout(self)
-        layout.addRow(form)
-        layout.addRow(buttons)
-
-    def result_data(self) -> dict | None:
-        barcode = self.barcode_edit.text().strip()
-        if not barcode:
-            return None
-        return {
-            "ingredient_id": self.ingredient_combo.currentData(),
-            "barcode": barcode,
-            "year": self.year_spin.value(),
-            "notes": self.notes_edit.text().strip() or None,
-        }
-
-
-class OpenPricesSuggestionDialog(QDialog):
-    """Erlaubt die Auswahl eines ähnlichen Open-Prices-Produkts für eine Zutat."""
-
-    def __init__(
-        self,
-        ingredient_name: str,
-        suggestions: list[OpenPricesSuggestion],
-        parent: QWidget | None = None,
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle(f"Ähnliche Produkte für {ingredient_name}")
-        self._suggestions = suggestions
-
-        self.combo = QComboBox(self)
-        for index, suggestion in enumerate(suggestions):
-            date_text = suggestion.observation.date.isoformat() if suggestion.observation.date else "Datum unbekannt"
-            quantity_text = f" | {suggestion.product.quantity}" if suggestion.product.quantity else ""
-            label = (
-                f"{suggestion.product.name}{quantity_text} | "
-                f"{suggestion.observation.price} {suggestion.observation.currency} | "
-                f"{date_text}"
-            )
-            self.combo.addItem(label, index)
-
-        info = QLabel(
-            f"Für '{ingredient_name}' wurde kein eindeutiger Treffer importiert. "
-            "Du kannst einen ähnlichen Open-Prices-Eintrag auswählen oder abbrechen.",
-            self,
-        )
-        info.setWordWrap(True)
-
-        form = QFormLayout()
-        form.addRow(info)
-        form.addRow("Vorschlag", self.combo)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QFormLayout(self)
-        layout.addRow(form)
-        layout.addRow(buttons)
-
-    def selected_suggestion(self) -> OpenPricesSuggestion:
-        return self._suggestions[self.combo.currentData()]
-
-
 class SimilarIngredientsWarningDialog(QDialog):
     """Warnt beim Anlegen/Umbenennen einer Zutat vor moeglichen Dubletten - reiner Hinweis, kein Zwang."""
 
@@ -865,7 +756,7 @@ def _clean_unit(unit: str | None) -> str | None:
 
 class _ProductSearchWorker(QObject):
     """Sucht in Open Prices nach Produkten und laedt Vorschaubilder - reine Netzwerkarbeit, kein
-    DB-Zugriff (gleiches Muster wie _OpenPricesAutoImportWorker in ingredients_view.py)."""
+    DB-Zugriff (laeuft in einem eigenen QThread, damit die UI waehrenddessen nicht einfriert)."""
 
     finished = Signal(list)
     failed = Signal(str)

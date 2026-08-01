@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from PySide6.QtCore import QObject, Qt, QThread, Signal
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
@@ -32,9 +32,7 @@ from app.services import ingredient_service, open_prices_category_service, open_
 from app.ui.dialogs import (
     AddPriceDialog,
     BarcodeSearchDialog,
-    OpenPricesImportDialog,
     OpenPricesProductPriceDialog,
-    OpenPricesSuggestionDialog,
     ReplaceIngredientDialog,
     SimilarIngredientsWarningDialog,
     confirm_dialog,
@@ -54,39 +52,6 @@ def _manual_price_notes(barcode: str | None, barcode_label: str | None) -> str |
     return f"Open Prices Barcode: {barcode}"
 
 
-class _OpenPricesAutoImportWorker(QObject):
-    progress = Signal(int, int, str)
-    item_finished = Signal(int, int, object)
-    finished = Signal(list)
-    failed = Signal(str)
-
-    def __init__(self, ingredients: list[tuple[int, str, str | None, str | None]], year: int) -> None:
-        super().__init__()
-        self.ingredients = ingredients
-        self.year = year
-
-    def run(self) -> None:
-        results: list[open_prices_service.OpenPricesImportResult] = []
-        total = len(self.ingredients)
-        try:
-            for index, (ingredient_id, ingredient_name, default_unit, barcode) in enumerate(self.ingredients, start=1):
-                self.progress.emit(index, total, ingredient_name)
-                result = open_prices_service.import_price_for_ingredient(
-                    ingredient_id,
-                    ingredient_name,
-                    target_unit=default_unit,
-                    year=self.year,
-                    barcode=barcode,
-                )
-                results.append(result)
-                self.item_finished.emit(index, total, result)
-        except Exception as exc:  # noqa: BLE001 - Fehler soll in der UI angezeigt werden
-            self.failed.emit(str(exc))
-            return
-
-        self.finished.emit(results)
-
-
 class IngredientsView(QWidget):
     """Zutatenverwaltung: Liste, Suche, Detail und zentrale Preise.
 
@@ -100,8 +65,6 @@ class IngredientsView(QWidget):
         self.context = context
         self._current_ingredient_id: int | None = None
         self._unit_names: list[str] = []
-        self._auto_import_thread: QThread | None = None
-        self._auto_import_worker: _OpenPricesAutoImportWorker | None = None
         self._build_ui()
         self.refresh()
 
@@ -238,14 +201,6 @@ class IngredientsView(QWidget):
         splitter.addWidget(right_scroll)
         splitter.setStretchFactor(0, 1)
         splitter.setStretchFactor(1, 2)
-
-        self._price_action_buttons: list[QPushButton] = [
-            self.copy_prices_button,
-            self.add_price_button,
-            self.delete_price_button,
-            self.search_barcode_button,
-            self.assign_barcodes_button,
-        ]
 
     def refresh(self) -> None:
         with self.context.session() as session:
@@ -720,224 +675,6 @@ class IngredientsView(QWidget):
                 price_service.delete_price(session, price)
         self._reload_detail()
         self._reload_price_overview()
-
-    def _import_open_prices(self) -> None:
-        if self._current_ingredient_id is None:
-            error_dialog(self, "Bitte zuerst eine Zutat auswählen oder anlegen.")
-            return
-        with self.context.session() as session:
-            ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
-            if ingredient is None:
-                return
-            ingredients = [(ingredient.id, ingredient.name)]
-            default_barcode = ingredient.barcode
-
-        dialog = OpenPricesImportDialog(
-            ingredients,
-            self.year_spin.value(),
-            self,
-            selected_ingredient_id=self._current_ingredient_id,
-            default_barcode=default_barcode,
-        )
-        if dialog.exec() != OpenPricesImportDialog.DialogCode.Accepted:
-            return
-        data = dialog.result_data()
-        if data is None:
-            error_dialog(self, "Bitte eine Zutat und einen Barcode angeben.")
-            return
-
-        try:
-            lookup = open_prices_service.lookup_product_prices(data["barcode"])
-        except open_prices_service.OpenPricesLookupError as exc:
-            error_dialog(self, str(exc))
-            return
-        except open_prices_service.OpenPricesUnavailableError as exc:
-            error_dialog(self, str(exc))
-            return
-
-        observation = lookup.latest_observation
-        if observation is None:
-            error_dialog(self, "Für diesen Barcode wurden keine Preisbeobachtungen gefunden.")
-            return
-
-        with self.context.session() as session:
-            from app.models import Ingredient
-
-            ingredient = session.get(Ingredient, data["ingredient_id"])
-            if ingredient is None:
-                error_dialog(self, "Die ausgewählte Zutat wurde nicht gefunden.")
-                return
-
-            price_record = open_prices_service.build_ingredient_price_from_observation(
-                data["ingredient_id"],
-                observation,
-                product_quantity=lookup.product.quantity,
-                target_unit=ingredient.default_unit,
-                notes_prefix=data["notes"],
-            )
-            price_record.year = data["year"]
-            session.add(price_record)
-
-        quantity = f" ({lookup.product.quantity})" if lookup.product.quantity else ""
-        store = f" bei {observation.store_name}" if observation.store_name else ""
-        imported_unit_text = f" pro {price_record.unit}"
-        info_dialog(
-            self,
-            (
-                f"Preis für {lookup.product.name}{quantity} importiert: "
-                f"{price_record.price_per_unit} {observation.currency}{imported_unit_text}{store} "
-                f"vom {observation.date.isoformat() if observation.date else 'unbekannten Datum'}."
-            ),
-        )
-        self._reload_detail()
-        self._reload_price_overview()
-
-    def _auto_import_open_prices(self) -> None:
-        if self._auto_import_thread is not None:
-            info_dialog(self, "Der automatische Open-Prices-Import läuft bereits.")
-            return
-
-        year = self.year_spin.value()
-        if not confirm_dialog(
-            self,
-            "Open Prices",
-            f"Fehlende Preise für {year} automatisch anhand der Zutatennamen bzw. verknuepften Barcodes suchen und importieren?",
-        ):
-            return
-
-        with self.context.session() as session:
-            missing_ingredients = price_service.missing_price_ingredients(session, year=year)
-            ingredients_to_import = [
-                (ingredient.id, ingredient.name, ingredient.default_unit, ingredient.barcode)
-                for ingredient in missing_ingredients
-            ]
-
-        if not ingredients_to_import:
-            info_dialog(self, f"Es fehlen keine Preise für {year}.")
-            return
-
-        self._set_import_running(True)
-        self.price_status_label.setText(f"Open Prices sucht Preise für 0/{len(ingredients_to_import)} Zutaten ...")
-        self.price_import_log.clear()
-        self.price_import_log.append(f"Starte Preisermittlung für Jahr {year} mit {len(ingredients_to_import)} fehlenden Zutaten.")
-
-        self._auto_import_thread = QThread(self)
-        self._auto_import_worker = _OpenPricesAutoImportWorker(ingredients_to_import, year)
-        self._auto_import_worker.moveToThread(self._auto_import_thread)
-        self._auto_import_thread.started.connect(self._auto_import_worker.run)
-        self._auto_import_worker.progress.connect(self._on_auto_import_progress)
-        self._auto_import_worker.item_finished.connect(self._on_auto_import_item_finished)
-        self._auto_import_worker.finished.connect(self._on_auto_import_finished)
-        self._auto_import_worker.failed.connect(self._on_auto_import_failed)
-        self._auto_import_worker.finished.connect(self._auto_import_thread.quit)
-        self._auto_import_worker.failed.connect(self._auto_import_thread.quit)
-        self._auto_import_thread.finished.connect(self._cleanup_auto_import_thread)
-        self._auto_import_thread.start()
-
-    def _on_auto_import_progress(self, current: int, total: int, ingredient_name: str) -> None:
-        self.price_status_label.setText(f"Open Prices sucht {current}/{total}: {ingredient_name}")
-
-    def _on_auto_import_item_finished(
-        self,
-        current: int,
-        total: int,
-        result: open_prices_service.OpenPricesImportResult,
-    ) -> None:
-        if result.status == "imported":
-            price_text = f"{result.matched_price} {result.matched_currency}" if result.matched_price is not None else "Preis unbekannt"
-            date_text = result.matched_date.isoformat() if result.matched_date else "Datum unbekannt"
-            product_text = result.matched_product_name or "-"
-            query_text = result.query_used or result.ingredient_name
-            self.price_import_log.append(
-                f"[{current}/{total}] {result.ingredient_name} | Suche: {query_text} | Treffer: {product_text} | Preis: {price_text} | Stand: {date_text}"
-            )
-        else:
-            query_text = result.query_used or result.ingredient_name
-            suggestion_text = ""
-            if result.suggestions:
-                suggestion_text = " | Ähnliche Produkte verfügbar"
-            self.price_import_log.append(
-                f"[{current}/{total}] {result.ingredient_name} | Suche: {query_text} | Kein Treffer: {result.message}{suggestion_text}"
-            )
-
-    def _on_auto_import_finished(self, results: list[open_prices_service.OpenPricesImportResult]) -> None:
-        imported_count = 0
-        skipped_messages: list[str] = []
-
-        with self.context.session() as session:
-            for result in results:
-                if result.status == "imported" and result.price_record is not None:
-                    session.add(result.price_record)
-                    imported_count += 1
-                else:
-                    skipped_messages.append(f"{result.ingredient_name}: {result.message}")
-
-        selected_suggestion_count = self._review_suggestions(results)
-        imported_count += selected_suggestion_count
-
-        self._set_import_running(False)
-        self.price_status_label.setText("")
-        self.price_import_log.append(f"Fertig: {imported_count} Preise importiert, {len(skipped_messages)} Zutaten ohne verwertbaren Treffer.")
-
-        summary = f"{imported_count} Preise aus Open Prices importiert."
-        if skipped_messages:
-            preview = "\n".join(skipped_messages[:8])
-            more = "\n..." if len(skipped_messages) > 8 else ""
-            summary = f"{summary}\n\nNicht gefunden / übersprungen:\n{preview}{more}"
-        info_dialog(self, summary, title="Open Prices Import")
-        self.refresh()
-        self._reload_detail()
-
-    def _on_auto_import_failed(self, message: str) -> None:
-        self._set_import_running(False)
-        self.price_status_label.setText("")
-        self.price_import_log.append(f"Fehler: {message}")
-        error_dialog(self, f"Der automatische Open-Prices-Import ist fehlgeschlagen.\n\n{message}")
-
-    def _cleanup_auto_import_thread(self) -> None:
-        if self._auto_import_worker is not None:
-            self._auto_import_worker.deleteLater()
-        if self._auto_import_thread is not None:
-            self._auto_import_thread.deleteLater()
-        self._auto_import_worker = None
-        self._auto_import_thread = None
-
-    def _set_import_running(self, running: bool) -> None:
-        for button in self._price_action_buttons:
-            button.setEnabled(not running)
-        self.year_spin.setEnabled(not running)
-
-    def _review_suggestions(self, results: list[open_prices_service.OpenPricesImportResult]) -> int:
-        imported_count = 0
-        for result in results:
-            if result.status == "imported" or not result.suggestions:
-                continue
-
-            dialog = OpenPricesSuggestionDialog(result.ingredient_name, result.suggestions, self)
-            if dialog.exec() != OpenPricesSuggestionDialog.DialogCode.Accepted:
-                continue
-
-            suggestion = dialog.selected_suggestion()
-            with self.context.session() as session:
-                ingredient = session.get(ingredient_service.Ingredient, result.ingredient_id)
-                if ingredient is None:
-                    continue
-                price_record = open_prices_service.build_ingredient_price_from_suggestion(
-                    result.ingredient_id,
-                    suggestion,
-                    target_unit=ingredient.default_unit,
-                )
-                price_record.year = result.year
-                session.add(price_record)
-                imported_count += 1
-
-            date_text = suggestion.observation.date.isoformat() if suggestion.observation.date else "Datum unbekannt"
-            self.price_import_log.append(
-                f"Manuell gewählt für {result.ingredient_name}: {suggestion.product.name} | "
-                f"{suggestion.observation.price} {suggestion.observation.currency} | {date_text}"
-            )
-
-        return imported_count
 
     def _copy_from_previous_year(self) -> None:
         target_year = self.year_spin.value()
