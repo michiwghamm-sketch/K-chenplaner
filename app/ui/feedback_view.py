@@ -92,7 +92,12 @@ class FeedbackView(QWidget):
 
         form = QFormLayout()
         self.rating_spin = QSpinBox(right)
-        self.rating_spin.setRange(1, 5)
+        # 0 = explizit "nicht bewertet" statt stillschweigend auf 1 ("kam gar nicht an") zu
+        # starten - sonst wuerde ein Speichern ohne bewusste Bewertung (z. B. Fehlklick) ein
+        # falsches 1-Stern-Feedback erzeugen, das spaeter nicht mehr von echtem zu unterscheiden
+        # ist (siehe _save_feedback(), wo 0 wieder auf None gemappt wird).
+        self.rating_spin.setRange(0, 5)
+        self.rating_spin.setSpecialValueText("Nicht bewertet")
         self.quantity_sufficient_combo = QComboBox(right)
         self.quantity_sufficient_combo.addItems(feedback_service.QUANTITY_SUFFICIENT_OPTIONS)
         self.cooked_spin = QSpinBox(right)
@@ -220,7 +225,7 @@ class FeedbackView(QWidget):
             self.meal_info_label.setText(f"{recipe.name} - {occurrence_text}{portions_text}{attendees_text}")
 
             feedback = feedback_service.get_feedback(session, camp_year.id, recipe.id)
-            self.rating_spin.setValue(feedback.rating if feedback and feedback.rating else 1)
+            self.rating_spin.setValue(feedback.rating if feedback and feedback.rating else 0)
             quantity_index = self.quantity_sufficient_combo.findText(
                 feedback.quantity_sufficient if feedback and feedback.quantity_sufficient else "Unbekannt"
             )
@@ -242,7 +247,7 @@ class FeedbackView(QWidget):
 
     def _clear_form(self) -> None:
         self.meal_info_label.setText("Bitte links ein Rezept auswählen.")
-        self.rating_spin.setValue(1)
+        self.rating_spin.setValue(0)
         self.quantity_sufficient_combo.setCurrentIndex(0)
         self.cooked_spin.setValue(0)
         self.leftover_qty_spin.setValue(0)
@@ -290,7 +295,7 @@ class FeedbackView(QWidget):
                     session,
                     camp_year,
                     recipe,
-                    rating=self.rating_spin.value(),
+                    rating=self.rating_spin.value() or None,
                     repeat_next_time=repeat_next_time,
                     quantity_sufficient=quantity_sufficient if quantity_sufficient != "Unbekannt" else None,
                     planned_portions=self._current_total_planned_portions,
