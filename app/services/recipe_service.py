@@ -335,6 +335,20 @@ def delete_component(session: Session, component: RecipeComponent) -> None:
     session.delete(component)
 
 
+def move_component(session: Session, recipe: Recipe, component: RecipeComponent, *, direction: int) -> None:
+    """Vertauscht die Reihenfolge mit dem direkten Nachbarn (direction: -1 = nach oben, +1 = nach
+    unten) - gleiches Muster wie move_step(). Bisher liess sich die Teilstueck-Reihenfolge nur
+    über Loeschen+Neuanlegen aendern (Zutaten wandern beim Loeschen nach 'Sonstiges')."""
+    ordered_components = sorted(recipe.components, key=lambda c: c.sort_order)
+    index = ordered_components.index(component)
+    neighbor_index = index + direction
+    if not (0 <= neighbor_index < len(ordered_components)):
+        return
+    neighbor = ordered_components[neighbor_index]
+    component.sort_order, neighbor.sort_order = neighbor.sort_order, component.sort_order
+    session.flush()
+
+
 # --- Zutaten -------------------------------------------------------------------------
 
 

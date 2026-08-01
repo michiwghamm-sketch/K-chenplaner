@@ -597,9 +597,13 @@ class RecipesView(QWidget):
         # sonst wuerden Gesamtmenge und Gesamtpreis in derselben Zeile zu unterschiedlichen
         # Portionenzahlen gehoeren.
         portions_for_totals = cost_result.portions if cost_result is not None else (recipe.default_portions or 1)
+        first_component_id = recipe.components[0].id if recipe.components else None
+        last_component_id = recipe.components[-1].id if recipe.components else None
         banding_index = 0
         for component, items in ordered_groups:
-            self._add_band_row(table, component)
+            is_first = component is None or component.id == first_component_id
+            is_last = component is None or component.id == last_component_id
+            self._add_band_row(table, component, is_first=is_first, is_last=is_last)
             if not items:
                 self._add_empty_row(table)
                 continue
@@ -611,7 +615,7 @@ class RecipesView(QWidget):
 
         table.resizeRowsToContents()
 
-    def _add_band_row(self, table: QTableWidget, component) -> None:
+    def _add_band_row(self, table: QTableWidget, component, *, is_first: bool = True, is_last: bool = True) -> None:
         row = table.rowCount()
         table.insertRow(row)
         table.setSpan(row, 0, 1, 4)
@@ -633,6 +637,21 @@ class RecipesView(QWidget):
             " QPushButton:hover { background-color: rgba(255,255,255,0.32); }"
         )
         component_id = component.id if component is not None else None
+        if component is not None:
+            # "Sonstiges" (component is None) hat keine eigene sort_order unter den echten
+            # Teilstuecken und ist daher nicht umsortierbar.
+            move_up_button = QPushButton("▲", button_bar)
+            move_up_button.setStyleSheet(band_button_style)
+            move_up_button.setEnabled(not is_first)
+            move_up_button.setToolTip("Teilstück nach oben verschieben")
+            move_up_button.clicked.connect(lambda _checked=False, comp_id=component.id: self._move_component(comp_id, -1))
+            button_layout.addWidget(move_up_button)
+            move_down_button = QPushButton("▼", button_bar)
+            move_down_button.setStyleSheet(band_button_style)
+            move_down_button.setEnabled(not is_last)
+            move_down_button.setToolTip("Teilstück nach unten verschieben")
+            move_down_button.clicked.connect(lambda _checked=False, comp_id=component.id: self._move_component(comp_id, 1))
+            button_layout.addWidget(move_down_button)
         add_button = QPushButton("+ Zutat", button_bar)
         add_button.setStyleSheet(band_button_style)
         add_button.clicked.connect(lambda _checked=False, cid=component_id: self._add_ingredient(cid))
@@ -741,6 +760,17 @@ class RecipesView(QWidget):
             component = session.get(recipe_service.RecipeComponent, component_id)
             if component is not None:
                 recipe_service.delete_component(session, component)
+        self._reload_detail()
+
+    def _move_component(self, component_id: int, direction: int) -> None:
+        if self._current_recipe_id is None:
+            return
+        with self.context.session() as session:
+            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+            component = session.get(recipe_service.RecipeComponent, component_id)
+            if recipe is None or component is None:
+                return
+            recipe_service.move_component(session, recipe, component, direction=direction)
         self._reload_detail()
 
     def _build_ingredient_choices(self, session, ingredients) -> list[RecipeIngredientChoice]:
