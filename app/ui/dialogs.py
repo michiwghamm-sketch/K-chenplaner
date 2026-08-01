@@ -1276,23 +1276,44 @@ class MealSlotDialog(QDialog):
 
 
 class ScaleRecipeDialog(QDialog):
-    """Dialog zum Skalieren aller Zutatenmengen eines Rezepts mit einem Faktor."""
+    """Dialog zum Skalieren aller Zutatenmengen eines Rezepts mit einem Faktor oder direkt auf
+    eine Zielportionenzahl - beide Felder sind gekoppelt (sofern die aktuelle Portionenzahl des
+    Rezepts bekannt ist), damit man z. B. "von 50 auf 100 Portionen" nicht erst im Kopf in einen
+    Faktor 2.0 umrechnen muss."""
 
-    def __init__(self, suggested_factor: Decimal | None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        suggested_factor: Decimal | None,
+        parent: QWidget | None = None,
+        *,
+        current_portions: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Mengen skalieren")
+        self._current_portions = current_portions
+        self._syncing = False
 
         self.factor_spin = QDoubleSpinBox(self)
         self.factor_spin.setDecimals(3)
         self.factor_spin.setRange(0.001, 100)
         self.factor_spin.setSingleStep(0.05)
         self.factor_spin.setValue(float(suggested_factor) if suggested_factor else 1.0)
+        self.factor_spin.valueChanged.connect(self._sync_target_portions_from_factor)
+
+        self.target_portions_spin = QSpinBox(self)
+        self.target_portions_spin.setRange(1, 20000)
+        self.target_portions_spin.setEnabled(bool(current_portions))
+        if current_portions:
+            self.target_portions_spin.setValue(max(1, round(current_portions * self.factor_spin.value())))
+        self.target_portions_spin.valueChanged.connect(self._sync_factor_from_target_portions)
 
         hint_text = (
             f"Vorschlag aus letztem Feedback: Faktor {suggested_factor}"
             if suggested_factor is not None
-            else "Kein Feedback-Faktor bekannt - bitte Faktor manuell eintragen."
+            else "Kein Feedback-Faktor bekannt - bitte Faktor oder Zielportionen manuell eintragen."
         )
+        if not current_portions:
+            hint_text += " Rezept hat keine Standardportionenzahl - Zielportionen nicht berechenbar."
         self.hint_label = QLabel(hint_text, self)
         self.hint_label.setWordWrap(True)
 
@@ -1301,6 +1322,8 @@ class ScaleRecipeDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(self.hint_label)
+        if current_portions:
+            form.addRow(f"Zielportionen (bisher {current_portions})", self.target_portions_spin)
         form.addRow("Faktor", self.factor_spin)
         form.addRow("Grund (optional)", self.reason_edit)
 
@@ -1311,6 +1334,20 @@ class ScaleRecipeDialog(QDialog):
         layout = QFormLayout(self)
         layout.addRow(form)
         layout.addRow(buttons)
+
+    def _sync_target_portions_from_factor(self, value: float) -> None:
+        if self._syncing or not self._current_portions:
+            return
+        self._syncing = True
+        self.target_portions_spin.setValue(max(1, round(self._current_portions * value)))
+        self._syncing = False
+
+    def _sync_factor_from_target_portions(self, value: int) -> None:
+        if self._syncing or not self._current_portions:
+            return
+        self._syncing = True
+        self.factor_spin.setValue(value / self._current_portions)
+        self._syncing = False
 
     def result_data(self) -> dict:
         return {

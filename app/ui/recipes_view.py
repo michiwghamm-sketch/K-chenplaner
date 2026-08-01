@@ -1082,8 +1082,9 @@ class RecipesView(QWidget):
                 error_dialog(self, "Dieses Rezept hat noch keine Zutaten.")
                 return
             suggested = recipe_service.suggested_scale_factor(recipe)
+            current_portions = recipe.default_portions
 
-        dialog = ScaleRecipeDialog(suggested, self)
+        dialog = ScaleRecipeDialog(suggested, self, current_portions=current_portions)
         if dialog.exec() != ScaleRecipeDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()
