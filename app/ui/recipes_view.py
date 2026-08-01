@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
+from app.models import CampYear
 from app.services import export_service, feedback_service, ingredient_service, recipe_service, unit_service
 from app.ui.dialogs import (
     AddRecipeIngredientDialog,
@@ -71,6 +72,10 @@ class RecipesView(QWidget):
         # verhindert, dass ein Rezeptwechsel oder "Abbrechen" ungespeicherte Aenderungen
         # kommentarlos verwirft (siehe _confirm_discard_changes()).
         self._detail_dirty: bool = False
+        # Ob gerade ein Kostenergebnis angezeigt wird und ob Portionen/Preisjahr seither
+        # geaendert wurden, ohne neu zu berechnen - siehe _mark_cost_stale()/_set_cost_label().
+        self._cost_calculated: bool = False
+        self._cost_stale: bool = False
         self._build_ui()
         self.refresh()
 
@@ -246,12 +251,14 @@ class RecipesView(QWidget):
         self.cost_portions_spin = QSpinBox(tab)
         self.cost_portions_spin.setRange(1, 2000)
         self.cost_portions_spin.setValue(10)
+        self.cost_portions_spin.valueChanged.connect(self._mark_cost_stale)
         cost_panel.addWidget(self.cost_portions_spin)
         year_label = QLabel("Preisjahr", tab)
         cost_panel.addWidget(year_label)
         self.cost_year_spin = QSpinBox(tab)
         self.cost_year_spin.setRange(2000, 2100)
         self.cost_year_spin.setValue(datetime.now().year)
+        self.cost_year_spin.valueChanged.connect(self._mark_cost_stale)
         cost_panel.addWidget(self.cost_year_spin)
         calc_button = QPushButton("Kosten berechnen", tab)
         calc_button.clicked.connect(self._calculate_cost)
@@ -506,7 +513,13 @@ class RecipesView(QWidget):
             self._style_diet_combo(recipe.diet_type or NO_DIET_TYPE_LABEL)
             self.meal_type_combo.setCurrentText(recipe.meal_type or "")
             self.portions_spin.setValue(recipe.default_portions or 1)
-            self.cost_portions_spin.setValue(recipe.default_portions or 10)
+            # Ohne eigene Standardportionenzahl des Rezepts ist die Teilnehmerzahl des gerade
+            # gewaehlten Zeltlagers ein deutlich sinnvollerer Startwert fuer die Kostenrechnung
+            # als eine willkuerliche Zahl - man will ja idR wissen "was kostet das fuers ganze
+            # Lager", nicht fuer 10 Portionen.
+            self.cost_portions_spin.setValue(
+                recipe.default_portions or self._camp_participant_count(session) or 10
+            )
             self.active_checkbox.setChecked(recipe.active)
             self.notes_edit.setPlainText(recipe.notes or "")
 
@@ -515,7 +528,7 @@ class RecipesView(QWidget):
                 cost_result = recipe_service.calculate_recipe_cost(
                     session,
                     recipe,
-                    portions=recipe.default_portions or 1,
+                    portions=self.cost_portions_spin.value(),
                     year=self.cost_year_spin.value(),
                 )
             self._rebuild_ingredient_sections(recipe, cost_result)
@@ -527,14 +540,36 @@ class RecipesView(QWidget):
         self._loaded_recipe_id = self._current_recipe_id
         self._detail_dirty = False
 
+    def _camp_participant_count(self, session) -> int | None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            return None
+        camp_year = session.get(CampYear, camp_year_id)
+        return camp_year.participant_count_total if camp_year is not None else None
+
     def _set_cost_label(self, cost_result: recipe_service.RecipeCostResult | None) -> None:
+        self._cost_calculated = cost_result is not None
+        self._cost_stale = False
         if cost_result is None:
             self.cost_label.setText("Kosten: -")
+            self.cost_label.setStyleSheet("font-weight: 600;")
             return
         text = f"Gesamtpreis: {cost_result.total_cost} EUR\nPreis pro Portion: {cost_result.cost_per_portion} EUR"
         if cost_result.missing_price_ingredients:
             text += f"\nFehlende Preise: {', '.join(cost_result.missing_price_ingredients)}"
         self.cost_label.setText(text)
+        self.cost_label.setStyleSheet("font-weight: 600;")
+
+    def _mark_cost_stale(self, *_args: object) -> None:
+        # Feuert auch waehrend _reload_detail() die Spinboxen programmatisch befuellt - dort
+        # ueberschreibt der abschliessende _set_cost_label()-Aufruf den Stale-Zustand wieder,
+        # echte Nutzeraenderungen NACH einer Berechnung bleiben also die einzigen, die haengen
+        # bleiben (siehe gleiches Muster bei _mark_detail_dirty()).
+        if not self._cost_calculated or self._cost_stale:
+            return
+        self._cost_stale = True
+        self.cost_label.setText(self.cost_label.text() + "\n⚠ Portionen/Preisjahr geändert - bitte neu berechnen")
+        self.cost_label.setStyleSheet(f"font-weight: 600; color: {COLOR_CRITICAL};")
 
     # --- Teilstuecke / Zutaten: eine Tabelle, Excel-aehnlich (Kopfzeile + Teilstueck-Baender) ---
 
