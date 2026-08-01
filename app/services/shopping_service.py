@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import random
 from collections import defaultdict
 from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
-from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem
+from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip
 from app.services import planning_service, price_service
 
 
@@ -123,27 +124,10 @@ def group_by_shopping_day(shopping_list: ShoppingList) -> dict[date | None, list
     return dict(groups)
 
 
-def group_by_store(shopping_list: ShoppingList) -> dict[str | None, list[ShoppingListItem]]:
-    groups: dict[str | None, list[ShoppingListItem]] = defaultdict(list)
-    for item in shopping_list.items:
-        groups[item.store].append(item)
-    return dict(groups)
-
-
-def filter_by_store(shopping_list: ShoppingList, store: str) -> list[ShoppingListItem]:
-    return [item for item in shopping_list.items if item.store == store]
-
-
 def grouped_by_day_ordered(shopping_list: ShoppingList) -> list[tuple[date | None, list[ShoppingListItem]]]:
     """Tage aufsteigend sortiert, Positionen ohne Einkaufstag zuletzt."""
     groups = group_by_shopping_day(shopping_list)
     return sorted(groups.items(), key=lambda pair: (pair[0] is None, pair[0]))
-
-
-def grouped_by_store_ordered(shopping_list: ShoppingList) -> list[tuple[str | None, list[ShoppingListItem]]]:
-    """Händler alphabetisch sortiert, Positionen ohne Händler zuletzt."""
-    groups = group_by_store(shopping_list)
-    return sorted(groups.items(), key=lambda pair: (pair[0] is None, (pair[0] or "").lower()))
 
 
 @dataclass(slots=True)
@@ -185,7 +169,6 @@ def aggregated_items_sorted(shopping_list: ShoppingList) -> list[AggregatedShopp
     return aggregated
 
 
-UNASSIGNED_STORE_LABEL = "Ohne Händler"
 GERMAN_WEEKDAYS = ("Montag", "Dienstag", "Mittwoch", "Donnerstag", "Freitag", "Samstag", "Sonntag")
 
 
@@ -199,19 +182,296 @@ def format_date_de(value: date | None) -> str:
     return value.strftime("%d.%m.%Y") if value else ""
 
 
-def set_item_store(item: ShoppingListItem, store: str | None) -> ShoppingListItem:
-    item.store = (store or "").strip() or None
-    return item
+def format_quantity_de(value: Decimal | None) -> str:
+    """Menge ohne unnoetige Nachkommastellen (z. B. "20" statt "20.000", "2.5" statt "2.500")."""
+    if value is None:
+        return ""
+    text = f"{value:.3f}".rstrip("0").rstrip(".")
+    return text or "0"
 
 
 ALLOWED_ITEM_STATUSES = ("offen", "bestellt", "gekauft", "erledigt", "pruefen")
 
 
-def set_item_status(item: ShoppingListItem, status: str) -> ShoppingListItem:
+# --- Einkauf planen: Trips & Allocations ------------------------------------------------
+# Eine Gesamtposition (ShoppingListItem) wird ueber den "Einkauf planen"-Assistenten
+# (Desktop & Mobile) einem oder mehreren ShoppingTrips zugeteilt. Jeder Trip hat einen
+# Haendler und Teilnehmer; die dabei ausgewaehlten Teilmengen (Allocations) werden zufaellig
+# gleichmaessig auf die Teilnehmer verteilt. ShoppingListItem.store/.status werden dafuer
+# nicht mehr beschrieben (siehe migrate_legacy_store_status fuer die Altdaten-Uebernahme).
+
+UNASSIGNED_PERSON_LABEL = "Ohne Zuordnung"
+
+
+def _ingredient_key(ingredient_id: int | None, unit: str | None) -> tuple[int | None, str]:
+    return (ingredient_id, unit or "")
+
+
+def _ingredient_totals(shopping_list: ShoppingList) -> dict[tuple[int | None, str], Decimal]:
+    """Gesamtbedarf je Zutat+Einheit ueber alle ShoppingListItem-Zeilen (Einkaufstage) hinweg."""
+    totals: dict[tuple[int | None, str], Decimal] = defaultdict(lambda: Decimal("0"))
+    for item in shopping_list.items:
+        totals[_ingredient_key(item.ingredient_id, item.unit)] += item.quantity
+    return totals
+
+
+def _allocated_totals(shopping_list: ShoppingList) -> dict[tuple[int | None, str], Decimal]:
+    """Bereits auf Einkaeufe (Trips) verteilte Menge je Zutat+Einheit."""
+    totals: dict[tuple[int | None, str], Decimal] = defaultdict(lambda: Decimal("0"))
+    for allocation in shopping_list.allocations:
+        totals[_ingredient_key(allocation.ingredient_id, allocation.unit)] += allocation.quantity
+    return totals
+
+
+def remaining_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
+    """Menge einer Zutat (Gesamtbedarf ueber alle Einkaufstage), die noch keinem Einkauf
+    zugeteilt ist."""
+    key = _ingredient_key(ingredient_id, unit)
+    total = _ingredient_totals(shopping_list).get(key, Decimal("0"))
+    allocated = _allocated_totals(shopping_list).get(key, Decimal("0"))
+    return total - allocated
+
+
+@dataclass(slots=True)
+class PlannableIngredientGroup:
+    """Eine Zutat mit ihrer noch offenen Gesamtmenge (ueber alle Einkaufstage zusammengefasst) -
+    Datenquelle fuer den "Einkauf planen"-Assistenten. Eine hier ausgewaehlte Menge wird zu
+    GENAU EINEM Listeneintrag (einer Allocation), unabhaengig davon, auf wie viele
+    ShoppingListItem-Zeilen der Bedarf im Wochenplan urspruenglich verteilt war."""
+
+    ingredient_id: int | None
+    ingredient_name: str
+    unit: str
+    remaining_quantity: Decimal
+
+
+def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableIngredientGroup]:
+    """Zutaten mit noch nicht zugeteilter Restmenge, alphabetisch sortiert."""
+    totals = _ingredient_totals(shopping_list)
+    allocated = _allocated_totals(shopping_list)
+    names: dict[tuple[int | None, str], str] = {}
+    for item in shopping_list.items:
+        names[_ingredient_key(item.ingredient_id, item.unit)] = item.ingredient.name if item.ingredient else ""
+
+    result = []
+    for key, total in totals.items():
+        remaining = total - allocated.get(key, Decimal("0"))
+        if remaining <= 0:
+            continue
+        ingredient_id, unit = key
+        result.append(
+            PlannableIngredientGroup(
+                ingredient_id=ingredient_id, ingredient_name=names.get(key, ""), unit=unit, remaining_quantity=remaining
+            )
+        )
+    result.sort(key=lambda group: group.ingredient_name.lower())
+    return result
+
+
+def _parse_participants(participants_text: str | None) -> list[str]:
+    if not participants_text:
+        return []
+    return [name.strip() for name in participants_text.split(",") if name.strip()]
+
+
+def _distribute_randomly(allocations: list[ShoppingListItemAllocation], participants: list[str]) -> None:
+    """Verteilt zufaellig gleichmaessig auf die Teilnehmer - jede Allocation ist bereits ein
+    einzelner Listeneintrag (eine Zutat mit Gesamtmenge), geht also immer komplett an eine
+    Person."""
+    if not participants:
+        for allocation in allocations:
+            allocation.assigned_to = None
+        return
+    shuffled = list(allocations)
+    random.shuffle(shuffled)
+    for index, allocation in enumerate(shuffled):
+        allocation.assigned_to = participants[index % len(participants)]
+
+
+def create_shopping_trip(
+    session,
+    shopping_list: ShoppingList,
+    *,
+    store: str,
+    participants: list[str],
+    selections: list[tuple[int | None, str, Decimal]],
+) -> ShoppingTrip:
+    """Legt einen Einkauf (Trip) an: waehlt Gesamtmengen noch offener Zutaten fuer einen
+    Haendler aus und verteilt sie zufaellig gleichmaessig auf die Teilnehmer.
+
+    `selections` sind (ingredient_id, unit, gewuenschte Menge)-Tripel, wie sie
+    items_available_for_planning liefert - jede Auswahl wird zu genau einer Allocation
+    (einem Listeneintrag), es wird nichts auf mehrere Zeilen aufgesplittet."""
+    store = store.strip()
+    if not store:
+        raise ValueError("Händler darf nicht leer sein.")
+    if not selections:
+        raise ValueError("Mindestens eine Position auswählen.")
+
+    names: dict[tuple[int | None, str], str] = {}
+    for item in shopping_list.items:
+        names[_ingredient_key(item.ingredient_id, item.unit)] = item.ingredient.name if item.ingredient else ""
+
+    for ingredient_id, unit, quantity in selections:
+        key = _ingredient_key(ingredient_id, unit)
+        label = names.get(key) or str(ingredient_id)
+        if quantity <= 0:
+            raise ValueError(f"Menge für '{label}' muss größer als 0 sein.")
+        if quantity > remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit):
+            raise ValueError(f"Menge für '{label}' übersteigt die noch offene Restmenge.")
+
+    trip = ShoppingTrip(shopping_list=shopping_list, store=store, participants_text=", ".join(participants) or None)
+    session.add(trip)
+    for ingredient_id, unit, quantity in selections:
+        trip.allocations.append(
+            ShoppingListItemAllocation(
+                shopping_list=shopping_list, ingredient_id=ingredient_id, unit=unit, quantity=quantity, status="offen"
+            )
+        )
+
+    _distribute_randomly(trip.allocations, participants)
+    session.flush()
+    return trip
+
+
+def reshuffle_trip_assignments(trip: ShoppingTrip, participants: list[str] | None = None) -> None:
+    """Verteilt die noch offenen (nicht abgehakten) Allocations eines Trips neu zufaellig -
+    deckt "jemand faellt aus/kommt dazu" ab, ohne den Trip neu anzulegen."""
+    names = participants if participants is not None else _parse_participants(trip.participants_text)
+    if participants is not None:
+        trip.participants_text = ", ".join(names) or None
+    open_allocations = [allocation for allocation in trip.allocations if allocation.status != "gekauft"]
+    _distribute_randomly(open_allocations, names)
+
+
+def set_allocation_assigned_to(allocation: ShoppingListItemAllocation, name: str | None) -> ShoppingListItemAllocation:
+    allocation.assigned_to = (name or "").strip() or None
+    return allocation
+
+
+def set_allocation_status(allocation: ShoppingListItemAllocation, status: str) -> ShoppingListItemAllocation:
     if status not in ALLOWED_ITEM_STATUSES:
         raise ValueError(f"Ungültiger Status '{status}'. Erlaubt: {', '.join(ALLOWED_ITEM_STATUSES)}")
-    item.status = status
-    return item
+    allocation.status = status
+    return allocation
+
+
+def mark_allocation_purchased(
+    allocation: ShoppingListItemAllocation, purchased_quantity: Decimal | None = None
+) -> ShoppingListItemAllocation:
+    allocation.status = "gekauft"
+    allocation.purchased_quantity = purchased_quantity if purchased_quantity is not None else allocation.quantity
+    return allocation
+
+
+def mark_allocation_open(allocation: ShoppingListItemAllocation) -> ShoppingListItemAllocation:
+    allocation.status = "offen"
+    allocation.purchased_quantity = None
+    return allocation
+
+
+def delete_allocation(session, allocation: ShoppingListItemAllocation) -> None:
+    session.delete(allocation)
+    session.flush()
+
+
+def delete_shopping_trip(session, trip: ShoppingTrip) -> None:
+    session.delete(trip)
+    session.flush()
+
+
+def grouped_by_store_ordered_allocations(shopping_list: ShoppingList) -> list[tuple[str, list[ShoppingListItemAllocation]]]:
+    """Allocations aller Trips einer Liste, gruppiert nach Händler (alphabetisch)."""
+    groups: dict[str, list[ShoppingListItemAllocation]] = defaultdict(list)
+    for allocation in shopping_list.allocations:
+        groups[allocation.trip.store].append(allocation)
+    return sorted(groups.items(), key=lambda pair: pair[0].lower())
+
+
+def grouped_by_person_ordered(shopping_list: ShoppingList) -> list[tuple[str | None, list[ShoppingListItemAllocation]]]:
+    """Allocations aller Trips einer Liste, gruppiert nach zugewiesener Person (unzugeordnet zuletzt)."""
+    groups: dict[str | None, list[ShoppingListItemAllocation]] = defaultdict(list)
+    for allocation in shopping_list.allocations:
+        groups[allocation.assigned_to].append(allocation)
+    return sorted(groups.items(), key=lambda pair: (pair[0] is None, (pair[0] or "").lower()))
+
+
+def migrate_legacy_store_status(session, shopping_list: ShoppingList) -> None:
+    """Einmalige, idempotente Übernahme alter item.store/item.status-Werte (aus der Zeit vor
+    Trips/Allocations) in je einen "Altbestand"-Trip pro Händlerwert. Zutaten, die bereits eine
+    Allocation haben, werden übersprungen (schon migriert oder schon frisch über "Einkauf
+    planen" angelegt). Legacy-Zeilen werden nach (Zutat, Einheit, Händler) gruppiert und ihre
+    Mengen summiert - Zeilen ohne Händler (store=None) zählen dabei bewusst nicht mit."""
+    already_allocated = {_ingredient_key(a.ingredient_id, a.unit) for a in shopping_list.allocations}
+    trips_by_store: dict[str, ShoppingTrip] = {trip.store: trip for trip in shopping_list.trips}
+
+    groups: dict[tuple[int | None, str, str], list[ShoppingListItem]] = defaultdict(list)
+    for item in shopping_list.items:
+        key = _ingredient_key(item.ingredient_id, item.unit)
+        if key in already_allocated or not item.store:
+            continue
+        groups[(item.ingredient_id, item.unit or "", item.store)].append(item)
+
+    for (ingredient_id, unit, store), group_items in groups.items():
+        trip = trips_by_store.get(store)
+        if trip is None:
+            trip = ShoppingTrip(shopping_list=shopping_list, store=store)
+            session.add(trip)
+            trips_by_store[store] = trip
+        total_quantity = sum((item.quantity for item in group_items), Decimal("0"))
+        status = next((item.status for item in group_items if item.status), None) or "offen"
+        trip.allocations.append(
+            ShoppingListItemAllocation(
+                shopping_list=shopping_list, ingredient_id=ingredient_id, unit=unit, quantity=total_quantity, status=status
+            )
+        )
+    session.flush()
+
+
+def ingredient_price_per_unit(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal | None:
+    """Preis je Einheit einer Zutat, hergeleitet aus der ersten Wochenplan-Position mit
+    hinterlegtem Preis - fuer die Anzeige auf Allocation-Zeilen (Nach Händler/Nutzer), die
+    selbst keinen eigenen Preis fuehren."""
+    for item in shopping_list.items:
+        if _ingredient_key(item.ingredient_id, item.unit) == _ingredient_key(ingredient_id, unit) and item.estimated_price_per_unit is not None:
+            return item.estimated_price_per_unit
+    return None
+
+
+def ingredient_linked_recipes(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> str:
+    """Rezepte, die diese Zutat brauchen - fuer die Anzeige auf Allocation-Zeilen."""
+    names: set[str] = set()
+    for item in shopping_list.items:
+        if _ingredient_key(item.ingredient_id, item.unit) == _ingredient_key(ingredient_id, unit) and item.linked_recipes_text:
+            names.update(name.strip() for name in item.linked_recipes_text.split(",") if name.strip())
+    return ", ".join(sorted(names))
+
+
+def allocation_store_summary(item: ShoppingListItem) -> str:
+    """Kompakte Anzeige der geplanten Händler+Mengen einer Zutat - für den flachen
+    CSV/Excel-Export, der weiterhin eine einzelne Händler-Spalte pro (Tages-)Zeile zeigt.
+    Zeigt dieselbe Zutat-Zuteilung auf allen Tages-Zeilen dieser Zutat an, da Allocations
+    jetzt zutatenbezogen statt tagesbezogen sind."""
+    key = _ingredient_key(item.ingredient_id, item.unit)
+    matching = [a for a in item.shopping_list.allocations if _ingredient_key(a.ingredient_id, a.unit) == key]
+    if not matching:
+        return ""
+    parts = [f"{allocation.trip.store} ({format_quantity_de(allocation.quantity)} {item.unit or ''})".strip() for allocation in matching]
+    return ", ".join(parts)
+
+
+def allocation_status_summary(item: ShoppingListItem) -> str:
+    """Kompakter Gesamtstatus einer Zutat über alle Allocations hinweg - für den
+    CSV/Excel-Export."""
+    key = _ingredient_key(item.ingredient_id, item.unit)
+    matching = [a for a in item.shopping_list.allocations if _ingredient_key(a.ingredient_id, a.unit) == key]
+    if not matching:
+        return "offen"
+    if remaining_quantity_for_ingredient(item.shopping_list, item.ingredient_id, item.unit) > 0:
+        return "teilweise geplant"
+    if all(allocation.status == "gekauft" for allocation in matching):
+        return "gekauft"
+    return "offen"
 
 
 def total_estimated_cost(shopping_list: ShoppingList) -> Decimal:

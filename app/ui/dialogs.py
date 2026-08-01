@@ -2,12 +2,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, replace
 from decimal import Decimal, InvalidOperation
+import random
 import re
 from types import SimpleNamespace
 
 from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -39,7 +41,7 @@ from app.services.open_prices_service import (
     lookup_product_prices,
     suggest_matches_for_query,
 )
-from app.services import open_prices_category_service, open_prices_service
+from app.services import open_prices_category_service, open_prices_service, shopping_service
 from app.services.sync_service import SyncConflict
 from app.ui.widgets import UnitComboBox
 
@@ -1237,6 +1239,242 @@ class MealSlotDialog(QDialog):
                 }
             )
         return {"dishes": dishes, "removed_ids": self._removed_ids}
+
+
+class PlanShoppingTripDialog(QDialog):
+    """"Einkauf planen"-Assistent: Händler + Teilnehmer wählen, Teilmengen der noch offenen
+    Zutaten (mit Gesamtmenge über alle Einkaufstage) auswählen - wird beim Bestätigen
+    zufällig gleichmäßig auf die Teilnehmer verteilt (siehe shopping_service.create_shopping_trip)."""
+
+    _COLUMNS = ("Kaufen", "Zutat", "Noch offen", "Menge für diesen Einkauf", "Einheit")
+
+    def __init__(self, groups: list[shopping_service.PlannableIngredientGroup], parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Einkauf planen")
+        self.setMinimumWidth(720)
+
+        self.store_edit = QLineEdit(self)
+        self.store_edit.setPlaceholderText("z. B. Metro")
+        self.participants_edit = QLineEdit(self)
+        self.participants_edit.setPlaceholderText("z. B. Anna, Ben, Chris (kommagetrennt)")
+
+        form = QFormLayout()
+        form.addRow("Händler", self.store_edit)
+        form.addRow("Teilnehmer", self.participants_edit)
+
+        self.table = QTableWidget(0, len(self._COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().resizeSection(0, 70)
+        self.table.verticalHeader().setVisible(False)
+        for group in groups:
+            self._add_row(group)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(QLabel("Zutaten, die bei diesem Einkauf besorgt werden sollen:", self))
+        layout.addWidget(self.table)
+        layout.addWidget(buttons)
+
+    def _add_row(self, group: shopping_service.PlannableIngredientGroup) -> None:
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        checkbox = QCheckBox(self.table)
+        checkbox.setProperty("ingredient_id", group.ingredient_id)
+        checkbox.setProperty("unit", group.unit)
+        checkbox_container = QWidget(self.table)
+        checkbox_layout = QHBoxLayout(checkbox_container)
+        checkbox_layout.addWidget(checkbox)
+        checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        checkbox_layout.setContentsMargins(0, 0, 0, 0)
+        self.table.setCellWidget(row, 0, checkbox_container)
+
+        name_item = QTableWidgetItem(group.ingredient_name)
+        name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 1, name_item)
+
+        remaining_item = QTableWidgetItem(f"{shopping_service.format_quantity_de(group.remaining_quantity)} {group.unit}")
+        remaining_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 2, remaining_item)
+
+        quantity_spin = QDoubleSpinBox(self.table)
+        quantity_spin.setDecimals(3)
+        quantity_spin.setRange(0, float(group.remaining_quantity))
+        quantity_spin.setValue(float(group.remaining_quantity))
+        self.table.setCellWidget(row, 3, quantity_spin)
+
+        unit_item = QTableWidgetItem(group.unit)
+        unit_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 4, unit_item)
+
+    def result_data(self) -> dict:
+        participants = [name.strip() for name in self.participants_edit.text().split(",") if name.strip()]
+        selections = []
+        for row in range(self.table.rowCount()):
+            checkbox = self.table.cellWidget(row, 0).findChild(QCheckBox)
+            if not checkbox.isChecked():
+                continue
+            quantity_spin = self.table.cellWidget(row, 3)
+            if quantity_spin.value() <= 0:
+                continue
+            selections.append((checkbox.property("ingredient_id"), checkbox.property("unit"), Decimal(str(quantity_spin.value()))))
+        return {
+            "store": self.store_edit.text().strip(),
+            "participants": participants,
+            "selections": selections,
+        }
+
+
+@dataclass(slots=True)
+class TripAllocationRow:
+    """Eine Zeile im "Einkauf bearbeiten"-Dialog (siehe EditShoppingTripDialog)."""
+
+    id: int
+    ingredient_name: str
+    quantity: Decimal
+    unit: str
+    assigned_to: str | None
+    status: str
+
+
+class EditShoppingTripDialog(QDialog):
+    """Bearbeitet einen bestehenden Einkauf (Trip) als eigenes Objekt: Händler, Teilnehmer und
+    die einzelnen Zutaten-Zuteilungen (Person, Status) - inklusive "Neu mischen" und der
+    Möglichkeit, einzelne Positionen zu entfernen oder den ganzen Einkauf zu löschen."""
+
+    _COLUMNS = ("Zutat", "Menge", "Zugewiesen an", "Status", "")
+
+    def __init__(
+        self,
+        *,
+        store: str,
+        participants_text: str,
+        rows: list[TripAllocationRow],
+        status_options: tuple[str, ...],
+        parent: QWidget | None = None,
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle(f"Einkauf bearbeiten - {store}")
+        self.setMinimumWidth(760)
+        self._status_options = status_options
+        self._removed_ids: list[int] = []
+        self._delete_requested = False
+
+        self.store_edit = QLineEdit(store, self)
+        self.participants_edit = QLineEdit(participants_text, self)
+        self.participants_edit.setPlaceholderText("z. B. Anna, Ben, Chris (kommagetrennt)")
+
+        form = QFormLayout()
+        form.addRow("Händler", self.store_edit)
+        form.addRow("Teilnehmer", self.participants_edit)
+
+        self.table = QTableWidget(0, len(self._COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
+        for column, width in enumerate((220, 100, 160, 130, 90)):
+            self.table.horizontalHeader().resizeSection(column, width)
+        self.table.verticalHeader().setVisible(False)
+        for row_data in rows:
+            self._add_row(row_data)
+
+        row_buttons = QHBoxLayout()
+        reshuffle_button = QPushButton("Neu mischen", self)
+        reshuffle_button.setToolTip("Verteilt die noch offenen (nicht abgehakten) Positionen zufällig neu auf die Teilnehmer.")
+        reshuffle_button.clicked.connect(self._reshuffle)
+        row_buttons.addWidget(reshuffle_button)
+        row_buttons.addStretch(1)
+        delete_trip_button = QPushButton("Einkauf komplett löschen", self)
+        delete_trip_button.setProperty("role", "secondary")
+        delete_trip_button.clicked.connect(self._request_delete)
+        row_buttons.addWidget(delete_trip_button)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addLayout(form)
+        layout.addWidget(self.table)
+        layout.addLayout(row_buttons)
+        layout.addWidget(buttons)
+
+    def _add_row(self, row_data: TripAllocationRow) -> None:
+        row = self.table.rowCount()
+        self.table.insertRow(row)
+
+        name_item = QTableWidgetItem(row_data.ingredient_name)
+        name_item.setData(1000, row_data.id)
+        name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 0, name_item)
+
+        quantity_item = QTableWidgetItem(f"{shopping_service.format_quantity_de(row_data.quantity)} {row_data.unit}")
+        quantity_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 1, quantity_item)
+
+        assigned_edit = QLineEdit(row_data.assigned_to or "", self.table)
+        assigned_edit.setPlaceholderText("Person...")
+        self.table.setCellWidget(row, 2, assigned_edit)
+
+        status_combo = QComboBox(self.table)
+        status_combo.addItems(self._status_options)
+        status_index = status_combo.findText(row_data.status)
+        status_combo.setCurrentIndex(status_index if status_index >= 0 else 0)
+        self.table.setCellWidget(row, 3, status_combo)
+
+        remove_button = QPushButton("Entfernen", self.table)
+        remove_button.clicked.connect(lambda: self._remove_row(row_data.id))
+        self.table.setCellWidget(row, 4, remove_button)
+
+    def _remove_row(self, allocation_id: int) -> None:
+        for row in range(self.table.rowCount()):
+            item = self.table.item(row, 0)
+            if item is not None and item.data(1000) == allocation_id:
+                self._removed_ids.append(allocation_id)
+                self.table.removeRow(row)
+                return
+
+    def _reshuffle(self) -> None:
+        participants = [name.strip() for name in self.participants_edit.text().split(",") if name.strip()]
+        if not participants:
+            error_dialog(self, "Bitte zuerst mindestens einen Teilnehmer eintragen.")
+            return
+        open_rows = [row for row in range(self.table.rowCount()) if self.table.cellWidget(row, 3).currentText() != "gekauft"]
+        shuffled = list(open_rows)
+        random.shuffle(shuffled)
+        for index, row in enumerate(shuffled):
+            person = participants[index % len(participants)]
+            self.table.cellWidget(row, 2).setText(person)
+
+    def _request_delete(self) -> None:
+        self._delete_requested = True
+        self.accept()
+
+    def was_delete_requested(self) -> bool:
+        return self._delete_requested
+
+    def result_data(self) -> dict:
+        rows = []
+        for row in range(self.table.rowCount()):
+            assigned_edit = self.table.cellWidget(row, 2)
+            status_combo = self.table.cellWidget(row, 3)
+            rows.append(
+                {
+                    "id": self.table.item(row, 0).data(1000),
+                    "assigned_to": assigned_edit.text().strip() or None,
+                    "status": status_combo.currentText(),
+                }
+            )
+        return {
+            "store": self.store_edit.text().strip(),
+            "participants_text": self.participants_edit.text().strip(),
+            "rows": rows,
+            "removed_ids": self._removed_ids,
+        }
 
 
 class ScaleRecipeDialog(QDialog):

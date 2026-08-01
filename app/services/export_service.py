@@ -14,7 +14,7 @@ from reportlab.lib.units import mm
 from reportlab.lib.utils import ImageReader
 from reportlab.platypus import Image, KeepInFrame, PageBreak, Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle
 
-from app.models import CampYear, Recipe, ShoppingList
+from app.models import CampYear, Recipe, ShoppingList, ShoppingListItemAllocation
 from app.services import planning_service, recipe_service, shopping_service
 from app.services.recipe_service import RecipeCostResult, UNASSIGNED_COMPONENT_LABEL
 from app.utils.paths import get_assets_dir
@@ -44,10 +44,10 @@ def _shopping_list_rows(shopping_list: ShoppingList) -> list[tuple]:
                 item.unit or "",
                 item.estimated_price_per_unit or "",
                 item.estimated_total_price or "",
-                item.store or "",
+                shopping_service.allocation_store_summary(item),
                 shopping_service.format_date_de(item.needed_date),
                 shopping_service.format_date_de(item.shopping_date),
-                item.status or "",
+                shopping_service.allocation_status_summary(item),
                 item.linked_recipes_text or "",
                 item.notes or "",
             )
@@ -481,8 +481,8 @@ def export_shopping_list_to_pdf(shopping_list: ShoppingList, path: Path, group_b
         groups: list[tuple[object, list]] = list(shopping_service.grouped_by_day_ordered(shopping_list))
         group_labels = [shopping_service.format_shopping_day_label(key) for key, _ in groups]
     elif group_by == "store":
-        groups = list(shopping_service.grouped_by_store_ordered(shopping_list))
-        group_labels = [key or shopping_service.UNASSIGNED_STORE_LABEL for key, _ in groups]
+        groups = list(shopping_service.grouped_by_store_ordered_allocations(shopping_list))
+        group_labels = [key for key, _ in groups]
     else:
         # Ohne Gruppierung nach Tag/Händler: Positionen derselben Zutat zusammenfassen (sonst
         # taucht eine Zutat, die an mehreren Einkaufstagen gebraucht wird, mehrfach mit
@@ -512,15 +512,25 @@ def export_shopping_list_to_pdf(shopping_list: ShoppingList, path: Path, group_b
 
         table_data = [header_row]
         missing_price_flags = []
-        for item in items:
-            if isinstance(item, shopping_service.AggregatedShoppingItem):
-                name = item.ingredient_name
-                missing_price_flags.append(item.has_missing_price)
+        for row in items:
+            if isinstance(row, shopping_service.AggregatedShoppingItem):
+                name = row.ingredient_name
+                quantity, unit = row.quantity, row.unit
+                estimated_total_price = row.estimated_total_price
+                missing_price_flags.append(row.has_missing_price)
+            elif isinstance(row, ShoppingListItemAllocation):
+                name = row.ingredient.name if row.ingredient else ""
+                quantity, unit = row.quantity, row.unit
+                price_per_unit = shopping_service.ingredient_price_per_unit(shopping_list, row.ingredient_id, row.unit)
+                estimated_total_price = price_per_unit * row.quantity if price_per_unit is not None else None
+                missing_price_flags.append(price_per_unit is None)
             else:
-                name = item.ingredient.name if item.ingredient else ""
-                missing_price_flags.append(item.estimated_price_per_unit is None)
-            price_text = f"{item.estimated_total_price:.2f} EUR" if item.estimated_total_price is not None else "-"
-            table_data.append(["", name, str(item.quantity), item.unit or "", price_text])
+                name = row.ingredient.name if row.ingredient else ""
+                quantity, unit = row.quantity, row.unit
+                estimated_total_price = row.estimated_total_price
+                missing_price_flags.append(row.estimated_price_per_unit is None)
+            price_text = f"{estimated_total_price:.2f} EUR" if estimated_total_price is not None else "-"
+            table_data.append(["", name, str(quantity), unit or "", price_text])
 
         item_table = Table(table_data, colWidths=column_widths, repeatRows=1)
         style_commands = [

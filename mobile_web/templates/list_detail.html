@@ -9,38 +9,79 @@
   <div class="karte" style="padding: 0.9rem 1rem;">
     <div id="fortschritt-text" style="font-size:0.85rem; color: var(--text-schwach); margin-bottom: 0.4rem;">
       <span id="anzahl-gekauft">{{ bought_items }}</span> von {{ total_items }} erledigt
+      {% if current_person %} (nur {{ current_person }}){% endif %}
     </div>
     <div style="height: 8px; border-radius: 999px; background: var(--rand); overflow:hidden;">
       <div id="fortschritt-balken" style="height:100%; background: var(--grün); width: {{ (bought_items / total_items * 100) if total_items else 0 }}%;"></div>
     </div>
   </div>
 
+  <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}" style="text-decoration:none;">
+    <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
+      + Einkauf planen
+    </div>
+  </a>
+
+  {% if persons %}
+    <div style="display:flex; gap: 0.4rem; overflow-x:auto; padding: 0.2rem 0 0.6rem;">
+      <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}" style="text-decoration:none; flex-shrink:0;">
+        <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if not current_person else 'var(--karte-bg)' }}; color: {{ '#fff' if not current_person else 'var(--text)' }}; border: 1px solid var(--rand);">Alle</span>
+      </a>
+      {% for person in persons %}
+        <a href="{{ url_for('list_detail', list_id=shopping_list.id, person=person) }}" style="text-decoration:none; flex-shrink:0;">
+          <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if current_person == person else 'var(--karte-bg)' }}; color: {{ '#fff' if current_person == person else 'var(--text)' }}; border: 1px solid var(--rand);">{{ person }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% for group in groups %}
-    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">{{ group.store }}</h2>
+    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem; display:flex; justify-content:space-between; align-items:center;">
+      <span>{{ group.store }}</span>
+      <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store) }}" class="neu-mischen-form" style="margin:0;">
+        <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
+      </form>
+    </h2>
     <div class="karte">
-      {% for item in group.positionen %}
+      {% for allocation in group.positionen %}
         <label
           class="position"
-          data-item-id="{{ item.id }}"
+          data-allocation-id="{{ allocation.id }}"
+          data-menge="{{ allocation.quantity }}"
           style="display:flex; align-items:flex-start; gap: 0.8rem; padding: 0.8rem 1rem; border-bottom: 1px solid var(--rand); cursor: pointer;"
         >
           <input
             type="checkbox"
             class="position-checkbox"
-            {% if item.status == 'gekauft' %}checked{% endif %}
+            {% if allocation.status == 'gekauft' %}checked{% endif %}
             style="width: 1.4rem; height: 1.4rem; margin-top: 0.1rem; flex-shrink: 0; accent-color: var(--grün);"
           >
-          <span style="flex:1; {% if item.status == 'gekauft' %}opacity: 0.45; text-decoration: line-through;{% endif %}" class="position-text">
-            <span style="font-weight: 600;">{{ item.ingredient.name if item.ingredient else "?" }}</span>
-            <span style="color: var(--text-schwach);">— {{ item.quantity|menge }} {{ item.unit or "" }}</span>
-            {% if item.linked_recipes_text %}
-              <br><span style="font-size: 0.78rem; color: var(--text-schwach);">{{ item.linked_recipes_text }}</span>
+          <span style="flex:1; {% if allocation.status == 'gekauft' %}opacity: 0.45; text-decoration: line-through;{% endif %}" class="position-text">
+            <span style="font-weight: 600;">{{ allocation.ingredient.name if allocation.ingredient else "?" }}</span>
+            <span style="color: var(--text-schwach);">— {{ allocation.quantity|menge }} {{ allocation.unit or "" }}</span>
+            {% if allocation.assigned_to %}
+              <span style="font-size: 0.72rem; background: var(--grün-hell); color: var(--grün); padding: 0.1rem 0.4rem; border-radius: 999px; margin-left: 0.3rem;">{{ allocation.assigned_to }}</span>
+            {% endif %}
+            {% set recipes = allocation_recipes(allocation) %}
+            {% if recipes %}
+              <br><span style="font-size: 0.78rem; color: var(--text-schwach);">{{ recipes }}</span>
             {% endif %}
           </span>
         </label>
       {% endfor %}
     </div>
   {% endfor %}
+
+  {% if not groups %}
+    <div class="karte" style="padding: 1.2rem; color: var(--text-schwach);">
+      {% if current_person %}
+        Für {{ current_person }} sind aktuell keine Positionen eingeteilt.
+      {% else %}
+        Noch nichts geplant - oben auf "Einkauf planen" tippen, um Positionen einem Händler
+        zuzuteilen.
+      {% endif %}
+    </div>
+  {% endif %}
 </main>
 <script>
   const gesamt = {{ total_items }};
@@ -51,13 +92,24 @@
   document.querySelectorAll('.position-checkbox').forEach((box) => {
     box.addEventListener('change', async () => {
       const label = box.closest('.position');
-      const itemId = label.dataset.itemId;
+      const allocationId = label.dataset.allocationId;
       const text = label.querySelector('.position-text');
       const wirdGekauft = box.checked;
 
+      let formData = null;
+      if (wirdGekauft) {
+        const geplant = label.dataset.menge;
+        const eingabe = window.prompt('Wie viel wurde tatsächlich gekauft?', geplant);
+        if (eingabe === null) {
+          box.checked = false;
+          return;
+        }
+        formData = new URLSearchParams({ purchased_quantity: eingabe });
+      }
+
       box.disabled = true;
       try {
-        const antwort = await fetch(`/position/${itemId}/umschalten`, { method: 'POST' });
+        const antwort = await fetch(`/position/${allocationId}/umschalten`, { method: 'POST', body: formData });
         if (!antwort.ok) throw new Error('Fehler beim Speichern');
         text.style.opacity = wirdGekauft ? '0.45' : '1';
         text.style.textDecoration = wirdGekauft ? 'line-through' : 'none';
@@ -69,6 +121,23 @@
         alert('Konnte nicht gespeichert werden - Internetverbindung prüfen und nochmal versuchen.');
       } finally {
         box.disabled = false;
+      }
+    });
+  });
+
+  document.querySelectorAll('.neu-mischen-form').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      const eingabe = window.prompt('Teilnehmer (kommagetrennt) - leer lassen für bisherige Zuteilung:', '');
+      if (eingabe === null) {
+        event.preventDefault();
+        return;
+      }
+      if (eingabe.trim()) {
+        const feld = document.createElement('input');
+        feld.type = 'hidden';
+        feld.name = 'teilnehmer';
+        feld.value = eingabe;
+        form.appendChild(feld);
       }
     });
   });
