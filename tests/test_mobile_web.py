@@ -147,6 +147,12 @@ def test_toggle_allocation_captures_purchased_quantity(tmp_path, monkeypatch):
     body = toggled.get_json()
     assert body["status"] == "gekauft"
     assert body["purchased_quantity"] == "1.5"
+    assert body["purchased_at"] is not None
+    assert body["purchased_at_text"]
+
+    detail_after_toggle = client.get(f"/liste/{list_id}")
+    assert "gekauft: 1.5 kg".encode() in detail_after_toggle.data
+    assert "Rest benötigt".encode() in detail_after_toggle.data
 
     toggled_back = client.post(f"/position/{allocation_id}/umschalten")
     assert toggled_back.get_json()["status"] == "offen"

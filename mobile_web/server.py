@@ -58,6 +58,9 @@ def create_app(config: AppConfig | None = None) -> Flask:
     app.jinja_env.globals["allocation_recipes"] = lambda allocation: shopping_service.ingredient_linked_recipes(
         allocation.shopping_list, allocation.ingredient_id, allocation.unit
     )
+    app.jinja_env.globals["allocation_need_summary"] = lambda allocation: shopping_service.need_purchase_remaining_summary(
+        allocation.shopping_list, allocation.ingredient_id, allocation.unit
+    )
 
     def _require_login():
         if not app.config["MOBILE_WEB_PIN"]:
@@ -186,6 +189,10 @@ def create_app(config: AppConfig | None = None) -> Flask:
                     "id": allocation.id,
                     "status": allocation.status,
                     "purchased_quantity": str(allocation.purchased_quantity) if allocation.purchased_quantity is not None else None,
+                    "purchased_at": allocation.purchased_at.isoformat() if allocation.purchased_at else None,
+                    "purchased_at_text": shopping_service.format_date_de(allocation.purchased_at.date())
+                    if allocation.purchased_at
+                    else None,
                 }
             )
 

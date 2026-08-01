@@ -433,6 +433,7 @@ class ShoppingListItemAllocation(Base):
     assigned_to: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[str] = mapped_column(String(50), default="offen", nullable=False)
     purchased_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
+    purchased_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 

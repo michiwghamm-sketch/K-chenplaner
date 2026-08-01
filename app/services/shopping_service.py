@@ -3,7 +3,7 @@ from __future__ import annotations
 import random
 from collections import defaultdict
 from dataclasses import dataclass, field
-from datetime import date
+from datetime import date, datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -252,6 +252,45 @@ def remaining_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id
     return total - allocated
 
 
+def purchased_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
+    key = _ingredient_key(ingredient_id, unit)
+    return sum(
+        (
+            allocation.purchased_quantity or Decimal("0")
+            for allocation in shopping_list.allocations
+            if _ingredient_key(allocation.ingredient_id, allocation.unit) == key and allocation.status == "gekauft"
+        ),
+        Decimal("0"),
+    )
+
+
+def purchase_history_summary(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> str:
+    key = _ingredient_key(ingredient_id, unit)
+    parts = []
+    for allocation in sorted(
+        shopping_list.allocations,
+        key=lambda a: (a.purchased_at is None, a.purchased_at or a.created_at, a.trip.store.lower()),
+    ):
+        if _ingredient_key(allocation.ingredient_id, allocation.unit) != key or allocation.status != "gekauft":
+            continue
+        quantity = allocation.purchased_quantity if allocation.purchased_quantity is not None else allocation.quantity
+        date_text = format_date_de(allocation.purchased_at.date()) if allocation.purchased_at else "ohne Datum"
+        parts.append(f"{format_quantity_de(quantity)} {unit or ''} am {date_text} bei {allocation.trip.store}".strip())
+    return ", ".join(parts)
+
+
+def need_purchase_remaining_summary(
+    shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None
+) -> tuple[Decimal, Decimal, Decimal, str]:
+    key = _ingredient_key(ingredient_id, unit)
+    needed = _ingredient_totals(shopping_list).get(key, Decimal("0"))
+    purchased = purchased_quantity_for_ingredient(shopping_list, ingredient_id, unit)
+    remaining = needed - purchased
+    if remaining < 0:
+        remaining = Decimal("0")
+    return needed, purchased, remaining, purchase_history_summary(shopping_list, ingredient_id, unit)
+
+
 @dataclass(slots=True)
 class PlannableIngredientGroup:
     """Eine Zutat mit ihrer noch offenen Gesamtmenge (ueber alle Einkaufstage zusammengefasst) -
@@ -387,12 +426,14 @@ def mark_allocation_purchased(
 ) -> ShoppingListItemAllocation:
     allocation.status = "gekauft"
     allocation.purchased_quantity = purchased_quantity if purchased_quantity is not None else allocation.quantity
+    allocation.purchased_at = datetime.now(timezone.utc)
     return allocation
 
 
 def mark_allocation_open(allocation: ShoppingListItemAllocation) -> ShoppingListItemAllocation:
     allocation.status = "offen"
     allocation.purchased_quantity = None
+    allocation.purchased_at = None
     return allocation
 
 

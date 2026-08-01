@@ -79,7 +79,7 @@ class ShoppingView(QWidget):
         top_row.addWidget(self.total_list_checkbox)
 
         self.list_combo = QComboBox(self)
-        self.list_combo.currentIndexChanged.connect(self._reload_table)
+        self.list_combo.currentIndexChanged.connect(self._on_list_changed)
         top_row.addWidget(self.list_combo)
 
         delete_button = QPushButton("Einkaufsliste löschen", self)
@@ -97,6 +97,13 @@ class ShoppingView(QWidget):
             self.group_combo.addItem(label, mode)
         self.group_combo.currentIndexChanged.connect(self._reload_table)
         group_row.addWidget(self.group_combo)
+        self.edit_trip_button = QPushButton("Einkauf bearbeiten...", self)
+        self.edit_trip_button.clicked.connect(self._edit_selected_trip)
+        group_row.addWidget(self.edit_trip_button)
+        self.delete_trip_button = QPushButton("Einkauf löschen", self)
+        self.delete_trip_button.setProperty("role", "danger")
+        self.delete_trip_button.clicked.connect(self._delete_selected_trip)
+        group_row.addWidget(self.delete_trip_button)
         group_row.addStretch(1)
         self.total_label = QLabel("Gesamtsumme: -", self)
         group_row.addWidget(self.total_label)
@@ -153,11 +160,46 @@ class ShoppingView(QWidget):
                         label = f"{shopping_list.name} ({shopping_list.generated_at:%d.%m.%Y %H:%M})"
                         self.list_combo.addItem(label, shopping_list.id)
         self.list_combo.blockSignals(False)
+        self._reload_group_combo()
         self._reload_table()
+
+    def _on_list_changed(self) -> None:
+        self._reload_group_combo()
+        self._reload_table()
+
+    def _reload_group_combo(self, select_mode: str | None = None) -> None:
+        current_mode = select_mode or self.group_combo.currentData() or "none"
+        shopping_list_id = self.list_combo.currentData()
+        self.group_combo.blockSignals(True)
+        self.group_combo.clear()
+        for label, mode in GROUP_MODES:
+            self.group_combo.addItem(label, mode)
+        if shopping_list_id is not None:
+            with self.context.session() as session:
+                shopping_list = session.get(ShoppingList, shopping_list_id)
+                if shopping_list is not None:
+                    shopping_service.migrate_legacy_store_status(session, shopping_list)
+                    for trip in sorted(shopping_list.trips, key=lambda trip: (trip.store.lower(), trip.created_at)):
+                        label = f"Einkauf {trip.store}"
+                        if len([other for other in shopping_list.trips if other.store == trip.store]) > 1:
+                            label = f"{label} ({trip.created_at:%d.%m.%Y %H:%M})"
+                        self.group_combo.addItem(label, f"trip:{trip.id}")
+        index = self.group_combo.findData(current_mode)
+        self.group_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.group_combo.blockSignals(False)
+
+    def _selected_trip_id(self) -> int | None:
+        mode = self.group_combo.currentData()
+        if isinstance(mode, str) and mode.startswith("trip:"):
+            return int(mode.split(":", 1)[1])
+        return None
 
     def _reload_table(self) -> None:
         self.table.setSortingEnabled(False)
         self.table.setRowCount(0)
+        selected_trip_id = self._selected_trip_id()
+        self.edit_trip_button.setVisible(selected_trip_id is not None)
+        self.delete_trip_button.setVisible(selected_trip_id is not None)
         shopping_list_id = self.list_combo.currentData()
         if shopping_list_id is None:
             self.total_label.setText("Gesamtsumme: -")
@@ -187,6 +229,12 @@ class ShoppingView(QWidget):
                 for person, allocations in shopping_service.grouped_by_person_ordered(shopping_list):
                     self._add_band_row(person or shopping_service.UNASSIGNED_PERSON_LABEL)
                     for allocation in allocations:
+                        self._add_allocation_row(allocation)
+            elif selected_trip_id is not None:
+                trip = session.get(ShoppingTrip, selected_trip_id)
+                if trip is not None:
+                    self._add_band_row(f"Einkauf {trip.store}")
+                    for allocation in sorted(trip.allocations, key=lambda a: (a.status == "gekauft", (a.ingredient.name if a.ingredient else "").lower())):
                         self._add_allocation_row(allocation)
             else:
                 for item in _aggregate_total_view_items(shopping_list.items):
@@ -249,7 +297,16 @@ class ShoppingView(QWidget):
         self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
         self.table.setItem(row, 8, QTableWidgetItem(item.status or ""))
         self.table.setItem(row, 9, QTableWidgetItem(item.linked_recipes_text or ""))
-        self.table.setItem(row, 10, QTableWidgetItem(""))
+        needed, purchased, remaining, history = shopping_service.need_purchase_remaining_summary(
+            item.shopping_list, item.ingredient_id, item.unit
+        )
+        summary = f"Benötigt: {_format_decimal(needed)} {item.unit or ''}"
+        if purchased:
+            summary += f" | gekauft: {_format_decimal(purchased)} {item.unit or ''}"
+        summary += f" | Rest benötigt: {_format_decimal(remaining)} {item.unit or ''}"
+        if history:
+            summary += f" ({history})"
+        self.table.setItem(row, 10, QTableWidgetItem(summary))
 
     def _add_allocation_row(self, allocation: ShoppingListItemAllocation) -> None:
         shopping_list = allocation.shopping_list
@@ -272,9 +329,51 @@ class ShoppingView(QWidget):
         # sich fuer eine zutatenbezogene Allocation nicht eindeutig zuordnen - siehe Wochenliste.
         self.table.setItem(row, 6, QTableWidgetItem(""))
         self.table.setItem(row, 7, QTableWidgetItem(""))
-        self.table.setItem(row, 8, QTableWidgetItem(allocation.status))
+        status_text = allocation.status
+        if allocation.status == "gekauft":
+            quantity = allocation.purchased_quantity if allocation.purchased_quantity is not None else allocation.quantity
+            date_text = shopping_service.format_date_de(allocation.purchased_at.date()) if allocation.purchased_at else ""
+            status_text = f"gekauft: {_format_decimal(quantity)} {allocation.unit or ''}"
+            if date_text:
+                status_text += f" am {date_text}"
+        self.table.setItem(row, 8, QTableWidgetItem(status_text))
         self.table.setItem(row, 9, QTableWidgetItem(shopping_service.ingredient_linked_recipes(shopping_list, allocation.ingredient_id, allocation.unit)))
-        self.table.setItem(row, 10, QTableWidgetItem(allocation.assigned_to or ""))
+        needed, purchased, remaining, history = shopping_service.need_purchase_remaining_summary(
+            shopping_list, allocation.ingredient_id, allocation.unit
+        )
+        summary = f"{allocation.assigned_to or ''}"
+        detail = f"Benötigt: {_format_decimal(needed)} {allocation.unit or ''} | gekauft: {_format_decimal(purchased)} {allocation.unit or ''} | Rest benötigt: {_format_decimal(remaining)} {allocation.unit or ''}"
+        if history:
+            detail += f" ({history})"
+        self.table.setItem(row, 10, QTableWidgetItem(f"{summary} - {detail}" if summary else detail))
+
+    def _edit_selected_trip(self) -> None:
+        trip_id = self._selected_trip_id()
+        if trip_id is None:
+            return
+        with self.context.session() as session:
+            trip = session.get(ShoppingTrip, trip_id)
+            if trip is None:
+                return
+            self._edit_shopping_trip(trip.store, list(trip.allocations))
+
+    def _delete_selected_trip(self) -> None:
+        trip_id = self._selected_trip_id()
+        if trip_id is None:
+            return
+        with self.context.session() as session:
+            trip = session.get(ShoppingTrip, trip_id)
+            if trip is None:
+                return
+            label = f"Einkauf {trip.store}"
+        if not confirm_dialog(self, "Einkauf löschen", f"{label} mit allen Positionen wirklich löschen?"):
+            return
+        with self.context.session() as session:
+            trip = session.get(ShoppingTrip, trip_id)
+            if trip is not None:
+                shopping_service.delete_shopping_trip(session, trip)
+        self._reload_group_combo(select_mode="store")
+        self._reload_table()
 
     def _edit_shopping_trip(self, store: str, allocations: list[ShoppingListItemAllocation]) -> None:
         trip_ids = sorted({allocation.shopping_trip_id for allocation in allocations})
@@ -326,6 +425,7 @@ class ShoppingView(QWidget):
                 trip = session.get(ShoppingTrip, trip_id)
                 if trip is not None:
                     shopping_service.delete_shopping_trip(session, trip)
+            self._reload_group_combo(select_mode="store")
             self._reload_table()
             return
 
@@ -347,6 +447,7 @@ class ShoppingView(QWidget):
                     continue
                 shopping_service.set_allocation_assigned_to(allocation, row["assigned_to"])
                 shopping_service.set_allocation_status(allocation, row["status"])
+        self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
 
     def _plan_shopping_trip(self) -> None:
@@ -372,7 +473,7 @@ class ShoppingView(QWidget):
         with self.context.session() as session:
             shopping_list = session.get(ShoppingList, shopping_list_id)
             try:
-                shopping_service.create_shopping_trip(
+                trip = shopping_service.create_shopping_trip(
                     session,
                     shopping_list,
                     store=result["store"],
@@ -382,7 +483,9 @@ class ShoppingView(QWidget):
             except ValueError as exc:
                 error_dialog(self, str(exc))
                 return
+            trip_id = trip.id
         info_dialog(self, "Einkauf angelegt.")
+        self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
 
     def _generate_list(self) -> None:

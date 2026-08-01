@@ -48,6 +48,7 @@
           class="position"
           data-allocation-id="{{ allocation.id }}"
           data-menge="{{ allocation.quantity }}"
+          data-unit="{{ allocation.unit or '' }}"
           style="display:flex; align-items:flex-start; gap: 0.8rem; padding: 0.8rem 1rem; border-bottom: 1px solid var(--rand); cursor: pointer;"
         >
           <input
@@ -66,6 +67,18 @@
             {% if recipes %}
               <br><span style="font-size: 0.78rem; color: var(--text-schwach);">{{ recipes }}</span>
             {% endif %}
+            {% set needed, purchased, remaining, history = allocation_need_summary(allocation) %}
+            <br><span class="bedarf-text" style="font-size: 0.78rem; color: var(--text-schwach);">
+              benötigt: {{ needed|menge }} {{ allocation.unit or "" }}
+              {% if purchased %} · gekauft: {{ purchased|menge }} {{ allocation.unit or "" }}{% endif %}
+              · Rest benötigt: {{ remaining|menge }} {{ allocation.unit or "" }}
+            </span>
+            <span class="kauf-text" style="display:{% if allocation.status == 'gekauft' %}inline{% else %}none{% endif %}; font-size: 0.78rem; color: var(--text-schwach);">
+              {% if allocation.status == 'gekauft' %}
+                <br>gekauft: {{ (allocation.purchased_quantity or allocation.quantity)|menge }} {{ allocation.unit or "" }}
+                {% if allocation.purchased_at %} am {{ allocation.purchased_at.strftime('%d.%m.%Y') }}{% endif %}
+              {% endif %}
+            </span>
           </span>
         </label>
       {% endfor %}
@@ -111,8 +124,21 @@
       try {
         const antwort = await fetch(`/position/${allocationId}/umschalten`, { method: 'POST', body: formData });
         if (!antwort.ok) throw new Error('Fehler beim Speichern');
+        const daten = await antwort.json();
         text.style.opacity = wirdGekauft ? '0.45' : '1';
         text.style.textDecoration = wirdGekauft ? 'line-through' : 'none';
+        const kaufText = label.querySelector('.kauf-text');
+        if (kaufText) {
+          if (wirdGekauft) {
+            const menge = daten.purchased_quantity || label.dataset.menge;
+            const datum = daten.purchased_at_text ? ` am ${daten.purchased_at_text}` : '';
+            kaufText.innerHTML = `<br>gekauft: ${menge} ${label.dataset.unit || ''}${datum}`;
+            kaufText.style.display = 'inline';
+          } else {
+            kaufText.textContent = '';
+            kaufText.style.display = 'none';
+          }
+        }
         gekauft += wirdGekauft ? 1 : -1;
         zaehler.textContent = gekauft;
         balken.style.width = gesamt ? `${(gekauft / gesamt) * 100}%` : '0%';
