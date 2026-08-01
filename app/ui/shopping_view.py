@@ -219,7 +219,7 @@ class ShoppingView(QWidget):
                 for shopping_date, items in shopping_service.grouped_by_day_ordered(shopping_list):
                     self._add_band_row(shopping_service.format_shopping_day_label(shopping_date), items=items)
                     for item in items:
-                        self._add_item_row(item)
+                        self._add_item_row(item, shopping_list)
             elif mode == "store":
                 for store, allocations in shopping_service.grouped_by_store_ordered_allocations(shopping_list):
                     self._add_band_row(store, on_edit=lambda s=store, allocs=allocations: self._edit_shopping_trip(s, allocs))
@@ -238,7 +238,7 @@ class ShoppingView(QWidget):
                         self._add_allocation_row(allocation)
             else:
                 for item in _aggregate_total_view_items(shopping_list.items):
-                    self._add_item_row(item)
+                    self._add_item_row(item, shopping_list)
 
             self.total_label.setText(
                 f"Gesamtpreis Einkauf: {_format_money(shopping_service.total_estimated_cost(shopping_list))}"
@@ -275,7 +275,7 @@ class ShoppingView(QWidget):
         band_widget.setStyleSheet(f"background-color: {ORANGE};")
         self.table.setCellWidget(row, 0, band_widget)
 
-    def _add_item_row(self, item: ShoppingListItem) -> None:
+    def _add_item_row(self, item: ShoppingListItem, shopping_list: ShoppingList | None = None) -> None:
         row = self.table.rowCount()
         self.table.insertRow(row)
         name_item = QTableWidgetItem(item.ingredient.name if item.ingredient else "")
@@ -297,8 +297,9 @@ class ShoppingView(QWidget):
         self.table.setItem(row, 7, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
         self.table.setItem(row, 8, QTableWidgetItem(item.status or ""))
         self.table.setItem(row, 9, QTableWidgetItem(item.linked_recipes_text or ""))
+        shopping_list = shopping_list or item.shopping_list
         needed, purchased, remaining, history = shopping_service.need_purchase_remaining_summary(
-            item.shopping_list, item.ingredient_id, item.unit
+            shopping_list, item.ingredient_id, item.unit
         )
         summary = f"Benötigt: {_format_decimal(needed)} {item.unit or ''}"
         if purchased:
