@@ -723,38 +723,46 @@ class RecipesView(QWidget):
         if self._current_recipe_id is None:
             error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
-        with self.context.session() as session:
-            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
-            all_units = unit_service.list_unit_names(session)
-            components = [(c.id, c.name) for c in recipe.components]
-        dialog = AddRecipeIngredientDialog(
-            ingredient_choices,
-            components,
-            all_units,
-            self,
-            initial={"component_id": component_id} if component_id is not None else None,
-            title="Zutat hinzufügen",
-        )
-        if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
-            return
-        data = dialog.result_data()
-        if data is None:
-            error_dialog(self, "Bitte eine Einheit angeben.")
-            return
 
-        with self.context.session() as session:
-            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredient_id = self._resolve_recipe_ingredient_id(session, data)
-            if ingredient_id is None:
-                return
-            data["ingredient_id"] = ingredient_id
-            data.pop("new_ingredient_name", None)
-            try:
-                recipe_service.add_ingredient_to_recipe(session, recipe, **data)
-            except ValueError as exc:
-                error_dialog(self, str(exc))
-                return
+        # Schleife statt Einzelaufruf: "Speichern & nächste Zutat" haelt die Eingabe am Laufen,
+        # ohne dass man fuer jede weitere Zutat desselben Teilstuecks erneut auf "+ Zutat"
+        # klicken muss (relevant bei vielen Zutaten pro neuem Rezept). Bei Abbrechen/Fehler
+        # bricht die Schleife wie bisher sofort ab.
+        keep_adding = True
+        while keep_adding:
+            with self.context.session() as session:
+                recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+                ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
+                all_units = unit_service.list_unit_names(session)
+                components = [(c.id, c.name) for c in recipe.components]
+            dialog = AddRecipeIngredientDialog(
+                ingredient_choices,
+                components,
+                all_units,
+                self,
+                initial={"component_id": component_id} if component_id is not None else None,
+                title="Zutat hinzufügen",
+            )
+            if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
+                break
+            data = dialog.result_data()
+            if data is None:
+                error_dialog(self, "Bitte eine Einheit angeben.")
+                break
+
+            with self.context.session() as session:
+                recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+                ingredient_id = self._resolve_recipe_ingredient_id(session, data)
+                if ingredient_id is None:
+                    break
+                data["ingredient_id"] = ingredient_id
+                data.pop("new_ingredient_name", None)
+                try:
+                    recipe_service.add_ingredient_to_recipe(session, recipe, **data)
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
+                    break
+            keep_adding = dialog.wants_add_another()
         self._reload_detail()
 
     def _edit_ingredient(self, link_id: int) -> None:

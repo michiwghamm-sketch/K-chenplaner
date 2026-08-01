@@ -124,10 +124,16 @@ class AddRecipeIngredientDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         initial = initial or {}
+        # Eine "ingredient_id" ist nur gesetzt, wenn eine bestehende Rezeptzutat bearbeitet wird -
+        # initial kann beim Neuanlegen trotzdem nicht-leer sein (z. B. {"component_id": ...}, wenn
+        # "+ Zutat" innerhalb eines bestimmten Teilstuecks geklickt wurde), daher reicht ein reines
+        # bool(initial) hier nicht aus (zeigte bisher faelschlich "Zutat entfernen" beim Neuanlegen).
+        is_editing_existing = "ingredient_id" in initial
         self._delete_requested = False
+        self._add_another_requested = False
         self._choices_by_id = {choice.id: choice for choice in ingredients}
         self._all_units = all_units
-        self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufügen"))
+        self.setWindowTitle(title or ("Zutat bearbeiten" if is_editing_existing else "Zutat hinzufügen"))
 
         self.ingredient_combo = QComboBox(self)
         self.ingredient_combo.setEditable(True)
@@ -182,9 +188,14 @@ class AddRecipeIngredientDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        if initial:
+        if is_editing_existing:
             delete_button = buttons.addButton("Zutat entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
             delete_button.clicked.connect(self._request_delete)
+        else:
+            # Nur beim Neuanlegen sinnvoll: spart bei mehreren Zutaten desselben Teilstuecks
+            # (z. B. 15 Zutaten fuer ein neues Rezept) den kompletten Dialog-Neuaufbau je Zutat.
+            add_another_button = buttons.addButton("Speichern & nächste Zutat", QDialogButtonBox.ButtonRole.ActionRole)
+            add_another_button.clicked.connect(self._accept_and_add_another)
 
         layout = QFormLayout(self)
         layout.addRow(form)
@@ -240,6 +251,13 @@ class AddRecipeIngredientDialog(QDialog):
 
     def was_delete_requested(self) -> bool:
         return self._delete_requested
+
+    def _accept_and_add_another(self) -> None:
+        self._add_another_requested = True
+        self.accept()
+
+    def wants_add_another(self) -> bool:
+        return self._add_another_requested
 
     def result_data(self) -> dict | None:
         unit = self.unit_combo.current_unit()
