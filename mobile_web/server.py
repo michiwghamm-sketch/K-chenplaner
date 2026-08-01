@@ -97,11 +97,17 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 select(CampYear).order_by(CampYear.year.desc())
             ).scalars().all()
             lists_by_year = [
-                (camp_year, sorted(camp_year.shopping_lists, key=lambda sl: sl.generated_at, reverse=True))
+                {
+                    "label": camp_year.name or camp_year.year,
+                    "shopping_lists": [
+                        {"id": sl.id, "name": sl.name, "item_count": len(sl.items)}
+                        for sl in sorted(camp_year.shopping_lists, key=lambda sl: sl.generated_at, reverse=True)
+                    ],
+                }
                 for camp_year in camp_years
                 if camp_year.shopping_lists
             ]
-        return render_template("lists.html", lists_by_year=lists_by_year)
+            return render_template("lists.html", lists_by_year=lists_by_year)
 
     @app.get("/liste/<int:list_id>")
     def list_detail(list_id: int):

@@ -82,6 +82,19 @@ def test_login_required_when_pin_set(tmp_path, monkeypatch):
     monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
 
 
+def test_all_lists_page_renders(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    _seed_shopping_list(config)
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.get("/listen")
+    assert response.status_code == 200
+    assert "Zeltlager 2026".encode() in response.data
+
+
 def test_toggle_item_updates_status(tmp_path, monkeypatch):
     monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
     config = _make_config(tmp_path)

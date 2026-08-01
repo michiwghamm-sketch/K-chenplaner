@@ -12,14 +12,14 @@
       generieren, dann taucht sie hier auf.
     </div>
   {% endif %}
-  {% for camp_year, shopping_lists in lists_by_year %}
-    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">{{ camp_year.name or camp_year.year }}</h2>
-    {% for shopping_list in shopping_lists %}
+  {% for year in lists_by_year %}
+    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">{{ year.label }}</h2>
+    {% for shopping_list in year.shopping_lists %}
       <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}" style="text-decoration:none; color:inherit;">
         <div class="karte" style="padding: 1rem; display:flex; justify-content:space-between; align-items:center;">
           <div>
             <div style="font-weight:600;">{{ shopping_list.name }}</div>
-            <div style="font-size:0.8rem; color: var(--text-schwach);">{{ shopping_list.items|length }} Positionen</div>
+            <div style="font-size:0.8rem; color: var(--text-schwach);">{{ shopping_list.item_count }} Positionen</div>
           </div>
           <div style="font-size:1.3rem; color: var(--text-schwach);">›</div>
         </div>
