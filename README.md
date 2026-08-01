@@ -104,7 +104,10 @@ Pause kann daher 30-60 Sekunden dauern, bis die Seite reagiert. Das ist normal.
 
 ### Nutzung (fürs Team)
 
-1. Die von Render vergebene URL am Handy im Browser öffnen, PIN eingeben.
+Aktuell erreichbar unter **https://zelakuche-einkauf.onrender.com** (den PIN dazu gibt's separat,
+nicht hier im öffentlichen Repo).
+
+1. Die obige URL am Handy im Browser öffnen, PIN eingeben.
 2. Optional zum Home-Bildschirm hinzufügen, damit es wie eine App aussieht: **iPhone** - Teilen-Symbol
    > "Zum Home-Bildschirm"; **Android (Chrome)** - Menü (⋮) > "App installieren" bzw. "Zum
    Startbildschirm hinzufügen".
