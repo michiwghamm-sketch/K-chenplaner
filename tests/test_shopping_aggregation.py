@@ -427,6 +427,7 @@ def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -
         assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("10.000")
         # Eine Auswahl = ein Listeneintrag = eine Allocation, komplett an eine Person.
         assert len(trip.allocations) == 1
+        assert trip.allocations[0].shopping_list_item_id == item.id
         assert trip.allocations[0].assigned_to in ("Anna", "Ben")
 
         with pytest.raises(ValueError):
@@ -674,3 +675,38 @@ def test_delete_shopping_list_removes_list_and_items(session_factory) -> None:
     with session_scope(session_factory) as session:
         assert session.get(ShoppingList, shopping_list_id) is None
         assert session.get(ShoppingListItem, item_id) is None
+
+
+def test_delete_shopping_list_removes_planned_trips_and_allocations(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+        session.add(ingredient)
+        session.flush()
+        shopping_list.items.append(ShoppingListItem(ingredient=ingredient, quantity=Decimal("1.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+
+        trip = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Metro",
+            participants=["Anna"],
+            selections=[(ingredient.id, "kg", Decimal("1.000"))],
+        )
+        shopping_list_id = shopping_list.id
+        item_id = shopping_list.items[0].id
+        trip_id = trip.id
+        allocation_id = trip.allocations[0].id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        shopping_service.delete_shopping_list(session, shopping_list)
+
+    with session_scope(session_factory) as session:
+        assert session.get(ShoppingList, shopping_list_id) is None
+        assert session.get(ShoppingListItem, item_id) is None
+        assert session.get(ShoppingTrip, trip_id) is None
+        assert session.get(ShoppingListItemAllocation, allocation_id) is None

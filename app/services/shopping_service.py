@@ -219,6 +219,14 @@ def _ingredient_key(ingredient_id: int | None, unit: str | None) -> tuple[int | 
     return (ingredient_id, unit or "")
 
 
+def _representative_item(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> ShoppingListItem:
+    key = _ingredient_key(ingredient_id, unit)
+    for item in shopping_list.items:
+        if _ingredient_key(item.ingredient_id, item.unit) == key:
+            return item
+    raise ValueError("Keine passende Einkaufslistenposition fuer diese Zutat gefunden.")
+
+
 def _ingredient_totals(shopping_list: ShoppingList) -> dict[tuple[int | None, str], Decimal]:
     """Gesamtbedarf je Zutat+Einheit ueber alle ShoppingListItem-Zeilen (Einkaufstage) hinweg."""
     totals: dict[tuple[int | None, str], Decimal] = defaultdict(lambda: Decimal("0"))
@@ -335,9 +343,15 @@ def create_shopping_trip(
     trip = ShoppingTrip(shopping_list=shopping_list, store=store, participants_text=", ".join(participants) or None)
     session.add(trip)
     for ingredient_id, unit, quantity in selections:
+        item = _representative_item(shopping_list, ingredient_id, unit)
         trip.allocations.append(
             ShoppingListItemAllocation(
-                shopping_list=shopping_list, ingredient_id=ingredient_id, unit=unit, quantity=quantity, status="offen"
+                shopping_list=shopping_list,
+                shopping_list_item=item,
+                ingredient_id=ingredient_id,
+                unit=unit,
+                quantity=quantity,
+                status="offen",
             )
         )
 
@@ -434,7 +448,12 @@ def migrate_legacy_store_status(session, shopping_list: ShoppingList) -> None:
         status = next((item.status for item in group_items if item.status), None) or "offen"
         trip.allocations.append(
             ShoppingListItemAllocation(
-                shopping_list=shopping_list, ingredient_id=ingredient_id, unit=unit, quantity=total_quantity, status=status
+                shopping_list=shopping_list,
+                shopping_list_item=group_items[0],
+                ingredient_id=ingredient_id,
+                unit=unit,
+                quantity=total_quantity,
+                status=status,
             )
         )
     session.flush()
