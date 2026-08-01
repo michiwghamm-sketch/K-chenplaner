@@ -15,6 +15,12 @@ ORANGE_TINT_STRONG = "#FFE3C2"
 TEXT_DARK = "#2F2C2A"
 TEXT_MUTED = "#6B6864"
 
+# Fuer unwiderrufliche Loeschaktionen (role="danger") - bewusst dieselbe Rotnuance wie
+# widgets.COLOR_CRITICAL, damit "kritisch/loeschen" app-weit dieselbe Farbe hat, auch wenn beide
+# Konstanten (noch) an getrennten Stellen gepflegt werden.
+DANGER = "#B3261E"
+DANGER_HOVER = "#8F1E17"
+
 BG_PAGE = "#F7F7F7"
 BG_SURFACE = "#FFFFFF"
 BORDER = "#E0DFDD"
@@ -101,6 +107,15 @@ QPushButton[role="secondary"] {{
 }}
 QPushButton[role="secondary"]:hover {{
     background-color: {ORANGE_TINT};
+}}
+QPushButton[role="danger"] {{
+    background-color: {BG_SURFACE};
+    color: {DANGER};
+    border: 1px solid {DANGER};
+}}
+QPushButton[role="danger"]:hover {{
+    background-color: {DANGER};
+    color: {BG_SURFACE};
 }}
 
 /* Eingabefelder */

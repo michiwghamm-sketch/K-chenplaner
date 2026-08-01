@@ -65,7 +65,7 @@ class UnitsManagementDialog(QDialog):
         self.toggle_button = QPushButton("Deaktivieren", self)
         self.toggle_button.clicked.connect(self._toggle_active)
         delete_button = QPushButton("Löschen", self)
-        delete_button.setProperty("role", "secondary")
+        delete_button.setProperty("role", "danger")
         delete_button.clicked.connect(self._delete_unit)
         button_row.addWidget(add_button)
         button_row.addWidget(rename_button)

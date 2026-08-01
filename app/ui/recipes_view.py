@@ -34,6 +34,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
+from app.models import CampYear
 from app.services import export_service, feedback_service, ingredient_service, recipe_service, unit_service
 from app.ui.dialogs import (
     AddRecipeIngredientDialog,
@@ -71,6 +72,10 @@ class RecipesView(QWidget):
         # verhindert, dass ein Rezeptwechsel oder "Abbrechen" ungespeicherte Aenderungen
         # kommentarlos verwirft (siehe _confirm_discard_changes()).
         self._detail_dirty: bool = False
+        # Ob gerade ein Kostenergebnis angezeigt wird und ob Portionen/Preisjahr seither
+        # geaendert wurden, ohne neu zu berechnen - siehe _mark_cost_stale()/_set_cost_label().
+        self._cost_calculated: bool = False
+        self._cost_stale: bool = False
         self._build_ui()
         self.refresh()
 
@@ -162,7 +167,7 @@ class RecipesView(QWidget):
         deactivate_button.setProperty("role", "secondary")
         delete_button = QPushButton("Löschen", meta_group)
         delete_button.clicked.connect(self._delete_recipe)
-        delete_button.setProperty("role", "secondary")
+        delete_button.setProperty("role", "danger")
         pdf_button = QPushButton("Als PDF exportieren", meta_group)
         pdf_button.clicked.connect(self._export_pdf)
         pdf_button.setProperty("role", "secondary")
@@ -246,12 +251,14 @@ class RecipesView(QWidget):
         self.cost_portions_spin = QSpinBox(tab)
         self.cost_portions_spin.setRange(1, 2000)
         self.cost_portions_spin.setValue(10)
+        self.cost_portions_spin.valueChanged.connect(self._mark_cost_stale)
         cost_panel.addWidget(self.cost_portions_spin)
         year_label = QLabel("Preisjahr", tab)
         cost_panel.addWidget(year_label)
         self.cost_year_spin = QSpinBox(tab)
         self.cost_year_spin.setRange(2000, 2100)
         self.cost_year_spin.setValue(datetime.now().year)
+        self.cost_year_spin.valueChanged.connect(self._mark_cost_stale)
         cost_panel.addWidget(self.cost_year_spin)
         calc_button = QPushButton("Kosten berechnen", tab)
         calc_button.clicked.connect(self._calculate_cost)
@@ -376,7 +383,7 @@ class RecipesView(QWidget):
 
         feedback_button_row = QHBoxLayout()
         delete_feedback_button = QPushButton("Feedback löschen", tab)
-        delete_feedback_button.setProperty("role", "secondary")
+        delete_feedback_button.setProperty("role", "danger")
         delete_feedback_button.clicked.connect(self._delete_feedback)
         feedback_button_row.addWidget(delete_feedback_button)
         feedback_button_row.addStretch(1)
@@ -506,7 +513,13 @@ class RecipesView(QWidget):
             self._style_diet_combo(recipe.diet_type or NO_DIET_TYPE_LABEL)
             self.meal_type_combo.setCurrentText(recipe.meal_type or "")
             self.portions_spin.setValue(recipe.default_portions or 1)
-            self.cost_portions_spin.setValue(recipe.default_portions or 10)
+            # Ohne eigene Standardportionenzahl des Rezepts ist die Teilnehmerzahl des gerade
+            # gewaehlten Zeltlagers ein deutlich sinnvollerer Startwert fuer die Kostenrechnung
+            # als eine willkuerliche Zahl - man will ja idR wissen "was kostet das fuers ganze
+            # Lager", nicht fuer 10 Portionen.
+            self.cost_portions_spin.setValue(
+                recipe.default_portions or self._camp_participant_count(session) or 10
+            )
             self.active_checkbox.setChecked(recipe.active)
             self.notes_edit.setPlainText(recipe.notes or "")
 
@@ -515,7 +528,7 @@ class RecipesView(QWidget):
                 cost_result = recipe_service.calculate_recipe_cost(
                     session,
                     recipe,
-                    portions=recipe.default_portions or 1,
+                    portions=self.cost_portions_spin.value(),
                     year=self.cost_year_spin.value(),
                 )
             self._rebuild_ingredient_sections(recipe, cost_result)
@@ -527,14 +540,36 @@ class RecipesView(QWidget):
         self._loaded_recipe_id = self._current_recipe_id
         self._detail_dirty = False
 
+    def _camp_participant_count(self, session) -> int | None:
+        camp_year_id = self.context.current_camp_year_id
+        if camp_year_id is None:
+            return None
+        camp_year = session.get(CampYear, camp_year_id)
+        return camp_year.participant_count_total if camp_year is not None else None
+
     def _set_cost_label(self, cost_result: recipe_service.RecipeCostResult | None) -> None:
+        self._cost_calculated = cost_result is not None
+        self._cost_stale = False
         if cost_result is None:
             self.cost_label.setText("Kosten: -")
+            self.cost_label.setStyleSheet("font-weight: 600;")
             return
         text = f"Gesamtpreis: {cost_result.total_cost} EUR\nPreis pro Portion: {cost_result.cost_per_portion} EUR"
         if cost_result.missing_price_ingredients:
             text += f"\nFehlende Preise: {', '.join(cost_result.missing_price_ingredients)}"
         self.cost_label.setText(text)
+        self.cost_label.setStyleSheet("font-weight: 600;")
+
+    def _mark_cost_stale(self, *_args: object) -> None:
+        # Feuert auch waehrend _reload_detail() die Spinboxen programmatisch befuellt - dort
+        # ueberschreibt der abschliessende _set_cost_label()-Aufruf den Stale-Zustand wieder,
+        # echte Nutzeraenderungen NACH einer Berechnung bleiben also die einzigen, die haengen
+        # bleiben (siehe gleiches Muster bei _mark_detail_dirty()).
+        if not self._cost_calculated or self._cost_stale:
+            return
+        self._cost_stale = True
+        self.cost_label.setText(self.cost_label.text() + "\n⚠ Portionen/Preisjahr geändert - bitte neu berechnen")
+        self.cost_label.setStyleSheet(f"font-weight: 600; color: {COLOR_CRITICAL};")
 
     # --- Teilstuecke / Zutaten: eine Tabelle, Excel-aehnlich (Kopfzeile + Teilstueck-Baender) ---
 
@@ -562,9 +597,13 @@ class RecipesView(QWidget):
         # sonst wuerden Gesamtmenge und Gesamtpreis in derselben Zeile zu unterschiedlichen
         # Portionenzahlen gehoeren.
         portions_for_totals = cost_result.portions if cost_result is not None else (recipe.default_portions or 1)
+        first_component_id = recipe.components[0].id if recipe.components else None
+        last_component_id = recipe.components[-1].id if recipe.components else None
         banding_index = 0
         for component, items in ordered_groups:
-            self._add_band_row(table, component)
+            is_first = component is None or component.id == first_component_id
+            is_last = component is None or component.id == last_component_id
+            self._add_band_row(table, component, is_first=is_first, is_last=is_last)
             if not items:
                 self._add_empty_row(table)
                 continue
@@ -576,7 +615,7 @@ class RecipesView(QWidget):
 
         table.resizeRowsToContents()
 
-    def _add_band_row(self, table: QTableWidget, component) -> None:
+    def _add_band_row(self, table: QTableWidget, component, *, is_first: bool = True, is_last: bool = True) -> None:
         row = table.rowCount()
         table.insertRow(row)
         table.setSpan(row, 0, 1, 4)
@@ -598,6 +637,21 @@ class RecipesView(QWidget):
             " QPushButton:hover { background-color: rgba(255,255,255,0.32); }"
         )
         component_id = component.id if component is not None else None
+        if component is not None:
+            # "Sonstiges" (component is None) hat keine eigene sort_order unter den echten
+            # Teilstuecken und ist daher nicht umsortierbar.
+            move_up_button = QPushButton("▲", button_bar)
+            move_up_button.setStyleSheet(band_button_style)
+            move_up_button.setEnabled(not is_first)
+            move_up_button.setToolTip("Teilstück nach oben verschieben")
+            move_up_button.clicked.connect(lambda _checked=False, comp_id=component.id: self._move_component(comp_id, -1))
+            button_layout.addWidget(move_up_button)
+            move_down_button = QPushButton("▼", button_bar)
+            move_down_button.setStyleSheet(band_button_style)
+            move_down_button.setEnabled(not is_last)
+            move_down_button.setToolTip("Teilstück nach unten verschieben")
+            move_down_button.clicked.connect(lambda _checked=False, comp_id=component.id: self._move_component(comp_id, 1))
+            button_layout.addWidget(move_down_button)
         add_button = QPushButton("+ Zutat", button_bar)
         add_button.setStyleSheet(band_button_style)
         add_button.clicked.connect(lambda _checked=False, cid=component_id: self._add_ingredient(cid))
@@ -708,6 +762,17 @@ class RecipesView(QWidget):
                 recipe_service.delete_component(session, component)
         self._reload_detail()
 
+    def _move_component(self, component_id: int, direction: int) -> None:
+        if self._current_recipe_id is None:
+            return
+        with self.context.session() as session:
+            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+            component = session.get(recipe_service.RecipeComponent, component_id)
+            if recipe is None or component is None:
+                return
+            recipe_service.move_component(session, recipe, component, direction=direction)
+        self._reload_detail()
+
     def _build_ingredient_choices(self, session, ingredients) -> list[RecipeIngredientChoice]:
         return [
             RecipeIngredientChoice(
@@ -723,38 +788,46 @@ class RecipesView(QWidget):
         if self._current_recipe_id is None:
             error_dialog(self, "Bitte zuerst ein Rezept auswählen oder anlegen.")
             return
-        with self.context.session() as session:
-            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
-            all_units = unit_service.list_unit_names(session)
-            components = [(c.id, c.name) for c in recipe.components]
-        dialog = AddRecipeIngredientDialog(
-            ingredient_choices,
-            components,
-            all_units,
-            self,
-            initial={"component_id": component_id} if component_id is not None else None,
-            title="Zutat hinzufügen",
-        )
-        if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
-            return
-        data = dialog.result_data()
-        if data is None:
-            error_dialog(self, "Bitte eine Einheit angeben.")
-            return
 
-        with self.context.session() as session:
-            recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
-            ingredient_id = self._resolve_recipe_ingredient_id(session, data)
-            if ingredient_id is None:
-                return
-            data["ingredient_id"] = ingredient_id
-            data.pop("new_ingredient_name", None)
-            try:
-                recipe_service.add_ingredient_to_recipe(session, recipe, **data)
-            except ValueError as exc:
-                error_dialog(self, str(exc))
-                return
+        # Schleife statt Einzelaufruf: "Speichern & nächste Zutat" haelt die Eingabe am Laufen,
+        # ohne dass man fuer jede weitere Zutat desselben Teilstuecks erneut auf "+ Zutat"
+        # klicken muss (relevant bei vielen Zutaten pro neuem Rezept). Bei Abbrechen/Fehler
+        # bricht die Schleife wie bisher sofort ab.
+        keep_adding = True
+        while keep_adding:
+            with self.context.session() as session:
+                recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+                ingredient_choices = self._build_ingredient_choices(session, ingredient_service.search_ingredients(session))
+                all_units = unit_service.list_unit_names(session)
+                components = [(c.id, c.name) for c in recipe.components]
+            dialog = AddRecipeIngredientDialog(
+                ingredient_choices,
+                components,
+                all_units,
+                self,
+                initial={"component_id": component_id} if component_id is not None else None,
+                title="Zutat hinzufügen",
+            )
+            if dialog.exec() != AddRecipeIngredientDialog.DialogCode.Accepted:
+                break
+            data = dialog.result_data()
+            if data is None:
+                error_dialog(self, "Bitte eine Einheit angeben.")
+                break
+
+            with self.context.session() as session:
+                recipe = session.get(recipe_service.Recipe, self._current_recipe_id)
+                ingredient_id = self._resolve_recipe_ingredient_id(session, data)
+                if ingredient_id is None:
+                    break
+                data["ingredient_id"] = ingredient_id
+                data.pop("new_ingredient_name", None)
+                try:
+                    recipe_service.add_ingredient_to_recipe(session, recipe, **data)
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
+                    break
+            keep_adding = dialog.wants_add_another()
         self._reload_detail()
 
     def _edit_ingredient(self, link_id: int) -> None:
@@ -771,6 +844,7 @@ class RecipesView(QWidget):
                 "component_id": link.component_id,
                 "quantity": link.quantity,
                 "unit": link.unit,
+                "optional": link.optional,
                 "notes": link.notes,
             }
 
@@ -813,7 +887,7 @@ class RecipesView(QWidget):
             except ValueError as exc:
                 error_dialog(self, str(exc))
                 return
-                link.unit = data["unit"]
+            link.optional = data["optional"]
             link.ingredient_id = data["ingredient_id"]
             link.component_id = data["component_id"]
             link.notes = data["notes"]
@@ -1073,8 +1147,9 @@ class RecipesView(QWidget):
                 error_dialog(self, "Dieses Rezept hat noch keine Zutaten.")
                 return
             suggested = recipe_service.suggested_scale_factor(recipe)
+            current_portions = recipe.default_portions
 
-        dialog = ScaleRecipeDialog(suggested, self)
+        dialog = ScaleRecipeDialog(suggested, self, current_portions=current_portions)
         if dialog.exec() != ScaleRecipeDialog.DialogCode.Accepted:
             return
         data = dialog.result_data()

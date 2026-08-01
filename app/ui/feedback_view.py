@@ -312,7 +312,34 @@ class FeedbackView(QWidget):
         info_dialog(self, "Feedback gespeichert.")
         saved_recipe_id = self._current_recipe_id
         self._reload_meal_list()
-        self._select_meal_by_recipe_id(saved_recipe_id)
+        # Nach dem Speichern direkt zum naechsten noch offenen Rezept springen, statt auf dem
+        # gerade gespeicherten stehen zu bleiben - bei einer vollen Lagerwoche (bis zu ~27
+        # Mahlzeiten) spart das viele manuelle Klicks in der Liste. Gibt es keins mehr, bleibt
+        # die Auswahl wie bisher auf dem gerade gespeicherten Rezept.
+        next_row = self._find_next_open_row(after_recipe_id=saved_recipe_id)
+        if next_row is not None:
+            self.meal_table.setCurrentCell(next_row, 0)
+        else:
+            self._select_meal_by_recipe_id(saved_recipe_id)
+
+    def _find_next_open_row(self, *, after_recipe_id: int | None) -> int | None:
+        """Zeilenindex des naechsten Rezepts ohne Feedback (Status 'Offen'), gesucht ab der
+        Zeile nach after_recipe_id und am Tabellenende umlaufend - None, wenn nichts offen ist."""
+        row_count = self.meal_table.rowCount()
+        if row_count == 0:
+            return None
+        start_row = 0
+        if after_recipe_id is not None:
+            for row in range(row_count):
+                if self.meal_table.item(row, 0).data(1000) == after_recipe_id:
+                    start_row = row + 1
+                    break
+        search_order = list(range(start_row, row_count)) + list(range(0, start_row))
+        for row in search_order:
+            status_item = self.meal_table.item(row, 3)
+            if status_item is not None and status_item.text() == "Offen":
+                return row
+        return None
 
     def _select_meal_by_recipe_id(self, recipe_id: int | None) -> None:
         if recipe_id is None:

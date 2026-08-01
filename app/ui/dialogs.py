@@ -125,10 +125,16 @@ class AddRecipeIngredientDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         initial = initial or {}
+        # Eine "ingredient_id" ist nur gesetzt, wenn eine bestehende Rezeptzutat bearbeitet wird -
+        # initial kann beim Neuanlegen trotzdem nicht-leer sein (z. B. {"component_id": ...}, wenn
+        # "+ Zutat" innerhalb eines bestimmten Teilstuecks geklickt wurde), daher reicht ein reines
+        # bool(initial) hier nicht aus (zeigte bisher faelschlich "Zutat entfernen" beim Neuanlegen).
+        is_editing_existing = "ingredient_id" in initial
         self._delete_requested = False
+        self._add_another_requested = False
         self._choices_by_id = {choice.id: choice for choice in ingredients}
         self._all_units = all_units
-        self.setWindowTitle(title or ("Zutat bearbeiten" if initial else "Zutat hinzufügen"))
+        self.setWindowTitle(title or ("Zutat bearbeiten" if is_editing_existing else "Zutat hinzufügen"))
 
         self.ingredient_combo = QComboBox(self)
         self.ingredient_combo.setEditable(True)
@@ -146,10 +152,24 @@ class AddRecipeIngredientDialog(QDialog):
         component_index = self.component_combo.findData(initial.get("component_id"))
         self.component_combo.setCurrentIndex(component_index if component_index >= 0 else 0)
 
+        # Eine bestehende "nach Geschmack"-Zutat (optional=True, Menge 0 - z. B. Salz/Pfeffer aus
+        # dem Excel-Import) erkennen wir an Menge 0 + optional; ohne diese Sonderbehandlung wuerde
+        # QDoubleSpinBox.setValue(0) unten stillschweigend auf die Mindestmenge 0.001 hochklemmen.
+        raw_quantity = initial.get("quantity", 1)
+        is_to_taste_initial = bool(initial.get("optional")) and Decimal(str(raw_quantity)) == 0
+
         self.quantity_spin = QDoubleSpinBox(self)
         self.quantity_spin.setDecimals(3)
         self.quantity_spin.setRange(0.001, 100000)
-        self.quantity_spin.setValue(float(initial.get("quantity", 1)))
+        self.quantity_spin.setValue(1 if is_to_taste_initial else float(raw_quantity))
+
+        self.to_taste_checkbox = QCheckBox("nach Geschmack (ohne feste Menge)", self)
+        self.to_taste_checkbox.setToolTip(
+            "Menge wird nicht mitgezählt (z. B. Salz, Pfeffer) - erscheint in Kostenberechnung "
+            "und Einkaufsliste ohne feste Menge, statt eine Zahl vorzutäuschen."
+        )
+        self.to_taste_checkbox.toggled.connect(self.quantity_spin.setDisabled)
+        self.to_taste_checkbox.setChecked(is_to_taste_initial)
 
         self.unit_combo = UnitComboBox(self)
         self.unit_hint_label = QLabel("", self)
@@ -161,6 +181,7 @@ class AddRecipeIngredientDialog(QDialog):
         form.addRow("Zutat", self.ingredient_combo)
         form.addRow("Teilstück", self.component_combo)
         form.addRow("Menge", self.quantity_spin)
+        form.addRow("", self.to_taste_checkbox)
         form.addRow("Einheit", self.unit_combo)
         form.addRow("", self.unit_hint_label)
         form.addRow("Notizen", self.notes_edit)
@@ -168,9 +189,14 @@ class AddRecipeIngredientDialog(QDialog):
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
         buttons.accepted.connect(self.accept)
         buttons.rejected.connect(self.reject)
-        if initial:
+        if is_editing_existing:
             delete_button = buttons.addButton("Zutat entfernen", QDialogButtonBox.ButtonRole.DestructiveRole)
             delete_button.clicked.connect(self._request_delete)
+        else:
+            # Nur beim Neuanlegen sinnvoll: spart bei mehreren Zutaten desselben Teilstuecks
+            # (z. B. 15 Zutaten fuer ein neues Rezept) den kompletten Dialog-Neuaufbau je Zutat.
+            add_another_button = buttons.addButton("Speichern & nächste Zutat", QDialogButtonBox.ButtonRole.ActionRole)
+            add_another_button.clicked.connect(self._accept_and_add_another)
 
         layout = QFormLayout(self)
         layout.addRow(form)
@@ -227,18 +253,27 @@ class AddRecipeIngredientDialog(QDialog):
     def was_delete_requested(self) -> bool:
         return self._delete_requested
 
+    def _accept_and_add_another(self) -> None:
+        self._add_another_requested = True
+        self.accept()
+
+    def wants_add_another(self) -> bool:
+        return self._add_another_requested
+
     def result_data(self) -> dict | None:
         unit = self.unit_combo.current_unit()
         if not unit:
             return None
         typed_ingredient_name = self.ingredient_combo.currentText().strip()
         ingredient_id = self._resolve_current_ingredient_id()
+        is_to_taste = self.to_taste_checkbox.isChecked()
         return {
             "ingredient_id": ingredient_id,
             "new_ingredient_name": typed_ingredient_name if ingredient_id is None else None,
             "component_id": self.component_combo.currentData(),
-            "quantity": Decimal(str(self.quantity_spin.value())),
+            "quantity": Decimal("0") if is_to_taste else Decimal(str(self.quantity_spin.value())),
             "unit": unit,
+            "optional": is_to_taste,
             "notes": self.notes_edit.text().strip() or None,
         }
 
@@ -1478,23 +1513,44 @@ class EditShoppingTripDialog(QDialog):
 
 
 class ScaleRecipeDialog(QDialog):
-    """Dialog zum Skalieren aller Zutatenmengen eines Rezepts mit einem Faktor."""
+    """Dialog zum Skalieren aller Zutatenmengen eines Rezepts mit einem Faktor oder direkt auf
+    eine Zielportionenzahl - beide Felder sind gekoppelt (sofern die aktuelle Portionenzahl des
+    Rezepts bekannt ist), damit man z. B. "von 50 auf 100 Portionen" nicht erst im Kopf in einen
+    Faktor 2.0 umrechnen muss."""
 
-    def __init__(self, suggested_factor: Decimal | None, parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        suggested_factor: Decimal | None,
+        parent: QWidget | None = None,
+        *,
+        current_portions: int | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Mengen skalieren")
+        self._current_portions = current_portions
+        self._syncing = False
 
         self.factor_spin = QDoubleSpinBox(self)
         self.factor_spin.setDecimals(3)
         self.factor_spin.setRange(0.001, 100)
         self.factor_spin.setSingleStep(0.05)
         self.factor_spin.setValue(float(suggested_factor) if suggested_factor else 1.0)
+        self.factor_spin.valueChanged.connect(self._sync_target_portions_from_factor)
+
+        self.target_portions_spin = QSpinBox(self)
+        self.target_portions_spin.setRange(1, 20000)
+        self.target_portions_spin.setEnabled(bool(current_portions))
+        if current_portions:
+            self.target_portions_spin.setValue(max(1, round(current_portions * self.factor_spin.value())))
+        self.target_portions_spin.valueChanged.connect(self._sync_factor_from_target_portions)
 
         hint_text = (
             f"Vorschlag aus letztem Feedback: Faktor {suggested_factor}"
             if suggested_factor is not None
-            else "Kein Feedback-Faktor bekannt - bitte Faktor manuell eintragen."
+            else "Kein Feedback-Faktor bekannt - bitte Faktor oder Zielportionen manuell eintragen."
         )
+        if not current_portions:
+            hint_text += " Rezept hat keine Standardportionenzahl - Zielportionen nicht berechenbar."
         self.hint_label = QLabel(hint_text, self)
         self.hint_label.setWordWrap(True)
 
@@ -1503,6 +1559,8 @@ class ScaleRecipeDialog(QDialog):
 
         form = QFormLayout()
         form.addRow(self.hint_label)
+        if current_portions:
+            form.addRow(f"Zielportionen (bisher {current_portions})", self.target_portions_spin)
         form.addRow("Faktor", self.factor_spin)
         form.addRow("Grund (optional)", self.reason_edit)
 
@@ -1513,6 +1571,20 @@ class ScaleRecipeDialog(QDialog):
         layout = QFormLayout(self)
         layout.addRow(form)
         layout.addRow(buttons)
+
+    def _sync_target_portions_from_factor(self, value: float) -> None:
+        if self._syncing or not self._current_portions:
+            return
+        self._syncing = True
+        self.target_portions_spin.setValue(max(1, round(self._current_portions * value)))
+        self._syncing = False
+
+    def _sync_factor_from_target_portions(self, value: int) -> None:
+        if self._syncing or not self._current_portions:
+            return
+        self._syncing = True
+        self.factor_spin.setValue(value / self._current_portions)
+        self._syncing = False
 
     def result_data(self) -> dict:
         return {

@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import date
 from decimal import Decimal
 
+from sqlalchemy import select
+
 from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip
 from app.services import planning_service, price_service
 
@@ -188,6 +190,16 @@ def format_quantity_de(value: Decimal | None) -> str:
         return ""
     text = f"{value:.3f}".rstrip("0").rstrip(".")
     return text or "0"
+
+
+def list_known_stores(session) -> list[str]:
+    """Alle bisher an Einkaufspositionen vergebenen Händlernamen, dedupliziert und alphabetisch -
+    fuer eine Autovervollstaendigungs-Vorschlagsliste (siehe shopping_view.py), damit z. B.
+    "Edeka"/"EDEKA"/"Edeka Regensburg" nicht als getrennte Gruppen in der Nach-Händler-Ansicht
+    auseinanderlaufen."""
+    rows = session.execute(select(ShoppingListItem.store).where(ShoppingListItem.store.isnot(None))).scalars().all()
+    unique_stores = {store.strip() for store in rows if store and store.strip()}
+    return sorted(unique_stores, key=str.lower)
 
 
 ALLOWED_ITEM_STATUSES = ("offen", "bestellt", "gekauft", "erledigt", "pruefen")

@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -47,6 +46,7 @@ class ShoppingView(QWidget):
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.context = context
+        self._known_stores: list[str] = []
         self._build_ui()
         self.refresh()
 
@@ -83,7 +83,7 @@ class ShoppingView(QWidget):
         top_row.addWidget(self.list_combo)
 
         delete_button = QPushButton("Einkaufsliste löschen", self)
-        delete_button.setProperty("role", "secondary")
+        delete_button.setProperty("role", "danger")
         delete_button.clicked.connect(self._delete_list)
         top_row.addWidget(delete_button)
 
