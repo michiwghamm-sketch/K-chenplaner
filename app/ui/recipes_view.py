@@ -167,7 +167,7 @@ class RecipesView(QWidget):
         deactivate_button.setProperty("role", "secondary")
         delete_button = QPushButton("Löschen", meta_group)
         delete_button.clicked.connect(self._delete_recipe)
-        delete_button.setProperty("role", "secondary")
+        delete_button.setProperty("role", "danger")
         pdf_button = QPushButton("Als PDF exportieren", meta_group)
         pdf_button.clicked.connect(self._export_pdf)
         pdf_button.setProperty("role", "secondary")
@@ -383,7 +383,7 @@ class RecipesView(QWidget):
 
         feedback_button_row = QHBoxLayout()
         delete_feedback_button = QPushButton("Feedback löschen", tab)
-        delete_feedback_button.setProperty("role", "secondary")
+        delete_feedback_button.setProperty("role", "danger")
         delete_feedback_button.clicked.connect(self._delete_feedback)
         feedback_button_row.addWidget(delete_feedback_button)
         feedback_button_row.addStretch(1)

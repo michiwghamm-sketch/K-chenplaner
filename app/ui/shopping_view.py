@@ -70,7 +70,7 @@ class ShoppingView(QWidget):
         top_row.addWidget(self.list_combo)
 
         delete_button = QPushButton("Einkaufsliste löschen", self)
-        delete_button.setProperty("role", "secondary")
+        delete_button.setProperty("role", "danger")
         delete_button.clicked.connect(self._delete_list)
         top_row.addWidget(delete_button)
 
