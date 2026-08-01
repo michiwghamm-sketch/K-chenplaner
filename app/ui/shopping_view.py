@@ -13,7 +13,6 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
@@ -42,6 +41,7 @@ class ShoppingView(QWidget):
     def __init__(self, context: AppContext, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self.context = context
+        self._known_stores: list[str] = []
         self._build_ui()
         self.refresh()
 
@@ -156,6 +156,7 @@ class ShoppingView(QWidget):
             if shopping_list is None:
                 self.table.setSortingEnabled(True)
                 return
+            self._known_stores = shopping_service.list_known_stores(session)
 
             if mode == "day":
                 for shopping_date, items in shopping_service.grouped_by_day_ordered(shopping_list):
@@ -205,10 +206,24 @@ class ShoppingView(QWidget):
         self.table.setItem(row, 4, QTableWidgetItem(_format_money(item.estimated_total_price) if item.estimated_total_price is not None else ""))
 
         if editable:
-            store_edit = QLineEdit(item.store or "")
-            store_edit.setPlaceholderText("Haendler...")
-            store_edit.editingFinished.connect(lambda item_id=item.id, edit=store_edit: self._update_store(item_id, edit.text()))
-            self.table.setCellWidget(row, 5, store_edit)
+            store_combo = QComboBox()
+            store_combo.setEditable(True)
+            store_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            store_combo.addItem("")
+            store_combo.addItems(self._known_stores)
+            store_combo.setCurrentText(item.store or "")
+            store_combo.lineEdit().setPlaceholderText("Haendler...")
+            # editingFinished deckt frei getippten Text ab (Verlassen des Feldes/Enter),
+            # activated das Auswaehlen eines Vorschlags aus der Dropdown-Liste per Klick - beides
+            # soll sofort speichern, ohne bei jedem Tastenanschlag einen DB-Schreibzugriff
+            # auszuloesen (anders als z. B. currentTextChanged).
+            store_combo.lineEdit().editingFinished.connect(
+                lambda item_id=item.id, combo=store_combo: self._update_store(item_id, combo.currentText())
+            )
+            store_combo.activated.connect(
+                lambda _index, item_id=item.id, combo=store_combo: self._update_store(item_id, combo.currentText())
+            )
+            self.table.setCellWidget(row, 5, store_combo)
         else:
             self.table.setItem(row, 5, QTableWidgetItem(item.store or ""))
 
