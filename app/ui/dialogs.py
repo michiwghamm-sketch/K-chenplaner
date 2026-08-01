@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QDateEdit,
     QDialog,
@@ -144,10 +145,24 @@ class AddRecipeIngredientDialog(QDialog):
         component_index = self.component_combo.findData(initial.get("component_id"))
         self.component_combo.setCurrentIndex(component_index if component_index >= 0 else 0)
 
+        # Eine bestehende "nach Geschmack"-Zutat (optional=True, Menge 0 - z. B. Salz/Pfeffer aus
+        # dem Excel-Import) erkennen wir an Menge 0 + optional; ohne diese Sonderbehandlung wuerde
+        # QDoubleSpinBox.setValue(0) unten stillschweigend auf die Mindestmenge 0.001 hochklemmen.
+        raw_quantity = initial.get("quantity", 1)
+        is_to_taste_initial = bool(initial.get("optional")) and Decimal(str(raw_quantity)) == 0
+
         self.quantity_spin = QDoubleSpinBox(self)
         self.quantity_spin.setDecimals(3)
         self.quantity_spin.setRange(0.001, 100000)
-        self.quantity_spin.setValue(float(initial.get("quantity", 1)))
+        self.quantity_spin.setValue(1 if is_to_taste_initial else float(raw_quantity))
+
+        self.to_taste_checkbox = QCheckBox("nach Geschmack (ohne feste Menge)", self)
+        self.to_taste_checkbox.setToolTip(
+            "Menge wird nicht mitgezählt (z. B. Salz, Pfeffer) - erscheint in Kostenberechnung "
+            "und Einkaufsliste ohne feste Menge, statt eine Zahl vorzutäuschen."
+        )
+        self.to_taste_checkbox.toggled.connect(self.quantity_spin.setDisabled)
+        self.to_taste_checkbox.setChecked(is_to_taste_initial)
 
         self.unit_combo = UnitComboBox(self)
         self.unit_hint_label = QLabel("", self)
@@ -159,6 +174,7 @@ class AddRecipeIngredientDialog(QDialog):
         form.addRow("Zutat", self.ingredient_combo)
         form.addRow("Teilstück", self.component_combo)
         form.addRow("Menge", self.quantity_spin)
+        form.addRow("", self.to_taste_checkbox)
         form.addRow("Einheit", self.unit_combo)
         form.addRow("", self.unit_hint_label)
         form.addRow("Notizen", self.notes_edit)
@@ -231,12 +247,14 @@ class AddRecipeIngredientDialog(QDialog):
             return None
         typed_ingredient_name = self.ingredient_combo.currentText().strip()
         ingredient_id = self._resolve_current_ingredient_id()
+        is_to_taste = self.to_taste_checkbox.isChecked()
         return {
             "ingredient_id": ingredient_id,
             "new_ingredient_name": typed_ingredient_name if ingredient_id is None else None,
             "component_id": self.component_combo.currentData(),
-            "quantity": Decimal(str(self.quantity_spin.value())),
+            "quantity": Decimal("0") if is_to_taste else Decimal(str(self.quantity_spin.value())),
             "unit": unit,
+            "optional": is_to_taste,
             "notes": self.notes_edit.text().strip() or None,
         }
 

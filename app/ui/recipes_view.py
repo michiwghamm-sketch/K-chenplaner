@@ -771,6 +771,7 @@ class RecipesView(QWidget):
                 "component_id": link.component_id,
                 "quantity": link.quantity,
                 "unit": link.unit,
+                "optional": link.optional,
                 "notes": link.notes,
             }
 
@@ -813,7 +814,7 @@ class RecipesView(QWidget):
             except ValueError as exc:
                 error_dialog(self, str(exc))
                 return
-                link.unit = data["unit"]
+            link.optional = data["optional"]
             link.ingredient_id = data["ingredient_id"]
             link.component_id = data["component_id"]
             link.notes = data["notes"]
