@@ -1369,7 +1369,8 @@ class PlanShoppingTripDialog(QDialog):
 class TripAllocationRow:
     """Eine Zeile im "Einkauf bearbeiten"-Dialog (siehe EditShoppingTripDialog)."""
 
-    id: int
+    id: int | None
+    ingredient_id: int | None
     ingredient_name: str
     quantity: Decimal
     unit: str
@@ -1395,6 +1396,7 @@ class EditShoppingTripDialog(QDialog):
         store: str,
         participants_text: str,
         rows: list[TripAllocationRow],
+        available_groups: list[shopping_service.PlannableIngredientGroup],
         status_options: tuple[str, ...],
         parent: QWidget | None = None,
     ) -> None:
@@ -1402,6 +1404,7 @@ class EditShoppingTripDialog(QDialog):
         self.setWindowTitle(f"Einkauf bearbeiten - {store}")
         self.setMinimumWidth(760)
         self._status_options = status_options
+        self._available_groups = available_groups
         self._removed_ids: list[int] = []
         self._delete_requested = False
 
@@ -1422,6 +1425,31 @@ class EditShoppingTripDialog(QDialog):
         for row_data in rows:
             self._add_row(row_data)
 
+        self.add_position_combo = QComboBox(self)
+        self.add_position_combo.setMinimumWidth(280)
+        self.add_position_combo.addItem("Offene Position wählen...", None)
+        for group in available_groups:
+            label = (
+                f"{group.ingredient_name} - "
+                f"{shopping_service.format_quantity_de(group.remaining_quantity)} {group.unit} offen"
+            )
+            self.add_position_combo.addItem(label, group)
+        self.add_position_combo.currentIndexChanged.connect(self._on_add_position_changed)
+
+        self.add_quantity_spin = QDoubleSpinBox(self)
+        self.add_quantity_spin.setDecimals(3)
+        self.add_quantity_spin.setRange(0, 0)
+        self.add_quantity_spin.setEnabled(False)
+
+        add_position_button = QPushButton("Position hinzufügen", self)
+        add_position_button.clicked.connect(self._add_selected_position)
+
+        add_position_row = QHBoxLayout()
+        add_position_row.addWidget(QLabel("Weitere Position:", self))
+        add_position_row.addWidget(self.add_position_combo, 1)
+        add_position_row.addWidget(self.add_quantity_spin)
+        add_position_row.addWidget(add_position_button)
+
         row_buttons = QHBoxLayout()
         reshuffle_button = QPushButton("Neu mischen", self)
         reshuffle_button.setToolTip("Verteilt die noch offenen (nicht abgehakten) Positionen zufällig neu auf die Teilnehmer.")
@@ -1439,9 +1467,47 @@ class EditShoppingTripDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
+        layout.addLayout(add_position_row)
         layout.addWidget(self.table)
         layout.addLayout(row_buttons)
         layout.addWidget(buttons)
+
+    def _on_add_position_changed(self) -> None:
+        group = self.add_position_combo.currentData()
+        if group is None:
+            self.add_quantity_spin.setRange(0, 0)
+            self.add_quantity_spin.setValue(0)
+            self.add_quantity_spin.setSuffix("")
+            self.add_quantity_spin.setEnabled(False)
+            return
+        self.add_quantity_spin.setEnabled(True)
+        self.add_quantity_spin.setSuffix(f" {group.unit}" if group.unit else "")
+        self.add_quantity_spin.setRange(0.001, float(group.remaining_quantity))
+        self.add_quantity_spin.setValue(float(group.remaining_quantity))
+
+    def _add_selected_position(self) -> None:
+        group = self.add_position_combo.currentData()
+        if group is None:
+            error_dialog(self, "Bitte zuerst eine offene Position auswählen.")
+            return
+        quantity = Decimal(str(self.add_quantity_spin.value()))
+        if quantity <= 0:
+            error_dialog(self, "Menge muss größer als 0 sein.")
+            return
+        self._add_row(
+            TripAllocationRow(
+                id=None,
+                ingredient_id=group.ingredient_id,
+                ingredient_name=group.ingredient_name,
+                quantity=quantity,
+                unit=group.unit,
+                assigned_to=None,
+                status="offen",
+                max_quantity=group.remaining_quantity,
+            )
+        )
+        self.add_position_combo.removeItem(self.add_position_combo.currentIndex())
+        self.add_position_combo.setCurrentIndex(0)
 
     def _add_row(self, row_data: TripAllocationRow) -> None:
         row = self.table.rowCount()
@@ -1449,6 +1515,8 @@ class EditShoppingTripDialog(QDialog):
 
         name_item = QTableWidgetItem(row_data.ingredient_name)
         name_item.setData(1000, row_data.id)
+        name_item.setData(1001, row_data.ingredient_id)
+        name_item.setData(1002, row_data.unit)
         name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 0, name_item)
 
@@ -1474,14 +1542,16 @@ class EditShoppingTripDialog(QDialog):
         self.table.setCellWidget(row, 3, status_combo)
 
         remove_button = QPushButton("Entfernen", self.table)
-        remove_button.clicked.connect(lambda: self._remove_row(row_data.id))
+        remove_button.clicked.connect(lambda _checked=False, button=remove_button: self._remove_row_for_button(button))
         self.table.setCellWidget(row, 4, remove_button)
 
-    def _remove_row(self, allocation_id: int) -> None:
+    def _remove_row_for_button(self, button: QPushButton) -> None:
         for row in range(self.table.rowCount()):
-            item = self.table.item(row, 0)
-            if item is not None and item.data(1000) == allocation_id:
-                self._removed_ids.append(allocation_id)
+            if self.table.cellWidget(row, 4) is button:
+                item = self.table.item(row, 0)
+                allocation_id = item.data(1000) if item is not None else None
+                if allocation_id is not None:
+                    self._removed_ids.append(allocation_id)
                 self.table.removeRow(row)
                 return
 
@@ -1513,6 +1583,8 @@ class EditShoppingTripDialog(QDialog):
             rows.append(
                 {
                     "id": self.table.item(row, 0).data(1000),
+                    "ingredient_id": self.table.item(row, 0).data(1001),
+                    "unit": self.table.item(row, 0).data(1002),
                     "quantity": Decimal(str(quantity_spin.value())),
                     "assigned_to": assigned_edit.text().strip() or None,
                     "status": status_combo.currentText(),

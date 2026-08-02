@@ -99,6 +99,13 @@ class ShoppingView(QWidget):
         add_item_button.clicked.connect(self._add_manual_item)
         top_row.addWidget(add_item_button)
 
+        append_standard_items_button = QPushButton("Verbrauchsmittel ergänzen", self)
+        append_standard_items_button.setToolTip(
+            "Fügt aktive Verbrauchsmittel zu der ausgewählten Einkaufsliste hinzu, ohne die Liste neu zu generieren."
+        )
+        append_standard_items_button.clicked.connect(self._append_standard_items)
+        top_row.addWidget(append_standard_items_button)
+
         self.total_list_checkbox = QCheckBox("Gesamtliste (ohne Einkaufstage)", self)
         self.total_list_checkbox.setToolTip(
             "Erzeugt eine Gesamtliste ohne Aufteilung nach Einkaufstagen - "
@@ -419,6 +426,7 @@ class ShoppingView(QWidget):
             rows = [
                 TripAllocationRow(
                     id=allocation.id,
+                    ingredient_id=allocation.ingredient_id,
                     ingredient_name=allocation.ingredient.name if allocation.ingredient else "",
                     quantity=allocation.quantity,
                     unit=allocation.unit or "",
@@ -431,6 +439,7 @@ class ShoppingView(QWidget):
                 )
                 for allocation in trip.allocations
             ]
+            available_groups = shopping_service.items_available_for_planning(trip.shopping_list)
             store_value = trip.store
             participants_text = trip.participants_text or ""
 
@@ -438,6 +447,7 @@ class ShoppingView(QWidget):
             store=store_value,
             participants_text=participants_text,
             rows=rows,
+            available_groups=available_groups,
             status_options=shopping_service.ALLOWED_ITEM_STATUSES,
             parent=self,
         )
@@ -464,6 +474,11 @@ class ShoppingView(QWidget):
                 trip.store = result["store"]
             trip.participants_text = result["participants_text"] or None
             rows_by_id = {row["id"]: row for row in result["rows"]}
+            new_selections = [
+                (row["ingredient_id"], row["unit"], row["quantity"])
+                for row in result["rows"]
+                if row["id"] is None
+            ]
             for allocation in list(trip.allocations):
                 if allocation.id in result["removed_ids"]:
                     shopping_service.delete_allocation(session, allocation)
@@ -479,6 +494,16 @@ class ShoppingView(QWidget):
                         continue
                 shopping_service.set_allocation_assigned_to(allocation, row["assigned_to"])
                 shopping_service.set_allocation_status(allocation, row["status"])
+            if new_selections:
+                try:
+                    created_allocations = shopping_service.add_allocations_to_trip(session, trip, new_selections)
+                except ValueError as exc:
+                    error_dialog(self, str(exc))
+                    return
+                new_rows = [row for row in result["rows"] if row["id"] is None]
+                for allocation, row in zip(created_allocations, new_rows, strict=False):
+                    shopping_service.set_allocation_assigned_to(allocation, row["assigned_to"])
+                    shopping_service.set_allocation_status(allocation, row["status"])
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
 
@@ -518,6 +543,23 @@ class ShoppingView(QWidget):
             trip_id = trip.id
         info_dialog(self, "Einkauf angelegt.")
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
+        self._reload_table()
+
+    def _append_standard_items(self) -> None:
+        shopping_list_id = self.list_combo.currentData()
+        if shopping_list_id is None:
+            error_dialog(self, "Es ist keine Einkaufsliste ausgewählt.")
+            return
+        with self.context.session() as session:
+            shopping_list = session.get(ShoppingList, shopping_list_id)
+            if shopping_list is None:
+                return
+            created = shopping_service.append_standard_items_to_shopping_list(session, shopping_list)
+        if created:
+            info_dialog(self, f"{len(created)} Verbrauchsmittel ergänzt.")
+        else:
+            info_dialog(self, "Alle aktiven Verbrauchsmittel sind bereits in dieser Einkaufsliste.")
+        self._reload_group_combo()
         self._reload_table()
 
     def _add_manual_item(self) -> None:

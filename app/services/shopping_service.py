@@ -145,6 +145,47 @@ def generate_shopping_list(
     return shopping_list
 
 
+def append_standard_items_to_shopping_list(session, shopping_list: ShoppingList) -> list[ShoppingListItem]:
+    """Fuegt aktive Verbrauchsmittel zu einer bestehenden Einkaufsliste hinzu.
+
+    Idempotent: Existiert fuer dasselbe Verbrauchsmittel bereits eine manuelle/Standard-Zeile
+    (kein Rezeptbezug), wird sie nicht erneut angelegt. Rezeptbasierte Zeilen derselben Zutat
+    zaehlen bewusst nicht als Duplikat, weil Standard-Verbrauchsmittel separat sichtbar bleiben
+    sollen.
+    """
+    price_year = shopping_list.camp_year.year if shopping_list.camp_year else None
+    existing_standard_keys = {
+        _ingredient_key(item.ingredient_id, item.unit)
+        for item in shopping_list.items
+        if is_manual_item(item)
+    }
+    created: list[ShoppingListItem] = []
+    standard_items = session.execute(select(StandardShoppingItem).where(StandardShoppingItem.active.is_(True))).scalars().all()
+    for standard_item in standard_items:
+        quantity = standard_item.default_quantity.quantize(Decimal("0.001"))
+        unit = standard_item.default_unit or (standard_item.ingredient.default_unit if standard_item.ingredient else None)
+        key = _ingredient_key(standard_item.ingredient_id, unit)
+        if key in existing_standard_keys:
+            continue
+        estimated_price_per_unit, estimated_total = (None, None)
+        if unit and price_year is not None:
+            estimated_price_per_unit, estimated_total = _estimate_price(session, standard_item.ingredient_id, unit, quantity, price_year)
+        item = ShoppingListItem(
+            shopping_list=shopping_list,
+            ingredient_id=standard_item.ingredient_id,
+            quantity=quantity,
+            unit=unit,
+            estimated_price_per_unit=estimated_price_per_unit,
+            estimated_total_price=estimated_total,
+            status="offen",
+        )
+        session.add(item)
+        created.append(item)
+        existing_standard_keys.add(key)
+    session.flush()
+    return created
+
+
 def _shopping_unit_for_item(item_unit: str, ingredient: Ingredient | None) -> str:
     default_unit = ingredient.default_unit if ingredient else None
     normalized_item_unit = price_service.normalize_unit(item_unit)
@@ -545,6 +586,52 @@ def create_shopping_trip(
     _distribute_randomly(trip.allocations, participants)
     session.flush()
     return trip
+
+
+def add_allocations_to_trip(
+    session,
+    trip: ShoppingTrip,
+    selections: list[tuple[int | None, str, Decimal]],
+) -> list[ShoppingListItemAllocation]:
+    """Haengt weitere offene Positionen an einen bestehenden Einkauf an.
+
+    Wird im Desktop-Dialog "Einkauf bearbeiten" genutzt, wenn beim Bearbeiten noch nicht
+    verplante Restmengen in denselben Einkauf aufgenommen werden sollen.
+    """
+    if not selections:
+        return []
+
+    shopping_list = trip.shopping_list
+    names: dict[tuple[int | None, str], str] = {}
+    for item in shopping_list.items:
+        names[_ingredient_key(item.ingredient_id, item.unit)] = item.ingredient.name if item.ingredient else ""
+
+    for ingredient_id, unit, quantity in selections:
+        key = _ingredient_key(ingredient_id, unit)
+        label = names.get(key) or str(ingredient_id)
+        if quantity <= 0:
+            raise ValueError(f"Menge fuer '{label}' muss groesser als 0 sein.")
+        if quantity > remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit):
+            raise ValueError(f"Menge fuer '{label}' uebersteigt die noch offene Restmenge.")
+
+    participants = _parse_participants(trip.participants_text)
+    created: list[ShoppingListItemAllocation] = []
+    for ingredient_id, unit, quantity in selections:
+        item = _representative_item(shopping_list, ingredient_id, unit)
+        allocation = ShoppingListItemAllocation(
+            shopping_list=shopping_list,
+            shopping_list_item=item,
+            ingredient_id=ingredient_id,
+            unit=unit,
+            quantity=quantity,
+            status="offen",
+        )
+        trip.allocations.append(allocation)
+        created.append(allocation)
+
+    _distribute_randomly(created, participants)
+    session.flush()
+    return created
 
 
 def reshuffle_trip_assignments(trip: ShoppingTrip, participants: list[str] | None = None) -> None:

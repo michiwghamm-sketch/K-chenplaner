@@ -437,6 +437,48 @@ def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -
             )
 
 
+def test_add_allocations_to_existing_trip_uses_open_restmenge(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
+        zwiebeln = Ingredient(name="Zwiebeln", normalized_name="zwiebeln", default_unit="kg")
+        session.add_all([karotten, zwiebeln])
+        session.flush()
+        shopping_list.items.extend(
+            [
+                ShoppingListItem(ingredient=karotten, quantity=Decimal("10.000"), unit="kg"),
+                ShoppingListItem(ingredient=zwiebeln, quantity=Decimal("5.000"), unit="kg"),
+            ]
+        )
+        session.add_all([camp_year, shopping_list])
+        session.flush()
+        trip = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Metro",
+            participants=["Anna"],
+            selections=[(karotten.id, "kg", Decimal("10.000"))],
+        )
+
+        created = shopping_service.add_allocations_to_trip(
+            session,
+            trip,
+            selections=[(zwiebeln.id, "kg", Decimal("3.000"))],
+        )
+
+        assert len(created) == 1
+        assert created[0].ingredient_id == zwiebeln.id
+        assert created[0].assigned_to == "Anna"
+        assert shopping_service.remaining_quantity_for_ingredient(shopping_list, zwiebeln.id, "kg") == Decimal("2.000")
+        with pytest.raises(ValueError):
+            shopping_service.add_allocations_to_trip(
+                session,
+                trip,
+                selections=[(zwiebeln.id, "kg", Decimal("3.000"))],
+            )
+
+
 def test_items_available_for_planning_combines_ingredient_across_shopping_days(session_factory) -> None:
     """Regressionstest: der "Einkauf planen"-Assistent soll dieselbe Zutat, die an mehreren
     Einkaufstagen gebraucht wird, als EINE Gesamtmenge zeigen statt als mehrere Tages-Zeilen -
@@ -802,6 +844,29 @@ def test_generate_shopping_list_includes_active_standard_items_only(session_fact
         shopping_list = shopping_service.generate_shopping_list(session, camp_year, include_standard_items=False)
         names = {item.ingredient.name for item in shopping_list.items if item.ingredient}
         assert "Müllsäcke 60L" not in names
+
+def test_append_standard_items_to_existing_shopping_list_is_idempotent(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        muellsaecke = Ingredient(name="Muellsaecke 60L", normalized_name="muellsaecke 60l", default_unit="Stk")
+        batterien = Ingredient(name="Batterien AAA", normalized_name="batterien aaa", default_unit="Stk")
+        session.add_all([camp_year, shopping_list, muellsaecke, batterien])
+        session.flush()
+        session.add(StandardShoppingItem(ingredient=muellsaecke, default_quantity=Decimal("2.000"), default_unit="Stk", active=True))
+        session.add(StandardShoppingItem(ingredient=batterien, default_quantity=Decimal("4.000"), default_unit="Stk", active=False))
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        created = shopping_service.append_standard_items_to_shopping_list(session, shopping_list)
+        assert [item.ingredient.name for item in created] == ["Muellsaecke 60L"]
+
+        created_again = shopping_service.append_standard_items_to_shopping_list(session, shopping_list)
+        assert created_again == []
+        names = [item.ingredient.name for item in shopping_list.items if item.ingredient]
+        assert names.count("Muellsaecke 60L") == 1
+        assert "Batterien AAA" not in names
 
 
 def test_add_manual_shopping_item_creates_unrecipe_position(session_factory) -> None:
