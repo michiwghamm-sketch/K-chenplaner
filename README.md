@@ -10,7 +10,8 @@ damit mehrere Leute gleichzeitig daran arbeiten.
 - **Wochenplan**: Rasteransicht der Zeltlagerwoche (Tag × Mahlzeit), mit Tagesverantwortlichen
 - **Rezepte**: Teilstücke, Mengen-Historie/Skalierung, Kosten je Zutat, PDF-Export
 - **Zutaten & Preise**: Preisrecherche über Open Prices (Barcode-Suche)
-- **Einkaufsliste**: automatisch aus dem Wochenplan generiert, gruppiert nach Laden/Einkaufstag
+- **Einkaufsliste**: automatisch aus dem Wochenplan generiert, Einkaufstrips pro Haendler planen,
+  Teilmengen Personen zuweisen und gekaufte Mengen mit Restbedarf nachhalten
 - **Feedback**: Rückmeldung je Rezept und Zeltlagerjahr (kam's an, Menge passend, Notizen)
 - **Dashboard**: Überblick über das aktuelle Zeltlagerjahr
 
@@ -73,10 +74,23 @@ Sie greift auf **dieselbe Cloud-Datenbank** zu wie die Desktop-App (kein eigenes
 eigene Synchronisation) - braucht also den Team-/Cloud-Modus von oben. Mit rein lokaler SQLite-Datei
 ergibt sie wenig Sinn, da dann nur das Gerät, auf dem sie läuft, etwas sieht.
 
-Was sie kann: aktuelle Einkaufsliste nach Händler gruppiert anzeigen, Positionen per Fingertipp als
-"gekauft" abhaken (wird sofort in der Cloud-DB gespeichert und taucht in der Desktop-App als Status
-"gekauft" auf), als App-Icon auf den Home-Bildschirm legbar (PWA). Mengen/Preise/Händler bearbeiten
-bleibt Aufgabe der Desktop-App.
+Was sie kann: geplante Einkäufe nach Händler gruppiert anzeigen, nach Person filtern,
+Positionen per Fingertipp als "gekauft" abhaken, tatsächlich gekaufte Menge speichern und den
+Restbedarf sichtbar machen (z. B. 30 kg benötigt, 20 kg bei Metro gekauft, 10 kg Restbedarf).
+Als App-Icon auf den Home-Bildschirm legbar (PWA). Preise und die grundsätzliche
+Einkaufsplanung bleiben Aufgabe der Desktop-App.
+
+Typischer Ablauf:
+
+1. In der Desktop-App im Bereich **Einkaufsliste** aus dem Wochenplan eine Einkaufsliste erzeugen.
+2. Mit **Einkauf planen...** einen konkreten Einkauf anlegen, z. B. "Metro": Haendler eintragen,
+   Teilnehmer:innen eintragen und aus den noch offenen Gesamtmengen die passenden Teilmengen
+   auswaehlen. Die App verteilt die Positionen auf die Teilnehmer:innen.
+3. Geplante Einkaeufe erscheinen in der Desktop-App im Dropdown **Anzeige** als eigene Eintraege,
+   z. B. **Einkauf Metro**. Dort lassen sie sich bearbeiten oder loeschen.
+4. Die Mobile-Web-App zeigt dieselben geplanten Einkaeufe nach Haendler und Person an. Im Laden
+   werden Positionen abgehakt; dabei kann die tatsaechlich gekaufte Menge eingetragen werden.
+   Kaufmenge und Kaufdatum landen sofort in derselben Cloud-Datenbank.
 
 ### Einmalig einrichten (für Entwickler/Admins)
 
@@ -111,14 +125,17 @@ nicht hier im öffentlichen Repo).
 2. Optional zum Home-Bildschirm hinzufügen, damit es wie eine App aussieht: **iPhone** - Teilen-Symbol
    > "Zum Home-Bildschirm"; **Android (Chrome)** - Menü (⋮) > "App installieren" bzw. "Zum
    Startbildschirm hinzufügen".
-3. Die Seite zeigt automatisch die neueste Einkaufsliste, nach Händler gruppiert - beim Einkaufen
-   einfach Positionen antippen, um sie abzuhaken.
+3. Die Seite zeigt automatisch die neueste Einkaufsliste, nach Händler gruppiert. Mit den
+   Person-Filtern sieht jede:r nur die eigenen Positionen.
+4. Beim Einkaufen Position antippen, gekaufte Menge bestätigen oder korrigieren. Die Desktop-App
+   zeigt danach **Gesamtmenge**, **Bereits gekauft** und **Benoetigte Restmenge**.
 
 ### Bekannte Grenzen
 
 - Kein Offline-Modus - im Laden wird eine Internetverbindung gebraucht (anders als die Desktop-App).
 - Ein gemeinsamer PIN fürs ganze Team, keine einzelnen Benutzerkonten.
-- Nur zum Anzeigen/Abhaken gedacht, nicht zum Bearbeiten von Mengen, Preisen oder Händlern.
+- Nur zum Anzeigen/Abhaken und Eintragen der tatsächlich gekauften Menge gedacht. Einkäufe
+  anlegen/bearbeiten/löschen, Preise und Grundmengen bleiben in der Desktop-App.
 
 ## Worauf man sonst achten sollte
 

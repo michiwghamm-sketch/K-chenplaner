@@ -349,6 +349,10 @@ class ShoppingList(Base):
 
     camp_year: Mapped["CampYear"] = relationship(back_populates="shopping_lists")
     items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="shopping_list", cascade="all, delete-orphan")
+    trips: Mapped[list["ShoppingTrip"]] = relationship(back_populates="shopping_list", cascade="all, delete-orphan")
+    allocations: Mapped[list["ShoppingListItemAllocation"]] = relationship(
+        back_populates="shopping_list", cascade="all, delete-orphan"
+    )
 
 
 class ShoppingListItem(Base):
@@ -364,6 +368,10 @@ class ShoppingListItem(Base):
     estimated_total_price: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 2))
     needed_date: Mapped[Optional[date]] = mapped_column(Date)
     shopping_date: Mapped[Optional[date]] = mapped_column(Date)
+    # store/status sind Altlasten aus der Zeit vor ShoppingListItemAllocation (Einkaufsplanung
+    # mit Haendler-/Team-Aufteilung) - werden nicht mehr geschrieben, nur noch einmalig von
+    # shopping_service.migrate_legacy_store_status() gelesen, um bestehende Zuordnungen aus
+    # bereits laufenden Deployments in eine Allocation zu ueberfuehren.
     store: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[Optional[str]] = mapped_column(String(50))
     linked_recipes_text: Mapped[Optional[str]] = mapped_column(Text)
@@ -373,6 +381,66 @@ class ShoppingListItem(Base):
 
     shopping_list: Mapped["ShoppingList"] = relationship(back_populates="items")
     ingredient: Mapped[Optional["Ingredient"]] = relationship(back_populates="shopping_items")
+    allocations: Mapped[list["ShoppingListItemAllocation"]] = relationship(
+        back_populates="shopping_list_item", cascade="all, delete-orphan"
+    )
+
+
+class ShoppingTrip(Base):
+    """Ein geplanter Einkauf: ein Haendler-Besuch mit den Personen, die mitkommen.
+
+    Entsteht ueber den "Einkauf planen"-Assistenten (Desktop & Mobile) - dort waehlt man
+    Haendler, Teilnehmer und Teilmengen der noch offenen Positionen aus; die erzeugten
+    Allocations werden dabei zufaellig gleichmaessig auf die Teilnehmer verteilt.
+    """
+
+    __tablename__ = "shopping_trips"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shopping_list_id: Mapped[int] = mapped_column(ForeignKey("shopping_lists.id"), nullable=False, index=True)
+    store: Mapped[str] = mapped_column(String(255), nullable=False)
+    # Freitext, kommagetrennt - gleiches Muster wie MealPlanEntry/CampDay.responsible_person,
+    # kein eigenes Person-Modell noetig fuer eine so kleine Vereins-App.
+    participants_text: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    shopping_list: Mapped["ShoppingList"] = relationship(back_populates="trips")
+    allocations: Mapped[list["ShoppingListItemAllocation"]] = relationship(
+        back_populates="trip", cascade="all, delete-orphan"
+    )
+
+
+class ShoppingListItemAllocation(Base):
+    """Eine Zutat mit Gesamtmenge, die einem konkreten Einkauf (Trip) zugeteilt ist - z. B.
+    "20 kg Karotten" bei der Metro, zugewiesen an eine Person. Ein Listeneintrag = eine
+    Auswahl aus dem "Einkauf planen"-Assistenten, unabhaengig davon, ob die Zutat im
+    Wochenplan urspruenglich auf mehrere Einkaufstage (mehrere ShoppingListItem-Zeilen)
+    verteilt war - dort wird nur die Gesamtmenge gebraucht, nicht die Tages-Aufteilung."""
+
+    __tablename__ = "shopping_list_item_allocations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    shopping_list_id: Mapped[int] = mapped_column(ForeignKey("shopping_lists.id"), nullable=False, index=True)
+    # Technische Rueckwaertskompatibilitaet: fruehere Deployments hatten diese FK-Spalte bereits
+    # NOT NULL. Fachlich bleibt eine Allocation eine Zutat-Gesamtmenge ueber mehrere Tageszeilen;
+    # hier verweisen wir nur auf eine repraesentative ShoppingListItem-Zeile.
+    shopping_list_item_id: Mapped[int] = mapped_column(ForeignKey("shopping_list_items.id"), nullable=False, index=True)
+    shopping_trip_id: Mapped[int] = mapped_column(ForeignKey("shopping_trips.id"), nullable=False, index=True)
+    ingredient_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingredients.id"), index=True)
+    unit: Mapped[Optional[str]] = mapped_column(String(50))
+    quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
+    assigned_to: Mapped[Optional[str]] = mapped_column(String(255))
+    status: Mapped[str] = mapped_column(String(50), default="offen", nullable=False)
+    purchased_quantity: Mapped[Optional[Decimal]] = mapped_column(Numeric(10, 3))
+    purchased_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    shopping_list: Mapped["ShoppingList"] = relationship(back_populates="allocations")
+    shopping_list_item: Mapped["ShoppingListItem"] = relationship(back_populates="allocations")
+    trip: Mapped["ShoppingTrip"] = relationship(back_populates="allocations")
+    ingredient: Mapped[Optional["Ingredient"]] = relationship()
 
 
 class AppSetting(Base):
