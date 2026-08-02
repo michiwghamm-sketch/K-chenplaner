@@ -201,11 +201,16 @@ class RankingList(QWidget):
             bar.setGeometry(0, 0, bar_width, self.BAR_HEIGHT)
             bar.setStyleSheet(f"background-color: {entry.color}; border-radius: 3px;")
             row.addWidget(track)
+            # Explizit vertikal zentrieren statt dem Layout-Default zu vertrauen - bei einem auf
+            # mehrere Zeilen umgebrochenen (langen) Namen soll der schmale Balken/Wert mittig
+            # neben dem Namen stehen, nicht an einer Kante kleben.
+            row.setAlignment(track, Qt.AlignmentFlag.AlignVCenter)
 
             value_label = QLabel(entry.value_text, self)
             value_label.setMinimumWidth(64)
             value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
             row.addWidget(value_label)
+            row.setAlignment(value_label, Qt.AlignmentFlag.AlignVCenter)
 
             self._layout.addLayout(row)
 
