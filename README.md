@@ -224,6 +224,8 @@ gegen die der Auto-Update-Check in der App prüft).
   ["Einkaufsliste am Handy" oben](#einkaufsliste-am-handy-mobile-web-app). Nutzt `app.models`/
   `app.db` direkt mit, kein eigenes Datenmodell.
 - Nutzerdoku: [`docs/user_guide.md`](docs/user_guide.md).
+- Laufender UX-/Feature-Fahrplan (Stand, offene Punkte, Reihenfolge):
+  [`docs/ux_feature_roadmap.md`](docs/ux_feature_roadmap.md).
 
 ### Bekannte Grenzen
 
