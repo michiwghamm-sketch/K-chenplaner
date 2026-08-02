@@ -196,6 +196,11 @@ class RankingList(QWidget):
             grid = QGridLayout()
             grid.setHorizontalSpacing(24)
             grid.setVerticalSpacing(8)
+            # Ohne explizite Stretch-Faktoren verteilt QGridLayout uebrigen Platz NICHT
+            # gleichmaessig auf die Spalten (Default-Stretch ist 0 je Spalte) - der freie Raum
+            # sammelt sich dann als Luecke irgendwo statt gleichmaessig zwischen den Spalten.
+            for column in range(self._columns):
+                grid.setColumnStretch(column, 1)
             for index, entry in enumerate(entries):
                 grid.addLayout(
                     self._build_entry_row(entry, max_value), index // self._columns, index % self._columns

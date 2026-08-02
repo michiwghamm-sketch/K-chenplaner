@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -36,13 +37,12 @@ from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, Ranking
 # Laenge (5 Eintraege) muss zu ROW_LABELS passen, die tatsaechlichen Mahlzeit-Werte in der DB
 # kommen weiterhin aus planning_service.DEFAULT_MEAL_TYPES (siehe _on_cell_double_clicked).
 ROW_LABELS = ("Verantw.", "Frühstück", "Mittag", "Abend", "Auswert.")
-# Bei ~9 Lagertagen (typischer Zeitraum Samstag bis uebernaechsten Sonntag) passt eine breite
-# Tagesspalte nicht ohne horizontales Scrollen auf einen Laptop-Bildschirm. Bewusst durchgehend
-# schmal + Wortumbruch (mehr Zeilen, dafuer volle Information sichtbar) statt eines Umschalters
-# zwischen "normal" und "kompakt" - das war vorher komplizierter als noetig und half trotzdem
-# nicht zuverlaessig. Zeilenhoehe waechst automatisch mit (siehe _resize_rows_to_content).
-DAY_COLUMN_WIDTH = 95
-DAY_COLUMN_MIN_WIDTH = 60
+# Tagesspalten strecken sich per QHeaderView.ResizeMode.Stretch automatisch auf die volle
+# verfuegbare Breite (siehe _build_ui) - auf einem breiten Monitor bekommt so jede Spalte
+# spuerbar mehr Platz statt eine feste schmale Breite zu erzwingen und den Rest des Fensters leer
+# zu lassen. DAY_COLUMN_MIN_WIDTH ist nur die Untergrenze fuer sehr schmale Fenster/viele Tage -
+# erst darunter zeigt die Tabelle ihren eigenen horizontalen Scrollbalken.
+DAY_COLUMN_MIN_WIDTH = 90
 
 
 class PlanningView(QWidget):
@@ -90,15 +90,23 @@ class PlanningView(QWidget):
 
         self.table = QTableWidget(len(ROW_LABELS), 0, self)
         self.table.setVerticalHeaderLabels(list(ROW_LABELS))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setDefaultSectionSize(DAY_COLUMN_WIDTH)
-        # Bewusst kleiner als die Default-Breite, nicht gleich gross - erlaubt manuelles
-        # Schmalerziehen per Maus, ohne die Startbreite selbst zu beeinflussen.
+        # Stretch statt Interactive: Tagesspalten teilen sich automatisch die volle verfuegbare
+        # Breite (gleichmaessig), ohne dass Nutzer sie manuell auseinanderziehen muessen - auf
+        # einem breiten Bildschirm bekommt so jede Spalte spuerbar mehr Platz. Faellt bei sehr
+        # vielen Tagen/schmalem Fenster auf DAY_COLUMN_MIN_WIDTH zurueck und zeigt dann den
+        # eigenen horizontalen Scrollbalken der Tabelle.
+        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.horizontalHeader().setMinimumSectionSize(DAY_COLUMN_MIN_WIDTH)
-        # Wenn eine Spalte breiter/schmaler gezogen wird, muessen die (wortumbruchbehafteten)
-        # Zellen neu umgebrochen und die Zeilenhoehen entsprechend angepasst werden.
+        # Stretch passt Spaltenbreiten automatisch bei jeder Fenstergroessenaenderung an - die
+        # (wortumbruchbehafteten) Zellen muessen dann neu vermessen werden.
         self.table.horizontalHeader().sectionResized.connect(self._on_column_resized)
-        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
+        # Fixed statt ResizeToContents: bei ResizeToContents entscheidet Qt selbst ueber die
+        # Zeilenhoehe anhand von QLabel.sizeHint() (unabhaengig von der tatsaechlichen Spalten-
+        # breite) und ueberschreibt dabei jeden manuellen setRowHeight()-Aufruf sofort wieder -
+        # das fuehrte dazu, dass mehrzeiliger, wortumbrochener Zellinhalt (z. B. zwei Gerichte im
+        # selben Slot) abgeschnitten wurde. Mit Fixed bleibt die in _resize_rows_to_content()
+        # explizit per heightForWidth() berechnete Hoehe massgeblich.
+        self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Fixed)
         self.table.verticalHeader().setMinimumSectionSize(48)
         # Ohne feste Breite wuerde ResizeToContents den Zeilenkopf am laengsten Label bemessen -
         # aus der tatsaechlichen Schriftbreite berechnet statt hartcodiert, damit es auch bei
@@ -118,20 +126,30 @@ class PlanningView(QWidget):
         cost_ranking_hint.setStyleSheet(f"color: {TEXT_MUTED};")
         layout.addWidget(cost_ranking_hint)
 
-        # Eigenes, hoehenbegrenztes Scroll-Feld nur fuer die Rangliste (nicht die ganze Seite) -
-        # bei vielen im Camp-Jahr geplanten Rezepten wuerde die Liste sonst entweder das Fenster
-        # sprengen oder kommentarlos abgeschnitten werden. Zweispaltig (columns=2), damit sie bei
-        # vielen Rezepten nicht unnoetig hoch wird.
+        # Eigenes Scroll-Feld nur fuer die Rangliste (nicht die ganze Seite) - bei vielen im
+        # Camp-Jahr geplanten Rezepten wuerde die Liste sonst entweder das Fenster sprengen oder
+        # kommentarlos abgeschnitten werden. Zweispaltig (columns=2), damit sie bei vielen
+        # Rezepten nicht unnoetig hoch wird. Bekommt bewusst den gesamten uebrigen vertikalen
+        # Platz der Seite (stretch=1, kein Hoehenlimit) statt darunter Leerraum stehen zu lassen -
+        # scrollt nur noch, wenn die Liste selbst laenger als der verfuegbare Platz ist.
         ranking_scroll = QScrollArea(self)
         ranking_scroll.setWidgetResizable(True)
         ranking_scroll.setFrameShape(QFrame.Shape.NoFrame)
-        ranking_scroll.setMaximumHeight(320)
+        ranking_scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         ranking_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.cost_ranking = RankingList(ranking_scroll, columns=2)
         ranking_scroll.setWidget(self.cost_ranking)
-        layout.addWidget(ranking_scroll)
+        layout.addWidget(ranking_scroll, stretch=1)
 
-        layout.addStretch(1)
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        # sectionResized (siehe _on_column_resized) feuert bei einer reinen Fenstergroessen-
+        # aenderung nicht zuverlaessig mit der endgueltigen, von Stretch neu verteilten
+        # Spaltenbreite - ohne diesen Hook blieben Zeilenhoehen nach einem Resize auf dem alten
+        # (zu schmalen oder zu breiten) Stand haengen und Zellinhalt wurde abgeschnitten.
+        if hasattr(self, "table"):
+            self._resize_rows_to_content()
+            self._update_table_fixed_height()
 
     def refresh(self) -> None:
         self._reload_camp_years()
@@ -200,8 +218,8 @@ class PlanningView(QWidget):
         self.table.setHorizontalHeaderLabels(
             [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
         )
-        for col in range(len(self._day_dates)):
-            self.table.setColumnWidth(col, DAY_COLUMN_WIDTH)
+        # Spaltenbreite selbst wird durch ResizeMode.Stretch automatisch verteilt (siehe
+        # _build_ui) - kein manuelles setColumnWidth mehr noetig.
 
         # Preise fuer alle in dieser Woche geplanten Rezepte einmalig vorladen (nicht pro Tag),
         # sonst fragt day_summary() unten fuer jede Zutat jedes Tages einzeln nach.

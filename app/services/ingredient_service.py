@@ -4,7 +4,6 @@ import difflib
 from dataclasses import dataclass
 
 from sqlalchemy import select
-from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session, object_session
 
 from app.models import Ingredient, IngredientAlias
@@ -118,39 +117,6 @@ def add_alias(session: Session, ingredient: Ingredient, alias: str, *, notes: st
 
 def remove_alias(session: Session, alias_record: IngredientAlias) -> None:
     session.delete(alias_record)
-
-
-def find_or_create_ingredient(
-    session: Session,
-    *,
-    name: str,
-    default_unit: str | None = None,
-    category: str | None = None,
-) -> Ingredient:
-    """Findet eine Zutat per Name/Alias oder legt sie neu an - die mechanische Kernlogik, die
-    bisher in app/ui/recipes_view.py:_resolve_recipe_ingredient_id dupliziert war. Zeigt bewusst
-    KEINE Dubletten-Warnung (das ist Aufgabe der aufrufenden UI-Schicht, siehe dortige Nutzung
-    von find_similar_ingredients + SimilarIngredientsWarningDialog vor dem eigentlichen Anlegen) -
-    fuer neue, seltener genutzte Aufrufer (manuelle Position, Standard-Position, Mobile) ist der
-    Mehraufwand einer Warnung nicht immer noetig."""
-    name = name.strip()
-    existing = find_by_name_or_alias(session, name)
-    if existing is not None:
-        return existing
-    try:
-        ingredient = create_ingredient(session, name=name, default_unit=default_unit)
-    except IntegrityError:
-        # Kein expliziter rollback() hier - gleiches Verhalten wie das bisherige Original in
-        # recipes_view.py:_resolve_recipe_ingredient_id, das den Race-Case ebenso ohne Rollback
-        # behandelt (die aeussere session_scope()-Context-Manager-Ebene rollt im echten
-        # Fehlerfall ohnehin zurueck).
-        existing = find_by_name_or_alias(session, name)
-        if existing is not None:
-            return existing
-        raise
-    if category:
-        ingredient.category = category
-    return ingredient
 
 
 def find_by_name_or_alias(session: Session, name: str) -> Ingredient | None:

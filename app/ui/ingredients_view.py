@@ -29,17 +29,13 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.models import NON_FOOD_CATEGORY
-from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service, shopping_service, unit_service
+from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service, unit_service
 from app.ui.dialogs import (
     AddPriceDialog,
     BarcodeSearchDialog,
-    ManageStandardItemsDialog,
     OpenPricesProductPriceDialog,
-    RecipeIngredientChoice,
     ReplaceIngredientDialog,
     SimilarIngredientsWarningDialog,
-    StandardShoppingItemRow,
     confirm_dialog,
     error_dialog,
     info_dialog,
@@ -114,12 +110,6 @@ class IngredientsView(QWidget):
         new_button.clicked.connect(self._create_ingredient)
         self.assign_barcodes_button = QPushButton("Fehlende Barcodes zuordnen", left)
         self.assign_barcodes_button.clicked.connect(self._assign_missing_barcodes)
-        self.manage_standard_items_button = QPushButton("Verbrauchsmittel verwalten...", left)
-        self.manage_standard_items_button.setToolTip(
-            "Wiederkehrende Verbrauchsmittel (z. B. Non-Food), die bei jeder neuen "
-            "Einkaufsliste automatisch mit übernommen werden."
-        )
-        self.manage_standard_items_button.clicked.connect(self._manage_standard_items)
 
         left_layout.addWidget(self.search_bar)
         left_layout.addWidget(self.active_only_checkbox)
@@ -127,7 +117,6 @@ class IngredientsView(QWidget):
         left_layout.addWidget(self.ingredient_list)
         left_layout.addWidget(new_button)
         left_layout.addWidget(self.assign_barcodes_button)
-        left_layout.addWidget(self.manage_standard_items_button)
         splitter.addWidget(left)
 
         right_content = QWidget(self)
@@ -144,18 +133,12 @@ class IngredientsView(QWidget):
         self.name_edit = QLineEdit(right_content)
         self.unit_edit = UnitComboBox(right_content)
         self.active_checkbox = QCheckBox("Aktiv", right_content)
-        self.non_food_checkbox = QCheckBox("Ist Non-Food (kein Rezept-Zutat)", right_content)
-        self.non_food_checkbox.setToolTip(
-            "Blendet diese Zutat aus der Rezept-Zutaten-Auswahl aus - taucht aber weiterhin "
-            "normal in der Einkaufsliste auf."
-        )
         self.notes_edit = QPlainTextEdit(right_content)
         self.notes_edit.setFixedHeight(70)
 
         form.addRow("Name", self.name_edit)
         form.addRow("Standardeinheit", self.unit_edit)
         form.addRow("", self.active_checkbox)
-        form.addRow("", self.non_food_checkbox)
         form.addRow("Notizen", self.notes_edit)
         left_column.addLayout(form)
 
@@ -302,7 +285,6 @@ class IngredientsView(QWidget):
         self.unit_edit.set_units(self._unit_names)
         self.unit_edit.set_current_unit(None)
         self.active_checkbox.setChecked(True)
-        self.non_food_checkbox.setChecked(False)
         self.notes_edit.clear()
         self.barcode_label.setText("Kein Produkt verknuepft")
         self.remove_barcode_button.setEnabled(False)
@@ -322,7 +304,6 @@ class IngredientsView(QWidget):
             self.unit_edit.set_units(self._unit_names)
             self.unit_edit.set_current_unit(ingredient.default_unit)
             self.active_checkbox.setChecked(ingredient.active)
-            self.non_food_checkbox.setChecked(ingredient.category == NON_FOOD_CATEGORY)
             self.notes_edit.setPlainText(ingredient.notes or "")
 
             if ingredient.barcode:
@@ -412,7 +393,6 @@ class IngredientsView(QWidget):
                     name=name,
                     default_unit=self.unit_edit.current_unit(),
                     active=self.active_checkbox.isChecked(),
-                    category=NON_FOOD_CATEGORY if self.non_food_checkbox.isChecked() else None,
                     notes=self.notes_edit.toPlainText().strip() or None,
                 )
             except ValueError as exc:
@@ -532,99 +512,6 @@ class IngredientsView(QWidget):
         info_dialog(self, f"{assigned} Zutaten verknuepft, {skipped} uebersprungen/nicht zugeordnet.")
         self._reload_list()
         self._reload_detail()
-
-    def _manage_standard_items(self) -> None:
-        from app.models import CampYear
-
-        with self.context.session() as session:
-            ingredient_choices = [
-                RecipeIngredientChoice(
-                    id=ingredient.id,
-                    name=ingredient.name,
-                    default_unit=ingredient.default_unit,
-                    compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
-                )
-                for ingredient in ingredient_service.search_ingredients(session, active_only=False)
-            ]
-
-            reference_camp_year = None
-            if self.context.current_camp_year_id is not None:
-                reference_camp_year = session.get(CampYear, self.context.current_camp_year_id)
-            if reference_camp_year is None:
-                reference_camp_year = session.execute(
-                    select(CampYear).order_by(CampYear.year.desc())
-                ).scalars().first()
-
-            rows = []
-            for item in shopping_service.list_standard_items(session):
-                hint = None
-                if reference_camp_year is not None:
-                    previous_quantity = shopping_service.previous_year_quantity(
-                        session, reference_camp_year, item.ingredient_id, item.default_unit
-                    )
-                    if previous_quantity is not None:
-                        hint = f"Vorjahr: {shopping_service.format_quantity_de(previous_quantity)} {item.default_unit or ''}"
-                rows.append(
-                    StandardShoppingItemRow(
-                        id=item.id,
-                        ingredient_id=item.ingredient_id,
-                        ingredient_name=item.ingredient.name if item.ingredient else "",
-                        quantity=item.default_quantity,
-                        unit=item.default_unit or "",
-                        active=item.active,
-                        typical_stock_note=item.typical_stock_note,
-                        previous_year_hint=hint,
-                    )
-                )
-
-        dialog = ManageStandardItemsDialog(rows, ingredient_choices, self)
-        if dialog.exec() != ManageStandardItemsDialog.DialogCode.Accepted:
-            return
-        result = dialog.result_data()
-
-        with self.context.session() as session:
-            existing_by_id = {item.id: item for item in shopping_service.list_standard_items(session)}
-            for entry_id in result["removed_ids"]:
-                item = existing_by_id.get(entry_id)
-                if item is not None:
-                    shopping_service.delete_standard_item(session, item)
-
-            for row in result["rows"]:
-                ingredient_id = row["ingredient_id"]
-                if ingredient_id is None:
-                    name = (row["new_ingredient_name"] or "").strip()
-                    if not name:
-                        continue
-                    ingredient = ingredient_service.find_or_create_ingredient(session, name=name, default_unit=row["unit"])
-                    ingredient_id = ingredient.id
-                else:
-                    ingredient = session.get(ingredient_service.Ingredient, ingredient_id)
-                    if ingredient is None:
-                        continue
-
-                if row["id"] is not None and row["id"] in existing_by_id:
-                    item = existing_by_id[row["id"]]
-                    shopping_service.update_standard_item(
-                        item,
-                        ingredient_id=ingredient_id,
-                        default_quantity=row["quantity"],
-                        default_unit=row["unit"],
-                        typical_stock_note=row["typical_stock_note"],
-                        active=row["active"],
-                    )
-                else:
-                    try:
-                        shopping_service.create_standard_item(
-                            session,
-                            ingredient=ingredient,
-                            default_quantity=row["quantity"],
-                            default_unit=row["unit"],
-                            typical_stock_note=row["typical_stock_note"],
-                        )
-                    except ValueError as exc:
-                        error_dialog(self, str(exc))
-
-        info_dialog(self, "Verbrauchsmittel gespeichert.")
 
     def _add_price(self) -> None:
         if self._current_ingredient_id is None:

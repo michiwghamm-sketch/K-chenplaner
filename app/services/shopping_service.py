@@ -8,15 +8,7 @@ from decimal import Decimal
 
 from sqlalchemy import select
 
-from app.models import (
-    CampYear,
-    Ingredient,
-    ShoppingList,
-    ShoppingListItem,
-    ShoppingListItemAllocation,
-    ShoppingTrip,
-    StandardShoppingItem,
-)
+from app.models import CampYear, Ingredient, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip
 from app.services import planning_service, price_service
 
 
@@ -38,17 +30,6 @@ def _derive_item_shopping_date(entry, camp_year: CampYear) -> date | None:
     return planning_service.derive_shopping_date(entry.meal_date, days_before=1)
 
 
-def _estimate_price(session, ingredient_id: int, unit: str, quantity: Decimal, price_year: int) -> tuple[Decimal | None, Decimal | None]:
-    best_price = price_service.find_best_price(session, ingredient_id, year=price_year, fallback_latest=False)
-    if not best_price or not price_service.can_convert_units(best_price.unit, unit):
-        return None, None
-    estimated_price_per_unit = price_service.convert_price_per_unit(
-        best_price.price_per_unit, from_unit=best_price.unit, to_unit=unit
-    ).quantize(Decimal("0.0001"))
-    estimated_total = (quantity * estimated_price_per_unit).quantize(Decimal("0.01"))
-    return estimated_price_per_unit, estimated_total
-
-
 def generate_shopping_list(
     session,
     camp_year: CampYear,
@@ -56,7 +37,6 @@ def generate_shopping_list(
     name: str | None = None,
     price_year: int | None = None,
     assign_shopping_dates: bool = True,
-    include_standard_items: bool = True,
 ) -> ShoppingList:
     """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu einer Einkaufsliste.
 
@@ -64,13 +44,6 @@ def generate_shopping_list(
     sofern am Mahlzeit-Slot im Wochenplan kein Einkaufstag manuell gesetzt wurde. Mit
     assign_shopping_dates=False entsteht stattdessen eine Gesamtliste ohne Einkaufstage
     (das Bedarfsdatum - wann die Zutat fuer eine Mahlzeit gebraucht wird - wird trotzdem gefuellt).
-
-    Mit include_standard_items=True (Standard) werden zusaetzlich alle aktiven
-    StandardShoppingItem-Vorlagen (Non-Food/Verbrauchsmittel) als eigene Positionen angehaengt -
-    bewusst NICHT mit rezeptbasierten Positionen derselben Zutat zusammengefuehrt, damit das
-    Signal "linked_recipes_text leer = manuell/Standard" fuer diese Zeilen erhalten bleibt (siehe
-    is_manual_item()); im seltenen Fall, dass dieselbe Zutat+Einheit auch rezeptbasiert ohne
-    Einkaufstag vorkommt, entstehen dafuer zwei separate, je fuer sich korrekte Zeilen.
     """
     price_year = price_year or camp_year.year
     aggregates: dict[tuple[int, str, date | None], _Aggregate] = {}
@@ -104,8 +77,23 @@ def generate_shopping_list(
     session.add(shopping_list)
 
     for aggregate in aggregates.values():
+        best_price = price_service.find_best_price(
+            session,
+            aggregate.ingredient_id,
+            year=price_year,
+            fallback_latest=False,
+        )
         quantity = aggregate.quantity.quantize(Decimal("0.001"))
-        estimated_price_per_unit, estimated_total = _estimate_price(session, aggregate.ingredient_id, aggregate.unit, quantity, price_year)
+        estimated_price_per_unit = None
+        estimated_total = None
+        if best_price and price_service.can_convert_units(best_price.unit, aggregate.unit):
+            estimated_price_per_unit = price_service.convert_price_per_unit(
+                best_price.price_per_unit,
+                from_unit=best_price.unit,
+                to_unit=aggregate.unit,
+            ).quantize(Decimal("0.0001"))
+            estimated_total = (quantity * estimated_price_per_unit).quantize(Decimal("0.01"))
+
         shopping_list.items.append(
             ShoppingListItem(
                 ingredient_id=aggregate.ingredient_id,
@@ -119,29 +107,6 @@ def generate_shopping_list(
                 linked_recipes_text=", ".join(sorted(aggregate.recipe_names)),
             )
         )
-
-    if include_standard_items:
-        standard_items = session.execute(select(StandardShoppingItem).where(StandardShoppingItem.active.is_(True))).scalars().all()
-        for standard_item in standard_items:
-            quantity = standard_item.default_quantity.quantize(Decimal("0.001"))
-            unit = standard_item.default_unit or (standard_item.ingredient.default_unit if standard_item.ingredient else None)
-            estimated_price_per_unit, estimated_total = (None, None)
-            if unit:
-                estimated_price_per_unit, estimated_total = _estimate_price(session, standard_item.ingredient_id, unit, quantity, price_year)
-            shopping_list.items.append(
-                ShoppingListItem(
-                    ingredient_id=standard_item.ingredient_id,
-                    quantity=quantity,
-                    unit=unit,
-                    estimated_price_per_unit=estimated_price_per_unit,
-                    estimated_total_price=estimated_total,
-                    status="offen",
-                )
-            )
-    # Ohne den Flush hier loesen frisch angehaengte (noch nicht geflushte) Positionen ihre
-    # ".ingredient"-Relationship nicht zuverlaessig auf, wenn direkt im Anschluss (noch in
-    # derselben Session) darauf zugegriffen wird.
-    session.flush()
     return shopping_list
 
 
@@ -152,119 +117,6 @@ def _shopping_unit_for_item(item_unit: str, ingredient: Ingredient | None) -> st
     if normalized_item_unit and normalized_default_unit and price_service.can_convert_units(normalized_item_unit, normalized_default_unit):
         return normalized_default_unit
     return normalized_item_unit or item_unit
-
-
-def is_manual_item(item: ShoppingListItem) -> bool:
-    """Eine Position ohne Rezeptbezug - entweder ueber "Position hinzufuegen" spontan angelegt
-    oder aus einer StandardShoppingItem-Vorlage uebernommen. linked_recipes_text wird
-    ausschliesslich von generate_shopping_list() beim Verarbeiten von Rezepten gesetzt und ist
-    dort garantiert nicht-leer - daher reicht die Abwesenheit als zuverlaessiges Signal, ohne
-    dass eine eigene Spalte gepflegt werden muss."""
-    return not item.linked_recipes_text
-
-
-def add_manual_shopping_item(
-    session,
-    shopping_list: ShoppingList,
-    *,
-    ingredient: Ingredient,
-    quantity: Decimal,
-    unit: str | None,
-    requested_by: str | None = None,
-    notes: str | None = None,
-    price_year: int | None = None,
-) -> ShoppingListItem:
-    """Haengt eine spontane Position (Sonderwunsch) an eine bereits bestehende Einkaufsliste an -
-    kein Rezeptbezug, taucht ganz normal in Wochenliste/Gesamtliste/"Einkauf planen" auf."""
-    if quantity <= 0:
-        raise ValueError("Menge muss größer als 0 sein.")
-    quantity = quantity.quantize(Decimal("0.001"))
-    resolved_year = price_year or shopping_list.camp_year.year
-    estimated_price_per_unit, estimated_total = (None, None)
-    if unit:
-        estimated_price_per_unit, estimated_total = _estimate_price(session, ingredient.id, unit, quantity, resolved_year)
-    item = ShoppingListItem(
-        shopping_list=shopping_list,
-        ingredient_id=ingredient.id,
-        quantity=quantity,
-        unit=unit,
-        estimated_price_per_unit=estimated_price_per_unit,
-        estimated_total_price=estimated_total,
-        status="offen",
-        requested_by=(requested_by or "").strip() or None,
-        notes=(notes or "").strip() or None,
-    )
-    session.add(item)
-    session.flush()
-    return item
-
-
-def previous_year_quantity(session, camp_year: CampYear, ingredient_id: int, unit: str | None) -> Decimal | None:
-    """Summe der Menge dieser Zutat+Einheit im letzten Camp-Jahr VOR camp_year.year, das eine
-    Einkaufsliste hat - rein informativ, um beim Pflegen von Standard-/manuellen Positionen den
-    Vorjahresbedarf als Anhaltspunkt zu zeigen (kein Auto-Ausfuellen)."""
-    key = _ingredient_key(ingredient_id, unit)
-    previous_years = session.execute(
-        select(CampYear)
-        .join(ShoppingList, ShoppingList.camp_year_id == CampYear.id)
-        .where(CampYear.year < camp_year.year)
-        .order_by(CampYear.year.desc())
-    ).scalars().unique().all()
-    if not previous_years:
-        return None
-    latest_previous = previous_years[0]
-    total = Decimal("0")
-    found = False
-    for shopping_list in latest_previous.shopping_lists:
-        for item in shopping_list.items:
-            if (item.ingredient_id, item.unit or "") == key:
-                total += item.quantity
-                found = True
-    return total if found else None
-
-
-def list_standard_items(session, *, active_only: bool = False) -> list[StandardShoppingItem]:
-    stmt = select(StandardShoppingItem)
-    if active_only:
-        stmt = stmt.where(StandardShoppingItem.active.is_(True))
-    items = session.execute(stmt).scalars().all()
-    return sorted(items, key=lambda item: (item.ingredient.name if item.ingredient else "").lower())
-
-
-def create_standard_item(
-    session,
-    *,
-    ingredient: Ingredient,
-    default_quantity: Decimal,
-    default_unit: str | None,
-    typical_stock_note: str | None = None,
-    notes: str | None = None,
-) -> StandardShoppingItem:
-    if default_quantity <= 0:
-        raise ValueError("Menge muss größer als 0 sein.")
-    item = StandardShoppingItem(
-        ingredient=ingredient,
-        default_quantity=default_quantity.quantize(Decimal("0.001")),
-        default_unit=default_unit,
-        typical_stock_note=(typical_stock_note or "").strip() or None,
-        notes=(notes or "").strip() or None,
-    )
-    session.add(item)
-    session.flush()
-    return item
-
-
-def update_standard_item(item: StandardShoppingItem, **fields: object) -> StandardShoppingItem:
-    for key, value in fields.items():
-        if not hasattr(item, key):
-            raise AttributeError(f"Unbekanntes Feld: {key}")
-        setattr(item, key, value)
-    return item
-
-
-def delete_standard_item(session, item: StandardShoppingItem) -> None:
-    session.delete(item)
-    session.flush()
 
 
 def group_by_shopping_day(shopping_list: ShoppingList) -> dict[date | None, list[ShoppingListItem]]:
@@ -569,24 +421,6 @@ def set_allocation_status(allocation: ShoppingListItemAllocation, status: str) -
     return allocation
 
 
-def set_allocation_quantity(
-    shopping_list: ShoppingList, allocation: ShoppingListItemAllocation, quantity: Decimal
-) -> ShoppingListItemAllocation:
-    """Aendert die Menge einer bestehenden Allocation nachtraeglich - z. B. wenn beim Planen
-    verschaetzt wurde. Gedeckelt durch die Menge, die dieser Zutat insgesamt noch zur Verfuegung
-    steht (diese Allocation eingerechnet, sonst wuerde sie sich selbst im Weg stehen)."""
-    if quantity <= 0:
-        raise ValueError("Menge muss größer als 0 sein.")
-    available = remaining_quantity_for_ingredient(shopping_list, allocation.ingredient_id, allocation.unit) + allocation.quantity
-    if quantity > available:
-        label = allocation.ingredient.name if allocation.ingredient else str(allocation.ingredient_id)
-        raise ValueError(
-            f"Menge für '{label}' übersteigt die verfügbare Menge ({format_quantity_de(available)} {allocation.unit or ''})."
-        )
-    allocation.quantity = quantity
-    return allocation
-
-
 def mark_allocation_purchased(
     allocation: ShoppingListItemAllocation, purchased_quantity: Decimal | None = None
 ) -> ShoppingListItemAllocation:
@@ -683,18 +517,6 @@ def ingredient_linked_recipes(shopping_list: ShoppingList, ingredient_id: int | 
         if _ingredient_key(item.ingredient_id, item.unit) == _ingredient_key(ingredient_id, unit) and item.linked_recipes_text:
             names.update(name.strip() for name in item.linked_recipes_text.split(",") if name.strip())
     return ", ".join(sorted(names))
-
-
-def ingredient_requested_by(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> str | None:
-    """Wer eine manuelle Position (Sonderwunsch) gewuenscht hat - fuer die Anzeige auf
-    Allocation-Zeilen. None, falls keine der zugrundeliegenden Positionen manuell ist."""
-    key = _ingredient_key(ingredient_id, unit)
-    names = {
-        item.requested_by
-        for item in shopping_list.items
-        if _ingredient_key(item.ingredient_id, item.unit) == key and item.requested_by
-    }
-    return ", ".join(sorted(names)) if names else None
 
 
 def allocation_store_summary(item: ShoppingListItem) -> str:

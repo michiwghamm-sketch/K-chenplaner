@@ -1375,11 +1375,6 @@ class TripAllocationRow:
     unit: str
     assigned_to: str | None
     status: str
-    # Obergrenze fuer die Mengen-Eingabe: die aktuelle Menge dieser Allocation plus die Menge
-    # dieser Zutat, die anderswo in der Liste noch gar keinem Einkauf zugeteilt ist (siehe
-    # shopping_service.remaining_quantity_for_ingredient) - mehr kann diese Position nicht
-    # bekommen, ohne einer anderen Position ihre Menge wegzunehmen.
-    max_quantity: Decimal
 
 
 class EditShoppingTripDialog(QDialog):
@@ -1452,16 +1447,9 @@ class EditShoppingTripDialog(QDialog):
         name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 0, name_item)
 
-        quantity_spin = QDoubleSpinBox(self.table)
-        quantity_spin.setDecimals(3)
-        quantity_spin.setSuffix(f" {row_data.unit}" if row_data.unit else "")
-        quantity_spin.setRange(0.001, float(max(row_data.max_quantity, row_data.quantity)))
-        quantity_spin.setValue(float(row_data.quantity))
-        quantity_spin.setToolTip(
-            f"Maximal {shopping_service.format_quantity_de(row_data.max_quantity)} {row_data.unit} "
-            "(diese Position plus noch nicht verplante Restmenge dieser Zutat)."
-        )
-        self.table.setCellWidget(row, 1, quantity_spin)
+        quantity_item = QTableWidgetItem(f"{shopping_service.format_quantity_de(row_data.quantity)} {row_data.unit}")
+        quantity_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 1, quantity_item)
 
         assigned_edit = QLineEdit(row_data.assigned_to or "", self.table)
         assigned_edit.setPlaceholderText("Person...")
@@ -1507,13 +1495,11 @@ class EditShoppingTripDialog(QDialog):
     def result_data(self) -> dict:
         rows = []
         for row in range(self.table.rowCount()):
-            quantity_spin = self.table.cellWidget(row, 1)
             assigned_edit = self.table.cellWidget(row, 2)
             status_combo = self.table.cellWidget(row, 3)
             rows.append(
                 {
                     "id": self.table.item(row, 0).data(1000),
-                    "quantity": Decimal(str(quantity_spin.value())),
                     "assigned_to": assigned_edit.text().strip() or None,
                     "status": status_combo.currentText(),
                 }
@@ -1524,218 +1510,6 @@ class EditShoppingTripDialog(QDialog):
             "rows": rows,
             "removed_ids": self._removed_ids,
         }
-
-
-class AddManualShoppingItemDialog(QDialog):
-    """"Position hinzufügen"-Dialog: haengt eine spontane Position (Sonderwunsch) ohne
-    Rezeptbezug an die aktuelle Einkaufsliste an. Zutaten-Auswahl wie bei
-    AddRecipeIngredientDialog (editierbare Combobox, tippen legt bei Bedarf eine neue Zutat an) -
-    absichtlich OHNE Non-Food-Filter, ein Sonderwunsch darf auch Non-Food sein."""
-
-    def __init__(self, ingredients: list[RecipeIngredientChoice], parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Position hinzufügen")
-        self._choices_by_id = {choice.id: choice for choice in ingredients}
-        self._all_units: list[str] = sorted({unit for choice in ingredients for unit in choice.compatible_units})
-
-        self.ingredient_combo = QComboBox(self)
-        self.ingredient_combo.setEditable(True)
-        self.ingredient_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for choice in ingredients:
-            self.ingredient_combo.addItem(choice.name, choice.id)
-        self.ingredient_combo.setCurrentIndex(-1)
-
-        self.quantity_spin = QDoubleSpinBox(self)
-        self.quantity_spin.setDecimals(3)
-        self.quantity_spin.setRange(0.001, 100000)
-        self.quantity_spin.setValue(1)
-
-        self.unit_combo = UnitComboBox(self)
-        self.unit_combo.set_units(self._all_units, allow_empty=False)
-
-        self.requested_by_edit = QLineEdit(self)
-        self.requested_by_edit.setPlaceholderText("z. B. Björn")
-        self.notes_edit = QLineEdit(self)
-
-        form = QFormLayout()
-        form.addRow("Zutat", self.ingredient_combo)
-        form.addRow("Menge", self.quantity_spin)
-        form.addRow("Einheit", self.unit_combo)
-        form.addRow("Gewünscht von", self.requested_by_edit)
-        form.addRow("Notizen", self.notes_edit)
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QFormLayout(self)
-        layout.addRow(form)
-        layout.addRow(buttons)
-
-        self.ingredient_combo.currentIndexChanged.connect(lambda _index: self._update_unit_options())
-        self.ingredient_combo.editTextChanged.connect(lambda _text: self._update_unit_options())
-        self._update_unit_options()
-
-    def _resolve_current_ingredient_id(self) -> int | None:
-        typed_name = self.ingredient_combo.currentText().strip()
-        if not typed_name:
-            return None
-        matching_index = self.ingredient_combo.findText(typed_name, Qt.MatchFlag.MatchFixedString)
-        if matching_index >= 0:
-            return self.ingredient_combo.itemData(matching_index)
-        return None
-
-    def _update_unit_options(self) -> None:
-        previous_unit = self.unit_combo.current_unit()
-        ingredient_id = self._resolve_current_ingredient_id()
-        choice = self._choices_by_id.get(ingredient_id) if ingredient_id is not None else None
-        options = choice.compatible_units if choice and choice.compatible_units else self._all_units
-        self.unit_combo.set_units(options, allow_empty=False)
-        if previous_unit and previous_unit in options:
-            self.unit_combo.set_current_unit(previous_unit)
-        elif choice and choice.default_unit in options:
-            self.unit_combo.set_current_unit(choice.default_unit)
-
-    def result_data(self) -> dict:
-        ingredient_id = self._resolve_current_ingredient_id()
-        typed_name = self.ingredient_combo.currentText().strip()
-        return {
-            "ingredient_id": ingredient_id,
-            "new_ingredient_name": None if ingredient_id is not None else typed_name,
-            "quantity": Decimal(str(self.quantity_spin.value())),
-            "unit": self.unit_combo.current_unit(),
-            "requested_by": self.requested_by_edit.text().strip() or None,
-            "notes": self.notes_edit.text().strip() or None,
-        }
-
-
-@dataclass(slots=True)
-class StandardShoppingItemRow:
-    """Eine Zeile im "Verbrauchsmittel verwalten"-Dialog."""
-
-    id: int | None
-    ingredient_id: int | None
-    ingredient_name: str
-    quantity: Decimal
-    unit: str
-    active: bool
-    typical_stock_note: str | None
-    previous_year_hint: str | None
-
-
-class ManageStandardItemsDialog(QDialog):
-    """Verwaltet die dauerhafte Liste wiederkehrender Verbrauchsmittel (v.a. Non-Food),
-    die bei jeder neuen Einkaufsliste automatisch mit uebernommen werden."""
-
-    _COLUMNS = ("Zutat", "Menge", "Einheit", "Lagerbestand-Hinweis", "Aktiv", "")
-
-    def __init__(
-        self, rows: list[StandardShoppingItemRow], ingredients: list[RecipeIngredientChoice], parent: QWidget | None = None
-    ) -> None:
-        super().__init__(parent)
-        self.setWindowTitle("Verbrauchsmittel verwalten")
-        self.setMinimumWidth(820)
-        self._ingredients = ingredients
-        self._removed_ids: list[int] = []
-
-        self.table = QTableWidget(0, len(self._COLUMNS), self)
-        self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
-        self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for column, width in enumerate((220, 90, 110, 220, 70, 90)):
-            self.table.horizontalHeader().resizeSection(column, width)
-        self.table.verticalHeader().setVisible(False)
-        for row_data in rows:
-            self._add_row(row_data)
-
-        add_button = QPushButton("+ Position hinzufügen", self)
-        add_button.clicked.connect(lambda: self._add_row(None))
-
-        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
-        buttons.accepted.connect(self.accept)
-        buttons.rejected.connect(self.reject)
-
-        layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("Diese Verbrauchsmittel werden bei jeder neu generierten Einkaufsliste automatisch mit übernommen.", self)
-        )
-        layout.addWidget(self.table)
-        layout.addWidget(add_button)
-        layout.addWidget(buttons)
-
-    def _add_row(self, row_data: StandardShoppingItemRow | None) -> None:
-        row = self.table.rowCount()
-        self.table.insertRow(row)
-
-        ingredient_combo = QComboBox(self.table)
-        ingredient_combo.setEditable(True)
-        ingredient_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
-        for choice in self._ingredients:
-            ingredient_combo.addItem(choice.name, choice.id)
-        ingredient_combo.setProperty("entry_id", row_data.id if row_data else None)
-        if row_data and row_data.ingredient_id is not None:
-            index = ingredient_combo.findData(row_data.ingredient_id)
-            ingredient_combo.setCurrentIndex(index if index >= 0 else -1)
-        else:
-            ingredient_combo.setCurrentIndex(-1)
-        self.table.setCellWidget(row, 0, ingredient_combo)
-
-        quantity_spin = QDoubleSpinBox(self.table)
-        quantity_spin.setDecimals(3)
-        quantity_spin.setRange(0.001, 100000)
-        quantity_spin.setValue(float(row_data.quantity) if row_data else 1)
-        if row_data and row_data.previous_year_hint:
-            quantity_spin.setToolTip(row_data.previous_year_hint)
-        self.table.setCellWidget(row, 1, quantity_spin)
-
-        unit_combo = UnitComboBox(self.table)
-        all_units = sorted({unit for choice in self._ingredients for unit in choice.compatible_units})
-        unit_combo.set_units(all_units, allow_empty=False)
-        if row_data and row_data.unit:
-            unit_combo.set_current_unit(row_data.unit)
-        self.table.setCellWidget(row, 2, unit_combo)
-
-        stock_note_edit = QLineEdit(row_data.typical_stock_note or "" if row_data else "", self.table)
-        stock_note_edit.setPlaceholderText("z. B. meist noch ~3 da")
-        self.table.setCellWidget(row, 3, stock_note_edit)
-
-        active_checkbox = QCheckBox(self.table)
-        active_checkbox.setChecked(row_data.active if row_data else True)
-        self.table.setCellWidget(row, 4, active_checkbox)
-
-        remove_button = QPushButton("Entfernen", self.table)
-        remove_button.clicked.connect(lambda: self._remove_row(ingredient_combo))
-        self.table.setCellWidget(row, 5, remove_button)
-
-    def _remove_row(self, marker_widget: QWidget) -> None:
-        for row in range(self.table.rowCount()):
-            if self.table.cellWidget(row, 0) is marker_widget:
-                entry_id = marker_widget.property("entry_id")
-                if entry_id is not None:
-                    self._removed_ids.append(entry_id)
-                self.table.removeRow(row)
-                return
-
-    def result_data(self) -> dict:
-        rows = []
-        for row in range(self.table.rowCount()):
-            ingredient_combo = self.table.cellWidget(row, 0)
-            quantity_spin = self.table.cellWidget(row, 1)
-            unit_combo = self.table.cellWidget(row, 2)
-            stock_note_edit = self.table.cellWidget(row, 3)
-            active_checkbox = self.table.cellWidget(row, 4)
-            typed_name = ingredient_combo.currentText().strip()
-            rows.append(
-                {
-                    "id": ingredient_combo.property("entry_id"),
-                    "ingredient_id": ingredient_combo.currentData(),
-                    "new_ingredient_name": None if ingredient_combo.currentData() is not None else typed_name,
-                    "quantity": Decimal(str(quantity_spin.value())),
-                    "unit": unit_combo.current_unit(),
-                    "typical_stock_note": stock_note_edit.text().strip() or None,
-                    "active": active_checkbox.isChecked(),
-                }
-            )
-        return {"rows": rows, "removed_ids": self._removed_ids}
 
 
 class ScaleRecipeDialog(QDialog):
