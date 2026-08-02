@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.config import AppConfig
 from app.db import initialize_database, session_scope
 from app.models import CampYear, ShoppingList, ShoppingListItemAllocation
-from app.services import shopping_service
+from app.services import ingredient_service, shopping_service
 
 SESSION_KEY = "eingeloggt"
 
@@ -59,6 +59,9 @@ def create_app(config: AppConfig | None = None) -> Flask:
         allocation.shopping_list, allocation.ingredient_id, allocation.unit
     )
     app.jinja_env.globals["allocation_need_summary"] = lambda allocation: shopping_service.need_purchase_remaining_summary(
+        allocation.shopping_list, allocation.ingredient_id, allocation.unit
+    )
+    app.jinja_env.globals["allocation_requested_by"] = lambda allocation: shopping_service.ingredient_requested_by(
         allocation.shopping_list, allocation.ingredient_id, allocation.unit
     )
 
@@ -166,6 +169,38 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 current_person=current_person,
             )
 
+    @app.get("/liste/<int:list_id>/status")
+    def list_status(list_id: int):
+        """Schlanker JSON-Endpunkt fuer das Live-Polling in list_detail.html - liefert nur die
+        veraenderlichen Felder (Status/Person/Kaufmenge), damit mehrere Leute, die gleichzeitig
+        im selben Laden abhaken, sich gegenseitig auf dem Schirm sehen, ohne manuell neu zu laden."""
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+            current_person = request.args.get("person") or None
+            allocations = shopping_list.allocations
+            if current_person:
+                allocations = [a for a in allocations if a.assigned_to == current_person]
+            return jsonify(
+                {
+                    "positionen": [
+                        {
+                            "id": allocation.id,
+                            "status": allocation.status,
+                            "assigned_to": allocation.assigned_to,
+                            "purchased_quantity": str(allocation.purchased_quantity)
+                            if allocation.purchased_quantity is not None
+                            else None,
+                            "purchased_at_text": shopping_service.format_date_de(allocation.purchased_at.date())
+                            if allocation.purchased_at
+                            else None,
+                        }
+                        for allocation in allocations
+                    ]
+                }
+            )
+
     @app.post("/position/<int:allocation_id>/umschalten")
     def toggle_allocation(allocation_id: int):
         with session_scope(session_factory) as db_session:
@@ -240,6 +275,55 @@ def create_app(config: AppConfig | None = None) -> Flask:
                     ),
                     400,
                 )
+
+        return redirect(url_for("list_detail", list_id=list_id))
+
+    @app.get("/liste/<int:list_id>/position-hinzufuegen")
+    def add_manual_item_form(list_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+            ingredient_names = [i.name for i in ingredient_service.search_ingredients(db_session, active_only=False)]
+            return render_template(
+                "add_item.html", shopping_list=shopping_list, ingredient_names=ingredient_names, error=None
+            )
+
+    @app.post("/liste/<int:list_id>/position-hinzufuegen")
+    def add_manual_item_submit(list_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+
+            name = (request.form.get("name") or "").strip()
+            unit = (request.form.get("unit") or "").strip() or None
+            requested_by = (request.form.get("gewuenscht_von") or "").strip() or None
+            raw_quantity = request.form.get("menge")
+            try:
+                quantity = Decimal(raw_quantity) if raw_quantity else None
+            except InvalidOperation:
+                quantity = None
+
+            error = None
+            if not name:
+                error = "Bitte einen Namen eingeben."
+            elif quantity is None or quantity <= 0:
+                error = "Bitte eine gültige Menge eingeben."
+
+            if error:
+                ingredient_names = [i.name for i in ingredient_service.search_ingredients(db_session, active_only=False)]
+                return (
+                    render_template(
+                        "add_item.html", shopping_list=shopping_list, ingredient_names=ingredient_names, error=error
+                    ),
+                    400,
+                )
+
+            ingredient = ingredient_service.find_or_create_ingredient(db_session, name=name, default_unit=unit)
+            shopping_service.add_manual_shopping_item(
+                db_session, shopping_list, ingredient=ingredient, quantity=quantity, unit=unit, requested_by=requested_by
+            )
 
         return redirect(url_for("list_detail", list_id=list_id))
 

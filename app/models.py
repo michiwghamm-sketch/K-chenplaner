@@ -51,6 +51,10 @@ class Ingredient(Base):
     # Gecachte Anzeige des verknuepften Produkts (z. B. "Ketchup (Jardin bio, 560 g)"), damit die UI
     # das nicht bei jedem Laden erneut ueber die API nachschlagen muss.
     barcode_product_label: Mapped[Optional[str]] = mapped_column(String(255))
+    # Freitext-Kategorie (kein starres Enum, siehe docs/data_model.md) - v.a. fuer den
+    # reservierten Wert "Non-Food": blendet die Zutat aus dem Rezept-Zutaten-Picker aus (Non-Food
+    # gehoert nicht in ein Rezept), taucht aber weiterhin in der Einkaufsliste normal auf.
+    category: Mapped[Optional[str]] = mapped_column(String(100))
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
@@ -61,6 +65,9 @@ class Ingredient(Base):
     )
     recipe_links: Mapped[list["RecipeIngredient"]] = relationship(back_populates="ingredient")
     shopping_items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="ingredient")
+
+
+NON_FOOD_CATEGORY = "Non-Food"
 
 
 class IngredientAlias(Base):
@@ -128,6 +135,30 @@ class IngredientPriceProfile(Base):
 
     ingredient: Mapped["Ingredient"] = relationship(back_populates="price_profile")
     category: Mapped[Optional["OpenPricesCategory"]] = relationship(back_populates="ingredient_profiles")
+
+
+class StandardShoppingItem(Base):
+    """Vorlage fuer eine wiederkehrende Position (typischerweise Non-Food/Verbrauchsmittel wie
+    Muellsaecke, Batterien, Grillkohle), die bei jeder generate_shopping_list()-Ausfuehrung
+    automatisch mit in die neue Einkaufsliste uebernommen wird - dauerhaft in der DB verwaltet,
+    nicht nur pro Einkaufsliste, damit sich der Bedarf jahresuebergreifend pflegen laesst."""
+
+    __tablename__ = "standard_shopping_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), nullable=False, index=True)
+    default_quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
+    default_unit: Mapped[Optional[str]] = mapped_column(String(50))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Freitext-Hinweis zum ueblichen Lagerbestand (z. B. "meist noch ~3 Rollen da") - bewusst nur
+    # Anzeige/Hinweis, KEINE automatische Mengen-Verrechnung (siehe docs/ux_feature_roadmap.md,
+    # F5: echte Bestandsfuehrung ohne tatsaechliche Zaehlungen wuerde falsche Sicherheit vortaeuschen).
+    typical_stock_note: Mapped[Optional[str]] = mapped_column(String(255))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    ingredient: Mapped["Ingredient"] = relationship()
 
 
 class Recipe(Base):
@@ -374,16 +405,24 @@ class ShoppingListItem(Base):
     # bereits laufenden Deployments in eine Allocation zu ueberfuehren.
     store: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[Optional[str]] = mapped_column(String(50))
+    # Nur bei generate_shopping_list() (Rezept-Aggregation) gesetzt, garantiert nicht-leer fuer
+    # jede rezeptbasierte Position - siehe shopping_service.is_manual_item(). Manuell
+    # hinzugefuegte/Standard-Positionen haben hier bewusst None, NICHT als Fehlerzustand.
     linked_recipes_text: Mapped[Optional[str]] = mapped_column(Text)
+    # Freitext, wer eine manuell hinzugefuegte Position gewuenscht hat (z. B. "Björn") - gleiches
+    # Muster wie MealPlanEntry/CampDay.responsible_person. Bei rezeptbasierten Positionen leer.
+    requested_by: Mapped[Optional[str]] = mapped_column(String(255))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
     shopping_list: Mapped["ShoppingList"] = relationship(back_populates="items")
     ingredient: Mapped[Optional["Ingredient"]] = relationship(back_populates="shopping_items")
-    allocations: Mapped[list["ShoppingListItemAllocation"]] = relationship(
-        back_populates="shopping_list_item", cascade="all, delete-orphan"
-    )
+    # Bewusst KEINE "allocations"-Relationship mit Cascade hier: eine Allocation ist fachlich an
+    # die Zutat (ingredient_id+unit) gebunden, nicht an eine einzelne Tages-Zeile - siehe
+    # ShoppingListItemAllocation.shopping_list_item_id weiter unten. Ein Cascade-Delete hier
+    # wuerde beim Loeschen EINER Tages-Zeile die komplette Zutat-Allocation mitreissen, obwohl
+    # sie ggf. mehrere Tages-Zeilen repraesentiert.
 
 
 class ShoppingTrip(Base):
@@ -423,8 +462,12 @@ class ShoppingListItemAllocation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     shopping_list_id: Mapped[int] = mapped_column(ForeignKey("shopping_lists.id"), nullable=False, index=True)
     # Technische Rueckwaertskompatibilitaet: fruehere Deployments hatten diese FK-Spalte bereits
-    # NOT NULL. Fachlich bleibt eine Allocation eine Zutat-Gesamtmenge ueber mehrere Tageszeilen;
-    # hier verweisen wir nur auf eine repraesentative ShoppingListItem-Zeile.
+    # NOT NULL (sync_schema kann Constraints nicht nachtraeglich lockern, siehe app/db.py). Fachlich
+    # bleibt eine Allocation eine Zutat-Gesamtmenge ueber ggf. mehrere Tageszeilen; hier verweisen
+    # wir nur auf eine repraesentative ShoppingListItem-Zeile (siehe shopping_service._representative_item).
+    # BEWUSST kein back_populates/Cascade zu ShoppingListItem - siehe Kommentar dort. Sobald
+    # scripts/drop_allocation_item_fk_not_null.py gegen die Cloud-DB gelaufen ist, kann diese
+    # Spalte inkl. Relationship komplett entfernt werden.
     shopping_list_item_id: Mapped[int] = mapped_column(ForeignKey("shopping_list_items.id"), nullable=False, index=True)
     shopping_trip_id: Mapped[int] = mapped_column(ForeignKey("shopping_trips.id"), nullable=False, index=True)
     ingredient_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingredients.id"), index=True)
@@ -438,7 +481,8 @@ class ShoppingListItemAllocation(Base):
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
     shopping_list: Mapped["ShoppingList"] = relationship(back_populates="allocations")
-    shopping_list_item: Mapped["ShoppingListItem"] = relationship(back_populates="allocations")
+    # Unidirektional (kein back_populates) - siehe Kommentar auf ShoppingListItem.allocations.
+    shopping_list_item: Mapped["ShoppingListItem"] = relationship()
     trip: Mapped["ShoppingTrip"] = relationship(back_populates="allocations")
     ingredient: Mapped[Optional["Ingredient"]] = relationship()
 
