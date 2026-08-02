@@ -334,11 +334,34 @@ class SettingsView(QWidget):
             error_dialog(self, "Der Connection-String muss mit 'postgresql://' beginnen.")
             return
 
+        # Nur das Praefix zu pruefen sagt nichts darueber aus, ob die Verbindung tatsaechlich
+        # funktioniert (Tippfehler im Host/Passwort, falscher Datenbankname, Firewall, ...) -
+        # ohne echten Verbindungstest faellt das fuer technische Laien erst nach dem Neustart
+        # auf, wenn die App unerklaert im Offline-Modus landet. Gleiches Muster wie _sync_now().
+        self.connect_cloud_button.setEnabled(False)
+        self.connect_cloud_button.setText("Verbindung wird geprüft...")
+        try:
+            test_config = AppConfig.load(project_root=self.context.config.project_root, database_url=connection_string)
+            test_engine = create_engine_from_config(test_config)
+            status = check_connectivity(test_engine)
+        finally:
+            self.connect_cloud_button.setEnabled(True)
+            self.connect_cloud_button.setText("Mit Cloud-Datenbank verbinden...")
+
+        if status != "ok":
+            error_dialog(
+                self,
+                "Die Cloud-Datenbank ist mit diesem Connection-String nicht erreichbar "
+                f"(Status: {status}). Bitte String, Netzwerk und Firewall prüfen - "
+                "gespeichert wird nichts.",
+            )
+            return
+
         save_user_settings({"database_url": connection_string})
         info_dialog(
             self,
-            "Cloud-Verbindung gespeichert. Bitte die Anwendung neu starten, damit die "
-            "Änderung wirksam wird.",
+            "Verbindung erfolgreich getestet und gespeichert. Bitte die Anwendung neu starten, "
+            "damit die Änderung wirksam wird.",
         )
 
     def _disconnect_cloud_database(self) -> None:
