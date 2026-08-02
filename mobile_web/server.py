@@ -166,6 +166,38 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 current_person=current_person,
             )
 
+    @app.get("/liste/<int:list_id>/status")
+    def list_status(list_id: int):
+        """Schlanker JSON-Endpunkt fuer das Live-Polling in list_detail.html - liefert nur die
+        veraenderlichen Felder (Status/Person/Kaufmenge), damit mehrere Leute, die gleichzeitig
+        im selben Laden abhaken, sich gegenseitig auf dem Schirm sehen, ohne manuell neu zu laden."""
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+            current_person = request.args.get("person") or None
+            allocations = shopping_list.allocations
+            if current_person:
+                allocations = [a for a in allocations if a.assigned_to == current_person]
+            return jsonify(
+                {
+                    "positionen": [
+                        {
+                            "id": allocation.id,
+                            "status": allocation.status,
+                            "assigned_to": allocation.assigned_to,
+                            "purchased_quantity": str(allocation.purchased_quantity)
+                            if allocation.purchased_quantity is not None
+                            else None,
+                            "purchased_at_text": shopping_service.format_date_de(allocation.purchased_at.date())
+                            if allocation.purchased_at
+                            else None,
+                        }
+                        for allocation in allocations
+                    ]
+                }
+            )
+
     @app.post("/position/<int:allocation_id>/umschalten")
     def toggle_allocation(allocation_id: int):
         with session_scope(session_factory) as db_session:

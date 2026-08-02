@@ -710,3 +710,66 @@ def test_delete_shopping_list_removes_planned_trips_and_allocations(session_fact
         assert session.get(ShoppingListItem, item_id) is None
         assert session.get(ShoppingTrip, trip_id) is None
         assert session.get(ShoppingListItemAllocation, allocation_id) is None
+
+
+def test_set_allocation_quantity_updates_within_available_bounds(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
+        item = ShoppingListItem(ingredient=karotten, quantity=Decimal("30.000"), unit="kg")
+        shopping_list.items.append(item)
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(karotten.id, "kg", Decimal("20.000"))]
+        )
+        shopping_list_id, allocation_id = shopping_list.id, trip.allocations[0].id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        allocation = session.get(ShoppingListItemAllocation, allocation_id)
+
+        # Hochsetzen bis zur verfuegbaren Gesamtmenge (20 aktuell + 10 noch unverplant = 30) ist ok.
+        shopping_service.set_allocation_quantity(shopping_list, allocation, Decimal("30.000"))
+        assert allocation.quantity == Decimal("30.000")
+        assert shopping_service.remaining_quantity_for_ingredient(shopping_list, allocation.ingredient_id, "kg") == Decimal("0.000")
+
+        with pytest.raises(ValueError):
+            shopping_service.set_allocation_quantity(shopping_list, allocation, Decimal("31.000"))
+        with pytest.raises(ValueError):
+            shopping_service.set_allocation_quantity(shopping_list, allocation, Decimal("0"))
+
+
+def test_deleting_single_shopping_list_item_keeps_allocation(session_factory) -> None:
+    """Regressionstest fuer den Cascade-Fix: eine Allocation repraesentiert eine Zutat ueber
+    ggf. mehrere Tages-Positionen - das Loeschen EINER dieser Positionen darf die Allocation
+    (und damit Planungs-/Kaufdaten fuer die anderen Tage) nicht mitreissen."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
+        session.add(karotten)
+        session.flush()
+        item_a = ShoppingListItem(ingredient=karotten, quantity=Decimal("18.000"), unit="kg", shopping_date=date(2026, 8, 1))
+        item_b = ShoppingListItem(ingredient=karotten, quantity=Decimal("12.000"), unit="kg", shopping_date=date(2026, 8, 3))
+        shopping_list.items.extend([item_a, item_b])
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(karotten.id, "kg", Decimal("20.000"))]
+        )
+        allocation_id = trip.allocations[0].id
+        item_a_id = item_a.id
+
+    with session_scope(session_factory) as session:
+        item_a = session.get(ShoppingListItem, item_a_id)
+        session.delete(item_a)
+
+    with session_scope(session_factory) as session:
+        assert session.get(ShoppingListItem, item_a_id) is None
+        allocation = session.get(ShoppingListItemAllocation, allocation_id)
+        assert allocation is not None
+        assert allocation.quantity == Decimal("20.000")

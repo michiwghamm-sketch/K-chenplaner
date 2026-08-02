@@ -392,6 +392,7 @@ class ShoppingView(QWidget):
             trip = session.get(ShoppingTrip, trip_id)
             if trip is None:
                 return
+            shopping_list = trip.shopping_list
             rows = [
                 TripAllocationRow(
                     id=allocation.id,
@@ -400,6 +401,10 @@ class ShoppingView(QWidget):
                     unit=allocation.unit or "",
                     assigned_to=allocation.assigned_to,
                     status=allocation.status,
+                    max_quantity=shopping_service.remaining_quantity_for_ingredient(
+                        shopping_list, allocation.ingredient_id, allocation.unit
+                    )
+                    + allocation.quantity,
                 )
                 for allocation in trip.allocations
             ]
@@ -443,6 +448,12 @@ class ShoppingView(QWidget):
                 row = rows_by_id.get(allocation.id)
                 if row is None:
                     continue
+                if row["quantity"] != allocation.quantity:
+                    try:
+                        shopping_service.set_allocation_quantity(trip.shopping_list, allocation, row["quantity"])
+                    except ValueError as exc:
+                        error_dialog(self, str(exc))
+                        continue
                 shopping_service.set_allocation_assigned_to(allocation, row["assigned_to"])
                 shopping_service.set_allocation_status(allocation, row["status"])
         self._reload_group_combo(select_mode=f"trip:{trip_id}")

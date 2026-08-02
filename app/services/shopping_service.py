@@ -421,6 +421,24 @@ def set_allocation_status(allocation: ShoppingListItemAllocation, status: str) -
     return allocation
 
 
+def set_allocation_quantity(
+    shopping_list: ShoppingList, allocation: ShoppingListItemAllocation, quantity: Decimal
+) -> ShoppingListItemAllocation:
+    """Aendert die Menge einer bestehenden Allocation nachtraeglich - z. B. wenn beim Planen
+    verschaetzt wurde. Gedeckelt durch die Menge, die dieser Zutat insgesamt noch zur Verfuegung
+    steht (diese Allocation eingerechnet, sonst wuerde sie sich selbst im Weg stehen)."""
+    if quantity <= 0:
+        raise ValueError("Menge muss größer als 0 sein.")
+    available = remaining_quantity_for_ingredient(shopping_list, allocation.ingredient_id, allocation.unit) + allocation.quantity
+    if quantity > available:
+        label = allocation.ingredient.name if allocation.ingredient else str(allocation.ingredient_id)
+        raise ValueError(
+            f"Menge für '{label}' übersteigt die verfügbare Menge ({format_quantity_de(available)} {allocation.unit or ''})."
+        )
+    allocation.quantity = quantity
+    return allocation
+
+
 def mark_allocation_purchased(
     allocation: ShoppingListItemAllocation, purchased_quantity: Decimal | None = None
 ) -> ShoppingListItemAllocation:

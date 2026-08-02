@@ -1375,6 +1375,11 @@ class TripAllocationRow:
     unit: str
     assigned_to: str | None
     status: str
+    # Obergrenze fuer die Mengen-Eingabe: die aktuelle Menge dieser Allocation plus die Menge
+    # dieser Zutat, die anderswo in der Liste noch gar keinem Einkauf zugeteilt ist (siehe
+    # shopping_service.remaining_quantity_for_ingredient) - mehr kann diese Position nicht
+    # bekommen, ohne einer anderen Position ihre Menge wegzunehmen.
+    max_quantity: Decimal
 
 
 class EditShoppingTripDialog(QDialog):
@@ -1447,9 +1452,16 @@ class EditShoppingTripDialog(QDialog):
         name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 0, name_item)
 
-        quantity_item = QTableWidgetItem(f"{shopping_service.format_quantity_de(row_data.quantity)} {row_data.unit}")
-        quantity_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-        self.table.setItem(row, 1, quantity_item)
+        quantity_spin = QDoubleSpinBox(self.table)
+        quantity_spin.setDecimals(3)
+        quantity_spin.setSuffix(f" {row_data.unit}" if row_data.unit else "")
+        quantity_spin.setRange(0.001, float(max(row_data.max_quantity, row_data.quantity)))
+        quantity_spin.setValue(float(row_data.quantity))
+        quantity_spin.setToolTip(
+            f"Maximal {shopping_service.format_quantity_de(row_data.max_quantity)} {row_data.unit} "
+            "(diese Position plus noch nicht verplante Restmenge dieser Zutat)."
+        )
+        self.table.setCellWidget(row, 1, quantity_spin)
 
         assigned_edit = QLineEdit(row_data.assigned_to or "", self.table)
         assigned_edit.setPlaceholderText("Person...")
@@ -1495,11 +1507,13 @@ class EditShoppingTripDialog(QDialog):
     def result_data(self) -> dict:
         rows = []
         for row in range(self.table.rowCount()):
+            quantity_spin = self.table.cellWidget(row, 1)
             assigned_edit = self.table.cellWidget(row, 2)
             status_combo = self.table.cellWidget(row, 3)
             rows.append(
                 {
                     "id": self.table.item(row, 0).data(1000),
+                    "quantity": Decimal(str(quantity_spin.value())),
                     "assigned_to": assigned_edit.text().strip() or None,
                     "status": status_combo.currentText(),
                 }

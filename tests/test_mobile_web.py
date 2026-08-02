@@ -231,3 +231,42 @@ def test_reshuffle_store_updates_assignment(tmp_path, monkeypatch):
 
         allocation = session.get(ShoppingListItemAllocation, allocation_id)
         assert allocation.assigned_to in ("Ben", "Chris")
+
+
+def test_status_endpoint_reflects_toggled_allocation(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Metro", participants=["Anna"])
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    before = client.get(f"/liste/{list_id}/status")
+    assert before.status_code == 200
+    positionen = before.get_json()["positionen"]
+    assert len(positionen) == 1
+    assert positionen[0]["id"] == allocation_id
+    assert positionen[0]["status"] == "offen"
+    assert positionen[0]["assigned_to"] == "Anna"
+
+    client.post(f"/position/{allocation_id}/umschalten", data={"purchased_quantity": "2.5"})
+
+    after = client.get(f"/liste/{list_id}/status")
+    position = after.get_json()["positionen"][0]
+    assert position["status"] == "gekauft"
+    assert position["purchased_quantity"] == "2.500"
+
+
+def test_status_endpoint_respects_person_filter(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, _ = _seed_shopping_list_with_trip(config, participants=["Anna"])
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    for_anna = client.get(f"/liste/{list_id}/status?person=Anna")
+    assert len(for_anna.get_json()["positionen"]) == 1
+
+    for_ben = client.get(f"/liste/{list_id}/status?person=Ben")
+    assert for_ben.get_json()["positionen"] == []

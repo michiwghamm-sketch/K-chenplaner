@@ -27,3 +27,6 @@ backups/
 Thumbs.db
 *.xlsx
 *.xlsm
+
+# Echte Kassenbons/Rechnungen gehoeren nicht ins (oeffentliche) Repo.
+Metro Rechnungen/

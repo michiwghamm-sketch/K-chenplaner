@@ -381,9 +381,11 @@ class ShoppingListItem(Base):
 
     shopping_list: Mapped["ShoppingList"] = relationship(back_populates="items")
     ingredient: Mapped[Optional["Ingredient"]] = relationship(back_populates="shopping_items")
-    allocations: Mapped[list["ShoppingListItemAllocation"]] = relationship(
-        back_populates="shopping_list_item", cascade="all, delete-orphan"
-    )
+    # Bewusst KEINE "allocations"-Relationship mit Cascade hier: eine Allocation ist fachlich an
+    # die Zutat (ingredient_id+unit) gebunden, nicht an eine einzelne Tages-Zeile - siehe
+    # ShoppingListItemAllocation.shopping_list_item_id weiter unten. Ein Cascade-Delete hier
+    # wuerde beim Loeschen EINER Tages-Zeile die komplette Zutat-Allocation mitreissen, obwohl
+    # sie ggf. mehrere Tages-Zeilen repraesentiert.
 
 
 class ShoppingTrip(Base):
@@ -423,8 +425,12 @@ class ShoppingListItemAllocation(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True)
     shopping_list_id: Mapped[int] = mapped_column(ForeignKey("shopping_lists.id"), nullable=False, index=True)
     # Technische Rueckwaertskompatibilitaet: fruehere Deployments hatten diese FK-Spalte bereits
-    # NOT NULL. Fachlich bleibt eine Allocation eine Zutat-Gesamtmenge ueber mehrere Tageszeilen;
-    # hier verweisen wir nur auf eine repraesentative ShoppingListItem-Zeile.
+    # NOT NULL (sync_schema kann Constraints nicht nachtraeglich lockern, siehe app/db.py). Fachlich
+    # bleibt eine Allocation eine Zutat-Gesamtmenge ueber ggf. mehrere Tageszeilen; hier verweisen
+    # wir nur auf eine repraesentative ShoppingListItem-Zeile (siehe shopping_service._representative_item).
+    # BEWUSST kein back_populates/Cascade zu ShoppingListItem - siehe Kommentar dort. Sobald
+    # scripts/drop_allocation_item_fk_not_null.py gegen die Cloud-DB gelaufen ist, kann diese
+    # Spalte inkl. Relationship komplett entfernt werden.
     shopping_list_item_id: Mapped[int] = mapped_column(ForeignKey("shopping_list_items.id"), nullable=False, index=True)
     shopping_trip_id: Mapped[int] = mapped_column(ForeignKey("shopping_trips.id"), nullable=False, index=True)
     ingredient_id: Mapped[Optional[int]] = mapped_column(ForeignKey("ingredients.id"), index=True)
@@ -438,7 +444,8 @@ class ShoppingListItemAllocation(Base):
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
     shopping_list: Mapped["ShoppingList"] = relationship(back_populates="allocations")
-    shopping_list_item: Mapped["ShoppingListItem"] = relationship(back_populates="allocations")
+    # Unidirektional (kein back_populates) - siehe Kommentar auf ShoppingListItem.allocations.
+    shopping_list_item: Mapped["ShoppingListItem"] = relationship()
     trip: Mapped["ShoppingTrip"] = relationship(back_populates="allocations")
     ingredient: Mapped[Optional["Ingredient"]] = relationship()
 
