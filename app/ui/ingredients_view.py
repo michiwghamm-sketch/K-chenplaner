@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from xml.sax.saxutils import escape
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -86,6 +87,9 @@ class IngredientsView(QWidget):
         outer.addLayout(price_toolbar)
 
         self.missing_prices_label = QLabel("", self)
+        self.missing_prices_label.setTextFormat(Qt.TextFormat.RichText)
+        self.missing_prices_label.setWordWrap(True)
+        self.missing_prices_label.linkActivated.connect(self._on_missing_price_link_clicked)
         outer.addWidget(self.missing_prices_label)
 
         splitter = QSplitter(Qt.Orientation.Horizontal, self)
@@ -246,13 +250,27 @@ class IngredientsView(QWidget):
             missing = price_service.missing_price_ingredients(session, year=year)
 
         if missing:
-            names = ", ".join(i.name for i in missing[:10])
+            # Jeder Name ist ein anklickbarer Link (href=Zutat-ID) statt reinem Text - Klick
+            # springt direkt zur Zutat, statt dass man sie erst in der Liste links suchen muss.
+            links = [
+                f'<a href="{i.id}" style="color:{COLOR_CRITICAL};">{escape(i.name)}</a>' for i in missing[:10]
+            ]
             suffix = " ..." if len(missing) > 10 else ""
-            self.missing_prices_label.setText(f"Fehlende Preise für {year} ({len(missing)}): {names}{suffix}")
-            self.missing_prices_label.setStyleSheet(f"color: {COLOR_CRITICAL};")
+            self.missing_prices_label.setText(
+                f'<span style="color:{COLOR_CRITICAL};">Fehlende Preise für {year} '
+                f"({len(missing)}): {', '.join(links)}{suffix}</span>"
+            )
+            self.missing_prices_label.setStyleSheet("")
         else:
             self.missing_prices_label.setText(f"Alle aktiven Zutaten haben einen Preis für {year}.")
             self.missing_prices_label.setStyleSheet("")
+
+    def _on_missing_price_link_clicked(self, href: str) -> None:
+        try:
+            ingredient_id = int(href)
+        except ValueError:
+            return
+        self._select_ingredient_by_id(ingredient_id)
 
     def _on_selected(self, current: QListWidgetItem | None, _previous: QListWidgetItem | None) -> None:
         if current is None:
