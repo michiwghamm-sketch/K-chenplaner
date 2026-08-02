@@ -16,11 +16,18 @@
     </div>
   </div>
 
-  <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}" style="text-decoration:none;">
-    <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
-      + Einkauf planen
-    </div>
-  </a>
+  <div style="display:flex; gap:0.6rem;">
+    <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}" style="text-decoration:none; flex:1;">
+      <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
+        + Einkauf planen
+      </div>
+    </a>
+    <a href="{{ url_for('add_manual_item_form', list_id=shopping_list.id) }}" style="text-decoration:none; flex:1;">
+      <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
+        + Position hinzufügen
+      </div>
+    </a>
+  </div>
 
   {% if persons %}
     <div style="display:flex; gap: 0.4rem; overflow-x:auto; padding: 0.2rem 0 0.6rem;">
@@ -62,6 +69,10 @@
             <span style="color: var(--text-schwach);">— {{ allocation.quantity|menge }} {{ allocation.unit or "" }}</span>
             {% if allocation.assigned_to %}
               <span style="font-size: 0.72rem; background: var(--grün-hell); color: var(--grün); padding: 0.1rem 0.4rem; border-radius: 999px; margin-left: 0.3rem;">{{ allocation.assigned_to }}</span>
+            {% endif %}
+            {% set requested_by = allocation_requested_by(allocation) %}
+            {% if requested_by %}
+              <span style="font-size: 0.72rem; color: #b5651d; margin-left: 0.3rem;">Sonderwunsch ({{ requested_by }})</span>
             {% endif %}
             {% set recipes = allocation_recipes(allocation) %}
             {% if recipes %}
@@ -167,5 +178,72 @@
       }
     });
   });
+
+  // Live-Aktualisierung: alle 15s pruefen, ob jemand anderes (anderes Handy, Desktop-App)
+  // zwischenzeitlich etwas abgehakt/neu gemischt hat, ohne dass man selbst neu laden muss.
+  const statusUrl = "{{ url_for('list_status', list_id=shopping_list.id, person=current_person) }}";
+
+  function positionAktualisieren(label, istGekauft, pos) {
+    const box = label.querySelector('.position-checkbox');
+    box.checked = istGekauft;
+    const text = label.querySelector('.position-text');
+    text.style.opacity = istGekauft ? '0.45' : '1';
+    text.style.textDecoration = istGekauft ? 'line-through' : 'none';
+    const kaufText = label.querySelector('.kauf-text');
+    if (kaufText) {
+      if (istGekauft) {
+        const menge = pos.purchased_quantity || label.dataset.menge;
+        const datum = pos.purchased_at_text ? ` am ${pos.purchased_at_text}` : '';
+        kaufText.innerHTML = `<br>gekauft: ${menge} ${label.dataset.unit || ''}${datum}`;
+        kaufText.style.display = 'inline';
+      } else {
+        kaufText.textContent = '';
+        kaufText.style.display = 'none';
+      }
+    }
+  }
+
+  async function statusAbfragen() {
+    if (document.hidden) return;
+    let daten;
+    try {
+      const antwort = await fetch(statusUrl, { headers: { Accept: 'application/json' } });
+      if (!antwort.ok) return;
+      daten = await antwort.json();
+    } catch (fehler) {
+      return; // naechster Versuch in 15s, kein Alert - Polling soll nicht nerven
+    }
+
+    const serverIds = new Set(daten.positionen.map((pos) => String(pos.id)));
+    const domLabels = Array.from(document.querySelectorAll('.position'));
+    const domIds = new Set(domLabels.map((label) => label.dataset.allocationId));
+    const gleicheMenge = serverIds.size === domIds.size && [...serverIds].every((id) => domIds.has(id));
+    if (!gleicheMenge) {
+      // Positionen wurden neu verteilt/geloescht/hinzugefuegt - dafuer reicht ein einfacher
+      // Reload, das partielle Nachbauen der ganzen Liste per JS lohnt sich fuer diesen
+      // seltenen Fall nicht.
+      window.location.reload();
+      return;
+    }
+
+    let gekauftNeu = 0;
+    daten.positionen.forEach((pos) => {
+      const label = document.querySelector(`.position[data-allocation-id="${pos.id}"]`);
+      if (!label) return;
+      const box = label.querySelector('.position-checkbox');
+      const istGekauft = pos.status === 'gekauft';
+      if (istGekauft) gekauftNeu += 1;
+      // Waehrend die Checkbox gerade selbst einen Request laufen hat (disabled), nicht
+      // ueberschreiben - sonst kollidiert die eigene Aktion mit dem Poll-Ergebnis.
+      if (!box.disabled && box.checked !== istGekauft) {
+        positionAktualisieren(label, istGekauft, pos);
+      }
+    });
+    gekauft = gekauftNeu;
+    zaehler.textContent = gekauft;
+    balken.style.width = gesamt ? `${(gekauft / gesamt) * 100}%` : '0%';
+  }
+
+  setInterval(statusAbfragen, 15000);
 </script>
 {% endblock %}

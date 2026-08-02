@@ -23,8 +23,18 @@ from sqlalchemy import select
 
 from app.context import AppContext
 from app.models import CampYear, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip
-from app.services import export_service, shopping_service
-from app.ui.dialogs import EditShoppingTripDialog, PlanShoppingTripDialog, TripAllocationRow, confirm_dialog, error_dialog, info_dialog, prompt_choice
+from app.services import export_service, ingredient_service, shopping_service, unit_service
+from app.ui.dialogs import (
+    AddManualShoppingItemDialog,
+    EditShoppingTripDialog,
+    PlanShoppingTripDialog,
+    RecipeIngredientChoice,
+    TripAllocationRow,
+    confirm_dialog,
+    error_dialog,
+    info_dialog,
+    prompt_choice,
+)
 from app.ui.theme import ORANGE
 from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
@@ -81,6 +91,13 @@ class ShoppingView(QWidget):
         )
         plan_trip_button.clicked.connect(self._plan_shopping_trip)
         top_row.addWidget(plan_trip_button)
+
+        add_item_button = QPushButton("Position hinzufügen...", self)
+        add_item_button.setToolTip(
+            "Fügt eine spontane Position ohne Rezeptbezug hinzu (Sonderwunsch, Non-Food, ...)."
+        )
+        add_item_button.clicked.connect(self._add_manual_item)
+        top_row.addWidget(add_item_button)
 
         self.total_list_checkbox = QCheckBox("Gesamtliste (ohne Einkaufstage)", self)
         self.total_list_checkbox.setToolTip(
@@ -309,7 +326,13 @@ class ShoppingView(QWidget):
         self.table.setItem(row, 8, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
         self.table.setItem(row, 9, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
         self.table.setItem(row, 10, QTableWidgetItem(item.status or ""))
-        self.table.setItem(row, 11, QTableWidgetItem(item.linked_recipes_text or ""))
+        if shopping_service.is_manual_item(item):
+            label = "Sonderwunsch" + (f" ({item.requested_by})" if item.requested_by else "")
+            manual_item = QTableWidgetItem(label)
+            manual_item.setForeground(QColor(ORANGE))
+            self.table.setItem(row, 11, manual_item)
+        else:
+            self.table.setItem(row, 11, QTableWidgetItem(item.linked_recipes_text or ""))
         self.table.setItem(row, 12, QTableWidgetItem(""))
 
     def _add_allocation_row(self, allocation: ShoppingListItemAllocation) -> None:
@@ -392,6 +415,7 @@ class ShoppingView(QWidget):
             trip = session.get(ShoppingTrip, trip_id)
             if trip is None:
                 return
+            shopping_list = trip.shopping_list
             rows = [
                 TripAllocationRow(
                     id=allocation.id,
@@ -400,6 +424,10 @@ class ShoppingView(QWidget):
                     unit=allocation.unit or "",
                     assigned_to=allocation.assigned_to,
                     status=allocation.status,
+                    max_quantity=shopping_service.remaining_quantity_for_ingredient(
+                        shopping_list, allocation.ingredient_id, allocation.unit
+                    )
+                    + allocation.quantity,
                 )
                 for allocation in trip.allocations
             ]
@@ -443,6 +471,12 @@ class ShoppingView(QWidget):
                 row = rows_by_id.get(allocation.id)
                 if row is None:
                     continue
+                if row["quantity"] != allocation.quantity:
+                    try:
+                        shopping_service.set_allocation_quantity(trip.shopping_list, allocation, row["quantity"])
+                    except ValueError as exc:
+                        error_dialog(self, str(exc))
+                        continue
                 shopping_service.set_allocation_assigned_to(allocation, row["assigned_to"])
                 shopping_service.set_allocation_status(allocation, row["status"])
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
@@ -484,6 +518,54 @@ class ShoppingView(QWidget):
             trip_id = trip.id
         info_dialog(self, "Einkauf angelegt.")
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
+        self._reload_table()
+
+    def _add_manual_item(self) -> None:
+        shopping_list_id = self.list_combo.currentData()
+        if shopping_list_id is None:
+            error_dialog(self, "Es ist keine Einkaufsliste ausgewählt.")
+            return
+        with self.context.session() as session:
+            ingredient_choices = [
+                RecipeIngredientChoice(
+                    id=ingredient.id,
+                    name=ingredient.name,
+                    default_unit=ingredient.default_unit,
+                    compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
+                )
+                for ingredient in ingredient_service.search_ingredients(session, active_only=False)
+            ]
+
+        dialog = AddManualShoppingItemDialog(ingredient_choices, self)
+        if dialog.exec() != AddManualShoppingItemDialog.DialogCode.Accepted:
+            return
+        result = dialog.result_data()
+        if result["ingredient_id"] is None and not result["new_ingredient_name"]:
+            error_dialog(self, "Bitte eine Zutat auswählen oder einen neuen Namen eingeben.")
+            return
+
+        with self.context.session() as session:
+            shopping_list = session.get(ShoppingList, shopping_list_id)
+            if result["ingredient_id"] is not None:
+                ingredient = session.get(ingredient_service.Ingredient, result["ingredient_id"])
+            else:
+                ingredient = ingredient_service.find_or_create_ingredient(
+                    session, name=result["new_ingredient_name"], default_unit=result["unit"]
+                )
+            try:
+                shopping_service.add_manual_shopping_item(
+                    session,
+                    shopping_list,
+                    ingredient=ingredient,
+                    quantity=result["quantity"],
+                    unit=result["unit"],
+                    requested_by=result["requested_by"],
+                    notes=result["notes"],
+                )
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
+        info_dialog(self, "Position hinzugefügt.")
         self._reload_table()
 
     def _generate_list(self) -> None:
@@ -594,6 +676,7 @@ def _aggregate_total_view_items(items) -> list:
         )
         statuses = {item.status for item in group if item.status}
         stores = {item.store for item in group if item.store}
+        requested_by_names = {item.requested_by for item in group if item.requested_by}
         aggregated.append(
             SimpleNamespace(
                 id=first.id,
@@ -608,6 +691,7 @@ def _aggregate_total_view_items(items) -> list:
                 shopping_date=None,
                 status=", ".join(sorted(statuses)) if statuses else "",
                 linked_recipes_text=", ".join(recipe_names),
+                requested_by=", ".join(sorted(requested_by_names)) if requested_by_names else None,
             )
         )
     return sorted(aggregated, key=lambda item: ((item.ingredient.name if item.ingredient else "").lower(), item.unit or ""))

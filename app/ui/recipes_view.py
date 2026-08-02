@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.models import CampYear
+from app.models import NON_FOOD_CATEGORY, CampYear
 from app.services import export_service, feedback_service, ingredient_service, recipe_service, unit_service
 from app.ui.dialogs import (
     AddRecipeIngredientDialog,
@@ -774,6 +774,8 @@ class RecipesView(QWidget):
         self._reload_detail()
 
     def _build_ingredient_choices(self, session, ingredients) -> list[RecipeIngredientChoice]:
+        # Non-Food-Artikel (Muellsaecke, Batterien, ...) gehoeren nicht in ein Rezept - aus der
+        # Auswahlliste ausblenden, tauchen aber weiterhin normal in der Einkaufsliste auf.
         return [
             RecipeIngredientChoice(
                 id=ingredient.id,
@@ -782,6 +784,7 @@ class RecipesView(QWidget):
                 compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
             )
             for ingredient in ingredients
+            if ingredient.category != NON_FOOD_CATEGORY
         ]
 
     def _add_ingredient(self, component_id: int | None) -> None:
@@ -914,13 +917,7 @@ class RecipesView(QWidget):
             if dialog.exec() != SimilarIngredientsWarningDialog.DialogCode.Accepted:
                 return None
 
-        try:
-            ingredient = ingredient_service.create_ingredient(session, name=name, default_unit=data.get("unit"))
-        except IntegrityError:
-            existing = ingredient_service.find_by_name_or_alias(session, name)
-            if existing is not None:
-                return existing.id
-            raise
+        ingredient = ingredient_service.find_or_create_ingredient(session, name=name, default_unit=data.get("unit"))
         info_dialog(
             self,
             f"Zutat '{ingredient.name}' wurde angelegt. Bitte spaeter in der Zutatenansicht einen Preis hinterlegen.",
