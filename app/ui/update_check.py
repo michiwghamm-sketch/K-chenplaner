@@ -22,6 +22,8 @@ class _UpdateCheckWorker(QObject):
             self.finished.emit(check_for_update(__version__, raise_on_error=self.report_errors))
         except UpdateCheckError as exc:
             self.failed.emit(str(exc))
+        except Exception as exc:  # noqa: BLE001 - UI darf bei unerwarteten Fehlern nicht haengen bleiben
+            self.failed.emit(f"Der Update-Check ist fehlgeschlagen: {exc}")
 
 
 def run_update_check_async(
@@ -34,6 +36,9 @@ def run_update_check_async(
     blockieren) und ruft `on_result` im UI-Thread mit dem Ergebnis auf."""
     thread = QThread(parent)
     worker = _UpdateCheckWorker(report_errors=on_error is not None)
+    if not hasattr(parent, "_update_check_threads"):
+        parent._update_check_threads = []  # type: ignore[attr-defined]
+    parent._update_check_threads.append((thread, worker))  # type: ignore[attr-defined]
     worker.moveToThread(thread)
     thread.started.connect(worker.run)
 
@@ -48,6 +53,15 @@ def run_update_check_async(
 
     worker.finished.connect(_handle_result)
     worker.failed.connect(_handle_error)
+
+    def _cleanup() -> None:
+        checks = getattr(parent, "_update_check_threads", [])
+        try:
+            checks.remove((thread, worker))
+        except ValueError:
+            pass
+
+    thread.finished.connect(_cleanup)
     thread.finished.connect(worker.deleteLater)
     thread.finished.connect(thread.deleteLater)
     thread.start()
