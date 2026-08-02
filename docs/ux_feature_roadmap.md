@@ -5,10 +5,10 @@ UX-Durchsicht der App plus die daraus und aus Nutzergesprächen entstandenen Fea
 Es liegt im Repo (statt nur lokal), damit der Stand über mehrere Sitzungen und auch für andere
 gleichzeitig am Repo arbeitende Agents sichtbar bleibt.
 
-## Status (Stand 2026-08-01, Pause nach Fix 11)
+## Status (Stand 2026-08-01, Pause nach Fix 15 - Teil 1 komplett)
 
 **Erledigt und einzeln auf `master` committet** (jeweils mit Smoke-Test + voller Testsuite
-211/211 grün geprüft):
+grün geprüft):
 
 | # | Commit | Inhalt |
 |---|---|---|
@@ -23,16 +23,25 @@ gleichzeitig am Repo arbeitende Agents sichtbar bleibt.
 | 9 | `dcec968` | Händler-Autovervollständigung in der Einkaufsliste |
 | 10 | `7bfc6f9` | "Löschen"-Buttons app-weit visuell von Sekundäraktionen abgehoben (role="danger") |
 | 11 | `dc10558` | Teilstücke im Rezept per ▲/▼ sortierbar |
+| 12 | `25f5152` | Fehlende-Preise-Banner klickbar (springt zur Zutat) |
+| 13 | `16cdf65` | Bestätigung vor "Barcode-Verknüpfung entfernen" |
+| 14 | `35b202b` | Verbindungstest vor dem Speichern einer Cloud-Verbindung |
+| 15 | `37cb1b9` | Wochenplan: "Kompakte Ansicht"-Checkbox gegen horizontales Scrollen |
 
-Damit sind **Teil 1, Tier 1 und Tier 2 komplett**, sowie Tier 3 Punkte 10-11.
+**Damit ist Teil 1 (UX-Verbesserungen an der bestehenden App, Tier 1-3) vollständig
+abgeschlossen.**
 
 **Noch offen:**
 
-- Teil 1, Tier 3, Punkte 12-15 (siehe unten): Fehlende-Preise-Banner klickbar, Bestätigung vor
-  "Barcode-Verknüpfung entfernen", Cloud-Verbindungstest vor dem Speichern, kompakterer
-  Wochenplan.
 - Teil 2 komplett (F1-F6): Wochenplan aus Vorjahr, Grundausstattungsliste, Kategorie-Gruppierung
   Einkaufsliste, Vorrats-Flag, Abrechnungsmodul (F6a Desktop + F6b Mobil).
+- Hinweis: parallel zu dieser Session hat ein anderer Agent eine "Einkaufstrips planen"-Funktion
+  (Teilmengen der Einkaufsliste auf Personen verteilen) in `shopping_view.py`/
+  `shopping_service.py`/`mobile_web/` ergänzt und nach `master` gemergt (Commits bis `f12033f`).
+  F2 (manuelle Position in der Einkaufsliste) und F4 (Kategorie-Gruppierung) sollten vor
+  Umsetzung kurz gegen den aktuellen Stand von `shopping_view.py` geprüft werden, da sich
+  Tabellenspalten (`SHOPPING_TABLE_COLUMNS`) und Gruppierungsmodi (`GROUP_MODES`) inzwischen
+  verändert haben.
 
 **Arbeitsweise-Hinweis für die Fortsetzung:** Wird gleichzeitig ein anderer Agent im
 Hauptarbeitsverzeichnis aktiv (anderer Branch, uncommitted WIP), erst per `git status`/
@@ -139,16 +148,14 @@ Zwei Erkenntnisse aus der Durchsicht sind besonders wichtig für die Priorisieru
     `role="secondary"` (orange, wie harmlose Aktionen).
 11. **Teilstücke sortierbar machen** ✅ - `recipe_service.move_component()` (analog zu
     `move_step()`) plus ▲/▼-Buttons je Teilstück-Band.
-12. **Fehlende-Preise-Banner klickbar machen** (`ingredients_view.py`): Klick auf einen Namen
-    springt direkt zur Zutat, statt nur Text anzuzeigen.
-13. **Bestätigung vor "Barcode-Verknüpfung entfernen"** (`ingredients_view.py:_remove_barcode_link`),
-    konsistent mit allen anderen destruktiven Aktionen in derselben Ansicht.
-14. **Verbindungstest vor dem Speichern einer Cloud-Verbindung** (`settings_view.py:_connect_cloud_database`):
-    aktuell wird nur das String-Präfix geprüft, nicht ob die Verbindung tatsächlich
-    funktioniert (anders als `_sync_now`, das bereits `check_connectivity` nutzt).
-15. **Wochenplan kompakter/übersichtlicher**: `planning_view.py` nutzt fix 210px pro Tagesspalte
-    - bei ~9 Lagertagen passt die Woche auf einem normalen Laptop nicht ohne Scrollen ins
-      Fenster. Schmalere Default-Spaltenbreite bzw. optionale "kompakte Ansicht" ergänzen.
+12. **Fehlende-Preise-Banner klickbar machen** ✅ - Namen im Banner sind jetzt Links
+    (`missing_prices_label` als RichText), Klick springt direkt zur Zutat.
+13. **Bestätigung vor "Barcode-Verknüpfung entfernen"** ✅ - `confirm_dialog` ergänzt, konsistent
+    mit allen anderen destruktiven Aktionen in derselben Ansicht.
+14. **Verbindungstest vor dem Speichern einer Cloud-Verbindung** ✅ - `_connect_cloud_database`
+    testet jetzt mit `check_connectivity` (gleiches Muster wie `_sync_now`), bevor gespeichert wird.
+15. **Wochenplan kompakter/übersichtlicher** ✅ - neue "Kompakte Ansicht"-Checkbox schaltet
+    Tagesspalten von 210px auf 130px um.
 
 *Bewusst zurückgestellt (aus vorheriger Analyse als geringe Priorität bestätigt bzw. rein
 intern ohne Nutzerimpact):* Stale-Einkaufsliste-Warnung nach Plan-Änderung (Planänderungen
@@ -274,7 +281,7 @@ Jede Phase ist für sich lauffähig/testbar und baut nicht zwingend auf einer sp
 |---|---|---|---|
 | A | Teil 1, Tier 1 (Punkte 1-4: Bugfixes) | - | ✅ erledigt |
 | B | Teil 1, Tier 2 (Punkte 5-9: Effizienz) | - | ✅ erledigt |
-| C | Teil 1, Tier 3 (Punkte 10-15: Konsistenz) | - | teilweise (10-11 erledigt, 12-15 offen) |
+| C | Teil 1, Tier 3 (Punkte 10-15: Konsistenz) | - | ✅ erledigt |
 | D | F1 – Wochenplan aus Vorjahr | - | offen |
 | E | F2 – Grundausstattungsliste + manuelle Position | nutzt Autocomplete aus B.9 | offen |
 | F | F4 – Kategorie-Gruppierung Einkaufsliste | nutzt `Ingredient.category` aus E | offen |
@@ -282,9 +289,9 @@ Jede Phase ist für sich lauffähig/testbar und baut nicht zwingend auf einer sp
 | H | F6a – Abrechnung Desktop | eigenes Datenmodell | offen |
 | I | F6b – Abrechnung mobil | baut auf F6a-Datenmodell auf | offen |
 
-Empfehlung: C zu Ende bringen (12-15, kleine Konsistenz-Politur), danach D (schnell spürbarer
-Nutzen fürs Team), E+F zusammen (teilen sich das `category`-Feld), G als kleiner Abschluss,
-H+I als eigener, größerer Block am Ende mit kurzer Abstimmung vor F6a-Start.
+Teil 1 (A-C) ist komplett. Weiter mit D (schnell spürbarer Nutzen fürs Team), E+F zusammen
+(teilen sich das `category`-Feld), G als kleiner Abschluss, H+I als eigener, größerer Block am
+Ende mit kurzer Abstimmung vor F6a-Start.
 
 ## Verifikation
 
