@@ -10,7 +10,7 @@ from sqlalchemy import select
 from app.config import AppConfig
 from app.db import initialize_database, session_scope
 from app.models import CampYear, ShoppingList, ShoppingListItemAllocation
-from app.services import shopping_service
+from app.services import ingredient_service, shopping_service
 
 SESSION_KEY = "eingeloggt"
 
@@ -59,6 +59,9 @@ def create_app(config: AppConfig | None = None) -> Flask:
         allocation.shopping_list, allocation.ingredient_id, allocation.unit
     )
     app.jinja_env.globals["allocation_need_summary"] = lambda allocation: shopping_service.need_purchase_remaining_summary(
+        allocation.shopping_list, allocation.ingredient_id, allocation.unit
+    )
+    app.jinja_env.globals["allocation_requested_by"] = lambda allocation: shopping_service.ingredient_requested_by(
         allocation.shopping_list, allocation.ingredient_id, allocation.unit
     )
 
@@ -272,6 +275,55 @@ def create_app(config: AppConfig | None = None) -> Flask:
                     ),
                     400,
                 )
+
+        return redirect(url_for("list_detail", list_id=list_id))
+
+    @app.get("/liste/<int:list_id>/position-hinzufuegen")
+    def add_manual_item_form(list_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+            ingredient_names = [i.name for i in ingredient_service.search_ingredients(db_session, active_only=False)]
+            return render_template(
+                "add_item.html", shopping_list=shopping_list, ingredient_names=ingredient_names, error=None
+            )
+
+    @app.post("/liste/<int:list_id>/position-hinzufuegen")
+    def add_manual_item_submit(list_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            if shopping_list is None:
+                abort(404)
+
+            name = (request.form.get("name") or "").strip()
+            unit = (request.form.get("unit") or "").strip() or None
+            requested_by = (request.form.get("gewuenscht_von") or "").strip() or None
+            raw_quantity = request.form.get("menge")
+            try:
+                quantity = Decimal(raw_quantity) if raw_quantity else None
+            except InvalidOperation:
+                quantity = None
+
+            error = None
+            if not name:
+                error = "Bitte einen Namen eingeben."
+            elif quantity is None or quantity <= 0:
+                error = "Bitte eine gültige Menge eingeben."
+
+            if error:
+                ingredient_names = [i.name for i in ingredient_service.search_ingredients(db_session, active_only=False)]
+                return (
+                    render_template(
+                        "add_item.html", shopping_list=shopping_list, ingredient_names=ingredient_names, error=error
+                    ),
+                    400,
+                )
+
+            ingredient = ingredient_service.find_or_create_ingredient(db_session, name=name, default_unit=unit)
+            shopping_service.add_manual_shopping_item(
+                db_session, shopping_list, ingredient=ingredient, quantity=quantity, unit=unit, requested_by=requested_by
+            )
 
         return redirect(url_for("list_detail", list_id=list_id))
 

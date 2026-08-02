@@ -270,3 +270,49 @@ def test_status_endpoint_respects_person_filter(tmp_path, monkeypatch):
 
     for_ben = client.get(f"/liste/{list_id}/status?person=Ben")
     assert for_ben.get_json()["positionen"] == []
+
+
+def test_add_manual_item_form_and_submit(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id = _seed_shopping_list(config)
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    form = client.get(f"/liste/{list_id}/position-hinzufuegen")
+    assert form.status_code == 200
+
+    submit = client.post(
+        f"/liste/{list_id}/position-hinzufuegen",
+        data={"name": "Sonnencreme", "menge": "1", "unit": "Stk", "gewuenscht_von": "Björn"},
+        follow_redirects=True,
+    )
+    assert submit.status_code == 200
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingList
+        from app.services import shopping_service as shopping_service_module
+
+        shopping_list = session.get(ShoppingList, list_id)
+        manual_items = [item for item in shopping_list.items if shopping_service_module.is_manual_item(item)]
+        assert len(manual_items) == 1
+        assert manual_items[0].ingredient.name == "Sonnencreme"
+        assert manual_items[0].requested_by == "Björn"
+
+
+def test_add_manual_item_submit_rejects_missing_name(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id = _seed_shopping_list(config)
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.post(
+        f"/liste/{list_id}/position-hinzufuegen",
+        data={"name": "", "menge": "1", "unit": "Stk"},
+    )
+    assert response.status_code == 400

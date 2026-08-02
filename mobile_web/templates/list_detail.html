@@ -16,11 +16,18 @@
     </div>
   </div>
 
-  <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}" style="text-decoration:none;">
-    <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
-      + Einkauf planen
-    </div>
-  </a>
+  <div style="display:flex; gap:0.6rem;">
+    <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}" style="text-decoration:none; flex:1;">
+      <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
+        + Einkauf planen
+      </div>
+    </a>
+    <a href="{{ url_for('add_manual_item_form', list_id=shopping_list.id) }}" style="text-decoration:none; flex:1;">
+      <div class="karte" style="padding: 0.8rem 1rem; text-align:center; font-weight:600; color: var(--grün);">
+        + Position hinzufügen
+      </div>
+    </a>
+  </div>
 
   {% if persons %}
     <div style="display:flex; gap: 0.4rem; overflow-x:auto; padding: 0.2rem 0 0.6rem;">
@@ -62,6 +69,10 @@
             <span style="color: var(--text-schwach);">— {{ allocation.quantity|menge }} {{ allocation.unit or "" }}</span>
             {% if allocation.assigned_to %}
               <span style="font-size: 0.72rem; background: var(--grün-hell); color: var(--grün); padding: 0.1rem 0.4rem; border-radius: 999px; margin-left: 0.3rem;">{{ allocation.assigned_to }}</span>
+            {% endif %}
+            {% set requested_by = allocation_requested_by(allocation) %}
+            {% if requested_by %}
+              <span style="font-size: 0.72rem; color: #b5651d; margin-left: 0.3rem;">Sonderwunsch ({{ requested_by }})</span>
             {% endif %}
             {% set recipes = allocation_recipes(allocation) %}
             {% if recipes %}

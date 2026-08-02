@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Position hinzufügen{% endblock %}
+{% block body %}
+<header>
+  <h1>Position hinzufügen</h1>
+  <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}">Zurück</a>
+</header>
+<main>
+  {% if error %}
+    <div class="karte" style="padding: 0.9rem 1rem; color: #c0392b;">{{ error }}</div>
+  {% endif %}
+
+  <div class="karte" style="padding: 0.9rem 1rem; color: var(--text-schwach); font-size: 0.85rem;">
+    Für spontane Sonderwünsche oder Sachen, die nicht aus dem Wochenplan kommen (z. B. Non-Food).
+  </div>
+
+  <form method="post" action="{{ url_for('add_manual_item_submit', list_id=shopping_list.id) }}">
+    <div class="karte" style="padding: 0.9rem 1rem;">
+      <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Was?</label>
+      <input name="name" required list="zutaten-liste" placeholder="z. B. Sonnencreme"
+        style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text); margin-bottom:0.8rem;">
+      <datalist id="zutaten-liste">
+        {% for name in ingredient_names %}
+          <option value="{{ name }}">
+        {% endfor %}
+      </datalist>
+
+      <div style="display:flex; gap:0.6rem; margin-bottom:0.8rem;">
+        <div style="flex:1;">
+          <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Menge</label>
+          <input type="number" step="0.001" min="0.001" name="menge" required value="1"
+            style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+        </div>
+        <div style="flex:1;">
+          <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Einheit</label>
+          <input name="unit" placeholder="z. B. Stk, kg"
+            style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+        </div>
+      </div>
+
+      <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Gewünscht von</label>
+      <input name="gewuenscht_von" placeholder="z. B. Björn (optional)"
+        style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+    </div>
+
+    <button type="submit" style="width:100%; margin-top:1rem; padding:0.9rem; font-size:1.05rem; font-weight:600; border:none; border-radius:10px; background: var(--grün); color:#fff;">
+      Position hinzufügen
+    </button>
+  </form>
+</main>
+{% endblock %}

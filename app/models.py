@@ -51,6 +51,10 @@ class Ingredient(Base):
     # Gecachte Anzeige des verknuepften Produkts (z. B. "Ketchup (Jardin bio, 560 g)"), damit die UI
     # das nicht bei jedem Laden erneut ueber die API nachschlagen muss.
     barcode_product_label: Mapped[Optional[str]] = mapped_column(String(255))
+    # Freitext-Kategorie (kein starres Enum, siehe docs/data_model.md) - v.a. fuer den
+    # reservierten Wert "Non-Food": blendet die Zutat aus dem Rezept-Zutaten-Picker aus (Non-Food
+    # gehoert nicht in ein Rezept), taucht aber weiterhin in der Einkaufsliste normal auf.
+    category: Mapped[Optional[str]] = mapped_column(String(100))
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 
@@ -61,6 +65,9 @@ class Ingredient(Base):
     )
     recipe_links: Mapped[list["RecipeIngredient"]] = relationship(back_populates="ingredient")
     shopping_items: Mapped[list["ShoppingListItem"]] = relationship(back_populates="ingredient")
+
+
+NON_FOOD_CATEGORY = "Non-Food"
 
 
 class IngredientAlias(Base):
@@ -128,6 +135,30 @@ class IngredientPriceProfile(Base):
 
     ingredient: Mapped["Ingredient"] = relationship(back_populates="price_profile")
     category: Mapped[Optional["OpenPricesCategory"]] = relationship(back_populates="ingredient_profiles")
+
+
+class StandardShoppingItem(Base):
+    """Vorlage fuer eine wiederkehrende Position (typischerweise Non-Food/Verbrauchsmittel wie
+    Muellsaecke, Batterien, Grillkohle), die bei jeder generate_shopping_list()-Ausfuehrung
+    automatisch mit in die neue Einkaufsliste uebernommen wird - dauerhaft in der DB verwaltet,
+    nicht nur pro Einkaufsliste, damit sich der Bedarf jahresuebergreifend pflegen laesst."""
+
+    __tablename__ = "standard_shopping_items"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True)
+    ingredient_id: Mapped[int] = mapped_column(ForeignKey("ingredients.id"), nullable=False, index=True)
+    default_quantity: Mapped[Decimal] = mapped_column(Numeric(10, 3), nullable=False)
+    default_unit: Mapped[Optional[str]] = mapped_column(String(50))
+    active: Mapped[bool] = mapped_column(Boolean, default=True, nullable=False)
+    # Freitext-Hinweis zum ueblichen Lagerbestand (z. B. "meist noch ~3 Rollen da") - bewusst nur
+    # Anzeige/Hinweis, KEINE automatische Mengen-Verrechnung (siehe docs/ux_feature_roadmap.md,
+    # F5: echte Bestandsfuehrung ohne tatsaechliche Zaehlungen wuerde falsche Sicherheit vortaeuschen).
+    typical_stock_note: Mapped[Optional[str]] = mapped_column(String(255))
+    notes: Mapped[Optional[str]] = mapped_column(Text)
+    created_at: Mapped[datetime] = created_timestamp_column()
+    updated_at: Mapped[datetime] = updated_timestamp_column()
+
+    ingredient: Mapped["Ingredient"] = relationship()
 
 
 class Recipe(Base):
@@ -374,7 +405,13 @@ class ShoppingListItem(Base):
     # bereits laufenden Deployments in eine Allocation zu ueberfuehren.
     store: Mapped[Optional[str]] = mapped_column(String(255))
     status: Mapped[Optional[str]] = mapped_column(String(50))
+    # Nur bei generate_shopping_list() (Rezept-Aggregation) gesetzt, garantiert nicht-leer fuer
+    # jede rezeptbasierte Position - siehe shopping_service.is_manual_item(). Manuell
+    # hinzugefuegte/Standard-Positionen haben hier bewusst None, NICHT als Fehlerzustand.
     linked_recipes_text: Mapped[Optional[str]] = mapped_column(Text)
+    # Freitext, wer eine manuell hinzugefuegte Position gewuenscht hat (z. B. "Björn") - gleiches
+    # Muster wie MealPlanEntry/CampDay.responsible_person. Bei rezeptbasierten Positionen leer.
+    requested_by: Mapped[Optional[str]] = mapped_column(String(255))
     notes: Mapped[Optional[str]] = mapped_column(Text)
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()

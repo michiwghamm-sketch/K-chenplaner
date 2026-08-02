@@ -16,6 +16,7 @@ from app.models import (
     ShoppingListItem,
     ShoppingListItemAllocation,
     ShoppingTrip,
+    StandardShoppingItem,
 )
 from app.services import shopping_service
 
@@ -773,3 +774,127 @@ def test_deleting_single_shopping_list_item_keeps_allocation(session_factory) ->
         allocation = session.get(ShoppingListItemAllocation, allocation_id)
         assert allocation is not None
         assert allocation.quantity == Decimal("20.000")
+
+
+def test_generate_shopping_list_includes_active_standard_items_only(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        muellsaecke = Ingredient(name="Müllsäcke 60L", normalized_name="muellsaecke 60l", default_unit="Stk")
+        batterien = Ingredient(name="Batterien AAA", normalized_name="batterien aaa", default_unit="Stk")
+        session.add_all([camp_year, muellsaecke, batterien])
+        session.flush()
+        session.add(StandardShoppingItem(ingredient=muellsaecke, default_quantity=Decimal("2.000"), default_unit="Stk", active=True))
+        session.add(StandardShoppingItem(ingredient=batterien, default_quantity=Decimal("4.000"), default_unit="Stk", active=False))
+        camp_year_id = camp_year.id
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year)
+        names = {item.ingredient.name: item for item in shopping_list.items if item.ingredient}
+        assert "Müllsäcke 60L" in names
+        assert "Batterien AAA" not in names
+        muellsaecke_item = names["Müllsäcke 60L"]
+        assert muellsaecke_item.quantity == Decimal("2.000")
+        assert shopping_service.is_manual_item(muellsaecke_item) is True
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, include_standard_items=False)
+        names = {item.ingredient.name for item in shopping_list.items if item.ingredient}
+        assert "Müllsäcke 60L" not in names
+
+
+def test_add_manual_shopping_item_creates_unrecipe_position(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, sonnencreme.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ingredient = session.get(Ingredient, ingredient_id)
+        item = shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=ingredient, quantity=Decimal("1"), unit="Stk", requested_by="Björn"
+        )
+        assert shopping_service.is_manual_item(item) is True
+        assert item.requested_by == "Björn"
+        assert item.linked_recipes_text is None
+
+        # Taucht ganz normal in der Planung auf und laesst sich per "Einkauf planen" zuteilen.
+        plannable = shopping_service.items_available_for_planning(shopping_list)
+        assert any(group.ingredient_id == ingredient_id for group in plannable)
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(ingredient_id, "Stk", Decimal("1"))]
+        )
+        assert len(trip.allocations) == 1
+
+        with pytest.raises(ValueError):
+            shopping_service.add_manual_shopping_item(session, shopping_list, ingredient=ingredient, quantity=Decimal("0"), unit="Stk")
+
+
+def test_previous_year_quantity_finds_latest_prior_year(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
+        session.add(karotten)
+        session.flush()
+        ingredient_id = karotten.id
+
+        year_2024 = CampYear(year=2024, name="Zeltlager 2024")
+        list_2024 = ShoppingList(name="Einkaufsliste 2024", camp_year=year_2024)
+        list_2024.items.append(ShoppingListItem(ingredient=karotten, quantity=Decimal("10.000"), unit="kg"))
+
+        year_2025 = CampYear(year=2025, name="Zeltlager 2025")
+        list_2025 = ShoppingList(name="Einkaufsliste 2025", camp_year=year_2025)
+        list_2025.items.append(ShoppingListItem(ingredient=karotten, quantity=Decimal("15.000"), unit="kg"))
+
+        year_2026 = CampYear(year=2026, name="Zeltlager 2026")
+
+        session.add_all([year_2024, list_2024, year_2025, list_2025, year_2026])
+        session.flush()
+        year_2026_id = year_2026.id
+
+    with session_scope(session_factory) as session:
+        camp_year_2026 = session.get(CampYear, year_2026_id)
+        # Nimmt das letzte Jahr MIT Daten (2025), nicht eine Summe ueber alle Vorjahre.
+        assert shopping_service.previous_year_quantity(session, camp_year_2026, ingredient_id, "kg") == Decimal("15.000")
+        assert shopping_service.previous_year_quantity(session, camp_year_2026, ingredient_id, "l") is None
+
+    with session_scope(session_factory) as session:
+        camp_year_2024 = session.get(CampYear, session.execute(select(CampYear).where(CampYear.year == 2024)).scalar_one().id)
+        assert shopping_service.previous_year_quantity(session, camp_year_2024, ingredient_id, "kg") is None
+
+
+def test_standard_item_crud(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Grillkohle", normalized_name="grillkohle", default_unit="kg")
+        session.add(ingredient)
+        session.flush()
+        item = shopping_service.create_standard_item(
+            session, ingredient=ingredient, default_quantity=Decimal("12.000"), default_unit="kg", typical_stock_note="meist noch 3kg da"
+        )
+        item_id = item.id
+
+        with pytest.raises(ValueError):
+            shopping_service.create_standard_item(session, ingredient=ingredient, default_quantity=Decimal("0"), default_unit="kg")
+
+    with session_scope(session_factory) as session:
+        items = shopping_service.list_standard_items(session)
+        assert len(items) == 1 and items[0].id == item_id
+
+        item = session.get(StandardShoppingItem, item_id)
+        shopping_service.update_standard_item(item, active=False)
+        session.flush()
+        assert shopping_service.list_standard_items(session, active_only=True) == []
+
+    with session_scope(session_factory) as session:
+        item = session.get(StandardShoppingItem, item_id)
+        shopping_service.delete_standard_item(session, item)
+
+    with session_scope(session_factory) as session:
+        assert shopping_service.list_standard_items(session) == []
