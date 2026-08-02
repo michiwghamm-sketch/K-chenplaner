@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QGridLayout, QHBoxLayout, QLabel, QLineEdit, QSizePolicy, QVBoxLayout, QWidget
 
 from app.ui.theme import BORDER, BORDER_STRONG, ORANGE, TEXT_MUTED
 
@@ -158,13 +158,20 @@ class RankingEntry:
 class RankingList(QWidget):
     """Lesbare Rangliste: Name links (voller Text, kein abgeschnittenes Achsen-Label), ein
     proportionaler Balken und der Wert rechts. Ersetzt QtChart-Balkendiagramme mit
-    Kategorie-Achse, deren Beschriftungen bei vielen/langen Namen unlesbar werden."""
+    Kategorie-Achse, deren Beschriftungen bei vielen/langen Namen unlesbar werden.
+
+    Mit columns=2 (o. mehr) werden die Eintraege statt einer langen Einzelspalte in ein Raster
+    mit mehreren Spalten gesetzt - spart bei vielen Eintraegen deutlich vertikalen Platz."""
 
     BAR_TRACK_WIDTH = 140
     BAR_HEIGHT = 12
 
-    def __init__(self, parent: QWidget | None = None) -> None:
+    def __init__(self, parent: QWidget | None = None, *, columns: int = 1) -> None:
         super().__init__(parent)
+        self._columns = max(1, columns)
+        # Schmalerer Balken bei mehrspaltiger Darstellung, damit pro Spalte noch genug Platz
+        # fuer den Namen bleibt.
+        self._bar_track_width = self.BAR_TRACK_WIDTH if self._columns == 1 else 90
         self._layout = QVBoxLayout(self)
         self._layout.setContentsMargins(0, 0, 0, 0)
         self._layout.setSpacing(8)
@@ -184,35 +191,49 @@ class RankingList(QWidget):
             return
 
         max_value = max((entry.value for entry in entries), default=0) or 1
-        for entry in entries:
-            row = QHBoxLayout()
-            row.setSpacing(8)
 
-            name_label = QLabel(entry.label, self)
-            name_label.setWordWrap(True)
-            name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
-            row.addWidget(name_label, stretch=1)
+        if self._columns > 1:
+            grid = QGridLayout()
+            grid.setHorizontalSpacing(24)
+            grid.setVerticalSpacing(8)
+            for index, entry in enumerate(entries):
+                grid.addLayout(
+                    self._build_entry_row(entry, max_value), index // self._columns, index % self._columns
+                )
+            self._layout.addLayout(grid)
+        else:
+            for entry in entries:
+                self._layout.addLayout(self._build_entry_row(entry, max_value))
 
-            track = QWidget(self)
-            track.setFixedSize(self.BAR_TRACK_WIDTH, self.BAR_HEIGHT)
-            track.setStyleSheet(f"background-color: {BORDER}; border-radius: 3px;")
-            bar_width = max(4, int(self.BAR_TRACK_WIDTH * entry.value / max_value))
-            bar = QWidget(track)
-            bar.setGeometry(0, 0, bar_width, self.BAR_HEIGHT)
-            bar.setStyleSheet(f"background-color: {entry.color}; border-radius: 3px;")
-            row.addWidget(track)
-            # Explizit vertikal zentrieren statt dem Layout-Default zu vertrauen - bei einem auf
-            # mehrere Zeilen umgebrochenen (langen) Namen soll der schmale Balken/Wert mittig
-            # neben dem Namen stehen, nicht an einer Kante kleben.
-            row.setAlignment(track, Qt.AlignmentFlag.AlignVCenter)
+    def _build_entry_row(self, entry: RankingEntry, max_value: float) -> QHBoxLayout:
+        row = QHBoxLayout()
+        row.setSpacing(8)
 
-            value_label = QLabel(entry.value_text, self)
-            value_label.setMinimumWidth(64)
-            value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
-            row.addWidget(value_label)
-            row.setAlignment(value_label, Qt.AlignmentFlag.AlignVCenter)
+        name_label = QLabel(entry.label, self)
+        name_label.setWordWrap(True)
+        name_label.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Preferred)
+        row.addWidget(name_label, stretch=1)
 
-            self._layout.addLayout(row)
+        track = QWidget(self)
+        track.setFixedSize(self._bar_track_width, self.BAR_HEIGHT)
+        track.setStyleSheet(f"background-color: {BORDER}; border-radius: 3px;")
+        bar_width = max(4, int(self._bar_track_width * entry.value / max_value))
+        bar = QWidget(track)
+        bar.setGeometry(0, 0, bar_width, self.BAR_HEIGHT)
+        bar.setStyleSheet(f"background-color: {entry.color}; border-radius: 3px;")
+        row.addWidget(track)
+        # Explizit vertikal zentrieren statt dem Layout-Default zu vertrauen - bei einem auf
+        # mehrere Zeilen umgebrochenen (langen) Namen soll der schmale Balken/Wert mittig
+        # neben dem Namen stehen, nicht an einer Kante kleben.
+        row.setAlignment(track, Qt.AlignmentFlag.AlignVCenter)
+
+        value_label = QLabel(entry.value_text, self)
+        value_label.setMinimumWidth(56)
+        value_label.setAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(value_label)
+        row.setAlignment(value_label, Qt.AlignmentFlag.AlignVCenter)
+
+        return row
 
     def _clear_layout(self, layout) -> None:
         while layout.count():

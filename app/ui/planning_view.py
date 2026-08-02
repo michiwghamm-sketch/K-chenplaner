@@ -7,7 +7,6 @@ from xml.sax.saxutils import escape
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QAbstractItemView,
-    QCheckBox,
     QComboBox,
     QFileDialog,
     QFrame,
@@ -31,19 +30,19 @@ from app.ui.dialogs import CampYearDialog, DayResponsibleDialog, MealSlotDialog,
 from app.ui.theme import ORANGE, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, RankingEntry, RankingList
 
-ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES + ("Auswertung",)
-# "Verantwortlich" ist mit Abstand das laengste Label (14 Zeichen) und bestimmt dadurch allein
-# die Breite der Zeilenkopf-Spalte - in der kompakten Ansicht gekuerzte Varianten (max. 9
-# Zeichen), damit der Zeilenkopf spuerbar weniger Platz beansprucht (siehe _apply_row_headers()).
-ROW_LABELS_COMPACT = ("Verantw.", "Frühstück", "Mittag", "Abend", "Auswert.")
-# Bei ~9 Lagertagen (typischer Zeitraum Samstag bis uebernaechsten Sonntag) passt die Woche mit
-# der normalen Breite auf einem Laptop-Bildschirm nicht ohne horizontales Scrollen ins Fenster -
-# die "Kompakte Ansicht"-Checkbox (siehe _toggle_compact_view) schaltet auf DAY_COLUMN_WIDTH_COMPACT um.
-DAY_COLUMN_WIDTH_NORMAL = 210
-DAY_COLUMN_WIDTH_COMPACT = 100
-# Laenge, auf die Rezeptnamen in der kompakten Ansicht gekuerzt werden (Rest im Tooltip) -
-# siehe _build_dish_cell().
-COMPACT_NAME_MAX_LENGTH = 14
+# Eigene, kurze Anzeige-Beschriftungen statt der vollen planning_service.DEFAULT_MEAL_TYPES-Werte
+# ("Mittagessen"/"Abendessen") - "Verantwortlich" allein wuerde sonst per ResizeToContents die
+# Zeilenkopf-Spalte auf ~210px aufblaehen (gemessen), was Tagesspalten Platz wegnimmt. Reihenfolge/
+# Laenge (5 Eintraege) muss zu ROW_LABELS passen, die tatsaechlichen Mahlzeit-Werte in der DB
+# kommen weiterhin aus planning_service.DEFAULT_MEAL_TYPES (siehe _on_cell_double_clicked).
+ROW_LABELS = ("Verantw.", "Frühstück", "Mittag", "Abend", "Auswert.")
+# Bei ~9 Lagertagen (typischer Zeitraum Samstag bis uebernaechsten Sonntag) passt eine breite
+# Tagesspalte nicht ohne horizontales Scrollen auf einen Laptop-Bildschirm. Bewusst durchgehend
+# schmal + Wortumbruch (mehr Zeilen, dafuer volle Information sichtbar) statt eines Umschalters
+# zwischen "normal" und "kompakt" - das war vorher komplizierter als noetig und half trotzdem
+# nicht zuverlaessig. Zeilenhoehe waechst automatisch mit (siehe _resize_rows_to_content).
+DAY_COLUMN_WIDTH = 95
+DAY_COLUMN_MIN_WIDTH = 60
 
 
 class PlanningView(QWidget):
@@ -53,24 +52,10 @@ class PlanningView(QWidget):
         super().__init__(parent)
         self.context = context
         self._day_dates: list[date] = []
-        self._compact_view: bool = False
         self._build_ui()
         self.refresh()
 
-    @property
-    def _day_column_width(self) -> int:
-        return DAY_COLUMN_WIDTH_COMPACT if self._compact_view else DAY_COLUMN_WIDTH_NORMAL
-
     def _build_ui(self) -> None:
-        # Bewusst KEIN QScrollArea um die ganze Seite (wie z. B. DashboardView): die Tabelle
-        # braucht ihre eigene, durch die verfuegbare Breite begrenzte Spaltenbreite, damit sie
-        # bei zu vielen Tagesspalten ihren EIGENEN horizontalen Scrollbalken zeigt. Ein
-        # aussenliegendes QScrollArea wuerde die Tabelle stattdessen auf ihre volle
-        # Wunschbreite wachsen lassen (die Seite selbst wird dann breiter statt nur die Tabelle
-        # intern zu scrollen) - das macht die Sache schlimmer, nicht besser. Stattdessen bekommt
-        # unten nur die potenziell lange "Gerichte nach Preis"-Liste ihr eigenes, hoehenbegrenztes
-        # Scroll-Feld (weiter unten in dieser Methode), damit sie bei vielen Rezepten nicht
-        # kommentarlos am Fensterrand abgeschnitten wird.
         layout = QVBoxLayout(self)
         layout.addWidget(
             PageHeader("Wochenplan", "Zeltlagerwoche planen: Tagesverantwortliche und Mahlzeiten je Tag")
@@ -96,13 +81,6 @@ class PlanningView(QWidget):
         top_row.addWidget(generate_button)
         top_row.addWidget(export_plan_button)
         top_row.addWidget(export_recipes_button)
-        self.compact_checkbox = QCheckBox("Kompakte Ansicht", self)
-        self.compact_checkbox.setToolTip(
-            "Schmalere Tagesspalten, damit eine ganze Lagerwoche ohne horizontales Scrollen "
-            "ins Fenster passt."
-        )
-        self.compact_checkbox.toggled.connect(self._toggle_compact_view)
-        top_row.addWidget(self.compact_checkbox)
         top_row.addStretch(1)
         layout.addLayout(top_row)
 
@@ -111,15 +89,22 @@ class PlanningView(QWidget):
         layout.addWidget(hint)
 
         self.table = QTableWidget(len(ROW_LABELS), 0, self)
+        self.table.setVerticalHeaderLabels(list(ROW_LABELS))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setDefaultSectionSize(self._day_column_width)
-        self.table.horizontalHeader().setMinimumSectionSize(self._day_column_width)
+        self.table.horizontalHeader().setDefaultSectionSize(DAY_COLUMN_WIDTH)
+        # Bewusst kleiner als die Default-Breite, nicht gleich gross - erlaubt manuelles
+        # Schmalerziehen per Maus, ohne die Startbreite selbst zu beeinflussen.
+        self.table.horizontalHeader().setMinimumSectionSize(DAY_COLUMN_MIN_WIDTH)
         # Wenn eine Spalte breiter/schmaler gezogen wird, muessen die (wortumbruchbehafteten)
         # Zellen neu umgebrochen und die Zeilenhoehen entsprechend angepasst werden.
         self.table.horizontalHeader().sectionResized.connect(self._on_column_resized)
         self.table.verticalHeader().setSectionResizeMode(QHeaderView.ResizeMode.ResizeToContents)
         self.table.verticalHeader().setMinimumSectionSize(48)
-        self._apply_row_headers()
+        # Ohne feste Breite wuerde ResizeToContents den Zeilenkopf am laengsten Label bemessen -
+        # aus der tatsaechlichen Schriftbreite berechnet statt hartcodiert, damit es auch bei
+        # anderer System-/Schriftgroesse passt.
+        row_header_width = self.table.fontMetrics().horizontalAdvance(max(ROW_LABELS, key=len)) + 28
+        self.table.verticalHeader().setFixedWidth(row_header_width)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self.table.cellDoubleClicked.connect(self._on_cell_double_clicked)
         layout.addWidget(self.table)
@@ -133,15 +118,16 @@ class PlanningView(QWidget):
         cost_ranking_hint.setStyleSheet(f"color: {TEXT_MUTED};")
         layout.addWidget(cost_ranking_hint)
 
-        # Eigenes, hoehenbegrenztes Scroll-Feld nur fuer die Rangliste (nicht die ganze Seite,
-        # siehe Kommentar in _build_ui) - bei vielen im Camp-Jahr geplanten Rezepten wuerde die
-        # Liste sonst entweder das Fenster sprengen oder kommentarlos abgeschnitten werden.
+        # Eigenes, hoehenbegrenztes Scroll-Feld nur fuer die Rangliste (nicht die ganze Seite) -
+        # bei vielen im Camp-Jahr geplanten Rezepten wuerde die Liste sonst entweder das Fenster
+        # sprengen oder kommentarlos abgeschnitten werden. Zweispaltig (columns=2), damit sie bei
+        # vielen Rezepten nicht unnoetig hoch wird.
         ranking_scroll = QScrollArea(self)
         ranking_scroll.setWidgetResizable(True)
         ranking_scroll.setFrameShape(QFrame.Shape.NoFrame)
         ranking_scroll.setMaximumHeight(320)
         ranking_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.cost_ranking = RankingList(ranking_scroll)
+        self.cost_ranking = RankingList(ranking_scroll, columns=2)
         ranking_scroll.setWidget(self.cost_ranking)
         layout.addWidget(ranking_scroll)
 
@@ -173,7 +159,6 @@ class PlanningView(QWidget):
         camp_year_id = self.context.current_camp_year_id
         self._day_dates = []
         self.table.setColumnCount(0)
-        self._apply_row_headers()
 
         if camp_year_id is not None:
             with self.context.session() as session:
@@ -209,15 +194,6 @@ class PlanningView(QWidget):
         ]
         self.cost_ranking.set_entries(entries)
 
-    def _apply_row_headers(self) -> None:
-        """Setzt Zeilenkopf-Beschriftungen und -Breite passend zur aktuellen Ansicht (normal/
-        kompakt). Aus der tatsaechlichen Schriftbreite des jeweils laengsten Labels berechnet
-        statt hartcodiert, damit es auch bei anderer System-/Schriftgroesse passt."""
-        labels = ROW_LABELS_COMPACT if self._compact_view else ROW_LABELS
-        self.table.setVerticalHeaderLabels(list(labels))
-        row_header_width = self.table.fontMetrics().horizontalAdvance(max(labels, key=len)) + 28
-        self.table.verticalHeader().setFixedWidth(row_header_width)
-
     def _populate_grid(self, session, camp_year: CampYear) -> None:
         self._day_dates = planning_service.camp_day_range(camp_year)
         self.table.setColumnCount(len(self._day_dates))
@@ -225,7 +201,7 @@ class PlanningView(QWidget):
             [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
         )
         for col in range(len(self._day_dates)):
-            self.table.setColumnWidth(col, self._day_column_width)
+            self.table.setColumnWidth(col, DAY_COLUMN_WIDTH)
 
         # Preise fuer alle in dieser Woche geplanten Rezepte einmalig vorladen (nicht pro Tag),
         # sonst fragt day_summary() unten fuer jede Zutat jedes Tages einzeln nach.
@@ -249,7 +225,7 @@ class PlanningView(QWidget):
 
             for row, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES, start=1):
                 dishes = planning_service.meal_entries_for_slot(camp_year, day, meal_type)
-                label = self._build_dish_cell(dishes, compact=self._compact_view)
+                label = self._build_dish_cell(dishes)
                 self.table.setCellWidget(row, col, label)
 
             summary = planning_service.day_summary(session, camp_year, day, price_lookup=price_lookup)
@@ -259,15 +235,6 @@ class PlanningView(QWidget):
     def _on_column_resized(self, *_args: object) -> None:
         self._resize_rows_to_content()
         self._update_table_fixed_height()
-
-    def _toggle_compact_view(self, checked: bool) -> None:
-        self._compact_view = checked
-        header = self.table.horizontalHeader()
-        header.setMinimumSectionSize(self._day_column_width)
-        header.setDefaultSectionSize(self._day_column_width)
-        # Voller Reload statt nur Spalten neu zu vermessen: die kompakte Ansicht kuerzt auch den
-        # Zellinhalt selbst (siehe _build_dish_cell), nicht nur die Spaltenbreite.
-        self._reload_grid()
 
     def _resize_rows_to_content(self) -> None:
         """Zeilenhoehe je Zeile aus dem tatsaechlichen Platzbedarf (mit Wortumbruch) aller
@@ -302,69 +269,40 @@ class PlanningView(QWidget):
             total_height += self.table.rowHeight(row)
         self.table.setFixedHeight(total_height)
 
-    def _build_dish_cell(self, dishes: list[MealPlanEntry], *, compact: bool) -> QLabel:
+    def _build_dish_cell(self, dishes: list[MealPlanEntry]) -> QLabel:
         lines = []
-        tooltip_lines = []
         for entry in dishes:
             if entry.recipe is None:
                 if entry.status == planning_service.NO_MEAL_STATUS:
                     lines.append(f'<span style="color:{TEXT_MUTED};">– keine Mahlzeit –</span>')
                 continue
-
-            full_name = entry.recipe.name
-            if compact:
-                # Kompakte Ansicht zeigt nur Name (gekuerzt) + Portionen einzeilig -
-                # Zielgruppe/Ernaehrungsart nur noch im Tooltip. Sonst passt keine ganze
-                # Lagerwoche ohne horizontales Scrollen ins Fenster (siehe DAY_COLUMN_WIDTH_COMPACT).
-                shown_name = (
-                    full_name
-                    if len(full_name) <= COMPACT_NAME_MAX_LENGTH
-                    else full_name[: COMPACT_NAME_MAX_LENGTH - 1] + "…"
-                )
-                text = escape(shown_name)
-                if entry.planned_portions:
-                    text += f" ({entry.planned_portions})"
-            else:
-                text = escape(full_name)
-                if entry.planned_portions:
-                    text += f" ({entry.planned_portions})"
-                if entry.target_group:
-                    text += f" · {escape(entry.target_group)}"
-                if entry.diet_scope and entry.diet_scope != "Alle":
-                    text += f" · {escape(entry.diet_scope)}"
-
-            tooltip_text = full_name
+            text = escape(entry.recipe.name)
             if entry.planned_portions:
-                tooltip_text += f" ({entry.planned_portions} Portionen)"
+                text += f" ({entry.planned_portions})"
             if entry.target_group:
-                tooltip_text += f" · {entry.target_group}"
+                text += f" · {escape(entry.target_group)}"
             if entry.diet_scope and entry.diet_scope != "Alle":
-                tooltip_text += f" · {entry.diet_scope}"
+                text += f" · {escape(entry.diet_scope)}"
 
             if entry.status == "abgesagt":
                 lines.append(f'<span style="color:{TEXT_MUTED};">{text} (abgesagt)</span>')
-                tooltip_lines.append(f"{tooltip_text} (abgesagt)")
                 continue
             if not entry.planned_portions:
                 lines.append(f'<span style="color:{COLOR_CRITICAL};">{text}</span>')
-                tooltip_lines.append(f"{tooltip_text} - Portionenzahl fehlt")
                 continue
             color = DIET_TYPE_COLORS.get(entry.recipe.diet_type or "")
             if color:
                 lines.append(f'<span style="color:{color};">{text}</span>')
             else:
                 lines.append(text)
-            tooltip_lines.append(tooltip_text)
 
         label = QLabel("<br>".join(lines), self.table)
-        # Wortumbruch nur in der normalen Ansicht - in der kompakten Ansicht ist der Name schon
-        # gekuerzt, Umbruch wuerde die Zeilenhoehe unnoetig aufblaehen. Die Zeilenhoehe wird in
-        # _resize_rows_to_content() passend zur jeweiligen Einstellung berechnet.
-        label.setWordWrap(not compact)
+        # Wortumbruch aktiv, damit lange Gerichtnamen bei der schmalen Spaltenbreite nicht
+        # abgeschnitten werden - die Zeilenhoehe wird in _resize_rows_to_content() passend dazu
+        # berechnet (waechst automatisch mit, statt die Spalte breiter zu machen).
+        label.setWordWrap(True)
         label.setMargin(4)
         label.setContentsMargins(4, 2, 4, 2)
-        if compact and tooltip_lines:
-            label.setToolTip("\n".join(tooltip_lines))
         return label
 
     def _build_summary_cell(self, summary: "planning_service.DaySummary") -> QLabel:
