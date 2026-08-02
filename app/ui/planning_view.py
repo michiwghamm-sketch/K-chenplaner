@@ -6,6 +6,7 @@ from xml.sax.saxutils import escape
 
 from PySide6.QtWidgets import (
     QAbstractItemView,
+    QCheckBox,
     QComboBox,
     QFileDialog,
     QHBoxLayout,
@@ -28,7 +29,11 @@ from app.ui.theme import ORANGE, TEXT_MUTED
 from app.ui.widgets import COLOR_CRITICAL, DIET_TYPE_COLORS, PageHeader, RankingEntry, RankingList
 
 ROW_LABELS = ("Verantwortlich",) + planning_service.DEFAULT_MEAL_TYPES + ("Auswertung",)
-DAY_COLUMN_WIDTH = 210
+# Bei ~9 Lagertagen (typischer Zeitraum Samstag bis uebernaechsten Sonntag) passt die Woche mit
+# der normalen Breite auf einem Laptop-Bildschirm nicht ohne horizontales Scrollen ins Fenster -
+# die "Kompakte Ansicht"-Checkbox (siehe _toggle_compact_view) schaltet auf DAY_COLUMN_WIDTH_COMPACT um.
+DAY_COLUMN_WIDTH_NORMAL = 210
+DAY_COLUMN_WIDTH_COMPACT = 130
 
 
 class PlanningView(QWidget):
@@ -38,8 +43,13 @@ class PlanningView(QWidget):
         super().__init__(parent)
         self.context = context
         self._day_dates: list[date] = []
+        self._compact_view: bool = False
         self._build_ui()
         self.refresh()
+
+    @property
+    def _day_column_width(self) -> int:
+        return DAY_COLUMN_WIDTH_COMPACT if self._compact_view else DAY_COLUMN_WIDTH_NORMAL
 
     def _build_ui(self) -> None:
         layout = QVBoxLayout(self)
@@ -67,6 +77,13 @@ class PlanningView(QWidget):
         top_row.addWidget(generate_button)
         top_row.addWidget(export_plan_button)
         top_row.addWidget(export_recipes_button)
+        self.compact_checkbox = QCheckBox("Kompakte Ansicht", self)
+        self.compact_checkbox.setToolTip(
+            "Schmalere Tagesspalten, damit eine ganze Lagerwoche ohne horizontales Scrollen "
+            "ins Fenster passt."
+        )
+        self.compact_checkbox.toggled.connect(self._toggle_compact_view)
+        top_row.addWidget(self.compact_checkbox)
         top_row.addStretch(1)
         layout.addLayout(top_row)
 
@@ -77,8 +94,8 @@ class PlanningView(QWidget):
         self.table = QTableWidget(len(ROW_LABELS), 0, self)
         self.table.setVerticalHeaderLabels(list(ROW_LABELS))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        self.table.horizontalHeader().setDefaultSectionSize(DAY_COLUMN_WIDTH)
-        self.table.horizontalHeader().setMinimumSectionSize(DAY_COLUMN_WIDTH)
+        self.table.horizontalHeader().setDefaultSectionSize(self._day_column_width)
+        self.table.horizontalHeader().setMinimumSectionSize(self._day_column_width)
         # Wenn eine Spalte breiter/schmaler gezogen wird, muessen die (wortumbruchbehafteten)
         # Zellen neu umgebrochen und die Zeilenhoehen entsprechend angepasst werden.
         self.table.horizontalHeader().sectionResized.connect(self._on_column_resized)
@@ -169,7 +186,7 @@ class PlanningView(QWidget):
             [f"{planning_service.weekday_name(day)}\n{day.strftime('%d.%m.')}" for day in self._day_dates]
         )
         for col in range(len(self._day_dates)):
-            self.table.setColumnWidth(col, DAY_COLUMN_WIDTH)
+            self.table.setColumnWidth(col, self._day_column_width)
 
         # Preise fuer alle in dieser Woche geplanten Rezepte einmalig vorladen (nicht pro Tag),
         # sonst fragt day_summary() unten fuer jede Zutat jedes Tages einzeln nach.
@@ -201,6 +218,16 @@ class PlanningView(QWidget):
             self.table.setCellWidget(summary_row, col, summary_label)
 
     def _on_column_resized(self, *_args: object) -> None:
+        self._resize_rows_to_content()
+        self._update_table_fixed_height()
+
+    def _toggle_compact_view(self, checked: bool) -> None:
+        self._compact_view = checked
+        header = self.table.horizontalHeader()
+        header.setMinimumSectionSize(self._day_column_width)
+        header.setDefaultSectionSize(self._day_column_width)
+        for col in range(self.table.columnCount()):
+            self.table.setColumnWidth(col, self._day_column_width)
         self._resize_rows_to_content()
         self._update_table_fixed_height()
 
