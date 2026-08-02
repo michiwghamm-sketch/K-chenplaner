@@ -24,17 +24,22 @@ class UpdateInfo:
     download_url: str
 
 
+class UpdateCheckError(RuntimeError):
+    """Der Update-Check konnte technisch nicht durchgefuehrt werden."""
+
+
 def _parse_version(version: str) -> tuple[int, ...]:
     cleaned = version.strip().lstrip("vV")
     parts = re.findall(r"\d+", cleaned)
     return tuple(int(part) for part in parts) or (0,)
 
 
-def check_for_update(current_version: str) -> UpdateInfo | None:
+def check_for_update(current_version: str, *, raise_on_error: bool = False) -> UpdateInfo | None:
     """Liefert UpdateInfo, wenn die neueste GitHub-Release neuer ist als `current_version`.
 
-    Liefert None bei fehlendem Internet, fehlender Release oder gleicher/aelterer Version -
-    ein fehlgeschlagener Check soll den App-Start nie blockieren oder abbrechen.
+    Liefert None bei fehlendem Internet, fehlender Release oder gleicher/aelterer Version.
+    Mit `raise_on_error=True` werden technische Fehler gemeldet, damit ein manueller Check
+    nicht faelschlich als "keine neue Version" angezeigt wird.
     """
     try:
         request = urllib.request.Request(
@@ -43,7 +48,9 @@ def check_for_update(current_version: str) -> UpdateInfo | None:
         )
         with urllib.request.urlopen(request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except (urllib.error.URLError, TimeoutError, ValueError, OSError):
+    except (urllib.error.URLError, TimeoutError, ValueError, OSError) as exc:
+        if raise_on_error:
+            raise UpdateCheckError("Der Update-Check konnte nicht durchgeführt werden.") from exc
         return None
 
     latest_tag = data.get("tag_name")

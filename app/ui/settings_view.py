@@ -420,7 +420,7 @@ class SettingsView(QWidget):
     def _check_for_update(self) -> None:
         self.check_update_button.setEnabled(False)
         self.check_update_button.setText("Suche läuft...")
-        run_update_check_async(self, self._on_update_check_result)
+        run_update_check_async(self, self._on_update_check_result, on_error=self._on_update_check_error)
 
     def _on_update_check_result(self, update_info: UpdateInfo | None) -> None:
         self.check_update_button.setEnabled(True)
@@ -435,3 +435,8 @@ class SettingsView(QWidget):
             "Jetzt die Release-Seite zum Herunterladen öffnen?",
         ):
             QDesktopServices.openUrl(QUrl(update_info.download_url))
+
+    def _on_update_check_error(self, message: str) -> None:
+        self.check_update_button.setEnabled(True)
+        self.check_update_button.setText("Nach Updates suchen")
+        error_dialog(self, f"{message}\n\nBitte Internetverbindung prüfen oder später erneut versuchen.")
