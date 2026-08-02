@@ -57,6 +57,27 @@ def _manual_price_notes(barcode: str | None, barcode_label: str | None) -> str |
     return f"Open Prices Barcode: {barcode}"
 
 
+def _standard_item_ingredient_choices(session) -> list[RecipeIngredientChoice]:
+    """Nur Non-Food-Zutaten im Verbrauchsmittel-Dialog anbieten.
+
+    Bereits bestehende StandardShoppingItem-Zuordnungen bleiben sichtbar, selbst wenn alte Daten
+    noch nicht als Non-Food markiert sind; beim Speichern werden sie nachgezogen.
+    """
+    standard_item_ingredient_ids = {
+        item.ingredient_id for item in shopping_service.list_standard_items(session) if item.ingredient_id is not None
+    }
+    return [
+        RecipeIngredientChoice(
+            id=ingredient.id,
+            name=ingredient.name,
+            default_unit=ingredient.default_unit,
+            compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
+        )
+        for ingredient in ingredient_service.search_ingredients(session, active_only=False)
+        if ingredient.category == NON_FOOD_CATEGORY or ingredient.id in standard_item_ingredient_ids
+    ]
+
+
 class IngredientsView(QWidget):
     """Zutatenverwaltung: Liste, Suche, Detail und zentrale Preise.
 
@@ -537,15 +558,7 @@ class IngredientsView(QWidget):
         from app.models import CampYear
 
         with self.context.session() as session:
-            ingredient_choices = [
-                RecipeIngredientChoice(
-                    id=ingredient.id,
-                    name=ingredient.name,
-                    default_unit=ingredient.default_unit,
-                    compatible_units=unit_service.compatible_units(session, ingredient.default_unit),
-                )
-                for ingredient in ingredient_service.search_ingredients(session, active_only=False)
-            ]
+            ingredient_choices = _standard_item_ingredient_choices(session)
 
             reference_camp_year = None
             if self.context.current_camp_year_id is not None:
@@ -601,6 +614,10 @@ class IngredientsView(QWidget):
                     ingredient = session.get(ingredient_service.Ingredient, ingredient_id)
                     if ingredient is None:
                         continue
+                ingredient.category = NON_FOOD_CATEGORY
+                ingredient.active = True
+                if row["unit"] and not ingredient.default_unit:
+                    ingredient.default_unit = row["unit"]
 
                 if row["id"] is not None and row["id"] in existing_by_id:
                     item = existing_by_id[row["id"]]
