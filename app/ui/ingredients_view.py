@@ -459,6 +459,12 @@ class IngredientsView(QWidget):
     def _remove_barcode_link(self) -> None:
         if self._current_ingredient_id is None:
             return
+        if not confirm_dialog(
+            self,
+            "Verknüpfung entfernen",
+            "Die Open-Prices-Produktverknüpfung dieser Zutat wirklich entfernen?",
+        ):
+            return
         with self.context.session() as session:
             ingredient = session.get(ingredient_service.Ingredient, self._current_ingredient_id)
             if ingredient is not None:
