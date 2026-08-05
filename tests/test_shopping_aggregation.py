@@ -903,6 +903,89 @@ def test_add_manual_shopping_item_creates_unrecipe_position(session_factory) -> 
             shopping_service.add_manual_shopping_item(session, shopping_list, ingredient=ingredient, quantity=Decimal("0"), unit="Stk")
 
 
+def test_delete_shopping_list_item_removes_manual_position(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, sonnencreme.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ingredient = session.get(Ingredient, ingredient_id)
+        item = shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=ingredient, quantity=Decimal("1"), unit="Stk"
+        )
+        item_id = item.id
+        shopping_service.delete_shopping_list_item(session, item)
+
+    with session_scope(session_factory) as session:
+        assert session.get(ShoppingListItem, item_id) is None
+
+
+def test_delete_shopping_list_item_rejects_recipe_derived_position(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+        recipe = Recipe(name="Spaghetti", normalized_name="spaghetti", meal_type="Hauptgericht", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(
+                meal_date=date(2026, 8, 2),
+                meal_type="Mittagessen",
+                recipe=recipe,
+                planned_portions=20,
+                status="geplant",
+            )
+        )
+        session.add(camp_year)
+        session.flush()
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+        item = shopping_list.items[0]
+
+        with pytest.raises(ValueError):
+            shopping_service.delete_shopping_list_item(session, item)
+
+
+def test_delete_shopping_list_item_rejects_already_allocated_position(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        muellsaecke = Ingredient(name="Müllsäcke", normalized_name="muellsaecke", default_unit="Packung")
+        session.add(muellsaecke)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, muellsaecke.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ingredient = session.get(Ingredient, ingredient_id)
+        shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=ingredient, quantity=Decimal("2"), unit="Packung"
+        )
+        trip = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Metro",
+            participants=[],
+            selections=[(ingredient_id, "Packung", Decimal("2"))],
+        )
+        assert len(trip.allocations) == 1
+        item = shopping_list.items[0]
+
+        with pytest.raises(ValueError):
+            shopping_service.delete_shopping_list_item(session, item)
+
+
 def test_previous_year_quantity_finds_latest_prior_year(session_factory) -> None:
     with session_scope(session_factory) as session:
         karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
