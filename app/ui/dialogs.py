@@ -376,6 +376,10 @@ class SimilarIngredientsWarningDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Ähnliche Zutaten gefunden")
+        # Die Liste zeigt Name+Aehnlichkeit+Grund+Verwendungszaehler in einer Zeile - ohne
+        # Mindestbreite wurde das bei laengeren Gruenden ("gleicher Name, andere
+        # Schreibweise, ...") mit "..." abgeschnitten statt lesbar zu sein.
+        self.setMinimumWidth(520)
 
         info = QLabel(
             f"'{name}' ist folgenden bestehenden Zutaten sehr ähnlich. Eventuell ist das bereits "
