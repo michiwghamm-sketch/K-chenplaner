@@ -49,32 +49,12 @@ def _estimate_price(session, ingredient_id: int, unit: str, quantity: Decimal, p
     return estimated_price_per_unit, estimated_total
 
 
-def generate_shopping_list(
-    session,
-    camp_year: CampYear,
-    *,
-    name: str | None = None,
-    price_year: int | None = None,
-    assign_shopping_dates: bool = True,
-    include_standard_items: bool = True,
-) -> ShoppingList:
-    """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu einer Einkaufsliste.
-
-    Der Einkaufstag je Position wird automatisch hergeleitet (siehe _derive_item_shopping_date),
-    sofern am Mahlzeit-Slot im Wochenplan kein Einkaufstag manuell gesetzt wurde. Mit
-    assign_shopping_dates=False entsteht stattdessen eine Gesamtliste ohne Einkaufstage
-    (das Bedarfsdatum - wann die Zutat fuer eine Mahlzeit gebraucht wird - wird trotzdem gefuellt).
-
-    Mit include_standard_items=True (Standard) werden zusaetzlich alle aktiven
-    StandardShoppingItem-Vorlagen (Non-Food/Verbrauchsmittel) als eigene Positionen angehaengt -
-    bewusst NICHT mit rezeptbasierten Positionen derselben Zutat zusammengefuehrt, damit das
-    Signal "linked_recipes_text leer = manuell/Standard" fuer diese Zeilen erhalten bleibt (siehe
-    is_manual_item()); im seltenen Fall, dass dieselbe Zutat+Einheit auch rezeptbasiert ohne
-    Einkaufstag vorkommt, entstehen dafuer zwei separate, je fuer sich korrekte Zeilen.
-    """
-    price_year = price_year or camp_year.year
+def _aggregate_recipe_items(camp_year: CampYear, *, assign_shopping_dates: bool) -> dict[tuple[int, str, date | None], _Aggregate]:
+    """Aggregiert alle geplanten (nicht abgesagten) Mahlzeiten eines Camp-Jahrs zu Zutat+Einheit+
+    Einkaufstag-Bedarfsmengen - gemeinsam genutzt von generate_shopping_list() (neue Liste) und
+    update_shopping_list_from_meal_plan() (bestehende Liste an den aktuellen Wochenplan anpassen),
+    damit beide exakt dieselbe Mengenberechnung verwenden."""
     aggregates: dict[tuple[int, str, date | None], _Aggregate] = {}
-
     for entry in camp_year.meal_plan_entries:
         if entry.recipe is None or not planning_service.is_scheduled_entry(entry):
             continue
@@ -99,6 +79,29 @@ def generate_shopping_list(
             aggregate.recipe_names.add(entry.recipe.name)
             if entry.meal_date is not None:
                 aggregate.needed_dates.add(entry.meal_date)
+    return aggregates
+
+
+def generate_shopping_list(
+    session,
+    camp_year: CampYear,
+    *,
+    name: str | None = None,
+    price_year: int | None = None,
+    assign_shopping_dates: bool = True,
+    include_standard_items: bool = True,
+) -> ShoppingList:
+    """Erzeugt eine neue Einkaufsliste aus dem aktuellen Wochenplan (siehe _aggregate_recipe_items).
+
+    Mit include_standard_items=True (Standard) werden zusaetzlich alle aktiven
+    StandardShoppingItem-Vorlagen (Non-Food/Verbrauchsmittel) als eigene Positionen angehaengt -
+    bewusst NICHT mit rezeptbasierten Positionen derselben Zutat zusammengefuehrt, damit das
+    Signal "linked_recipes_text leer = manuell/Standard" fuer diese Zeilen erhalten bleibt (siehe
+    is_manual_item()); im seltenen Fall, dass dieselbe Zutat+Einheit auch rezeptbasiert ohne
+    Einkaufstag vorkommt, entstehen dafuer zwei separate, je fuer sich korrekte Zeilen.
+    """
+    price_year = price_year or camp_year.year
+    aggregates = _aggregate_recipe_items(camp_year, assign_shopping_dates=assign_shopping_dates)
 
     shopping_list = ShoppingList(camp_year=camp_year, name=name or f"Einkaufsliste {camp_year.year}")
     session.add(shopping_list)
@@ -184,6 +187,91 @@ def append_standard_items_to_shopping_list(session, shopping_list: ShoppingList)
         existing_standard_keys.add(key)
     session.flush()
     return created
+
+
+@dataclass(slots=True)
+class ShoppingListUpdateResult:
+    created: list[ShoppingListItem]
+    updated: list[ShoppingListItem]
+    orphaned: list[ShoppingListItem]
+
+
+def update_shopping_list_from_meal_plan(session, shopping_list: ShoppingList) -> ShoppingListUpdateResult:
+    """Gleicht eine bestehende Einkaufsliste mit dem aktuellen Wochenplan ab, statt eine komplett
+    neue Liste zu erzeugen - damit nach einer Aenderung am Wochenplan (z. B. andere
+    Portionenzahl, neues Rezept) nicht saemtliche bereits geplanten Einkaeufe (Trips/Allocations),
+    Sonderwuensche und Verbrauchsmittel-Ergaenzungen verloren gehen.
+
+    Rezeptbasierte Positionen (siehe is_manual_item) werden je Zutat+Einheit+Einkaufstag mit dem
+    neu berechneten Bedarf abgeglichen: bestehende Zeilen werden in der Menge aktualisiert, neu
+    hinzugekommene Kombinationen werden angelegt. Rezept-Positionen, die im aktuellen Wochenplan
+    nicht mehr vorkommen (Rezept/Mahlzeit entfernt), werden NICHT automatisch geloescht - dafuer
+    koennten bereits Einkaeufe/Allocations bestehen, ein stilles Loeschen wuerde sie verwaisen
+    lassen. Sie werden stattdessen als "orphaned" zurueckgegeben, damit die UI sie anzeigen kann
+    und der Nutzer bewusst entscheidet (delete_shopping_list_item lehnt bei bereits zugeteilten
+    Positionen ohnehin ab, ist also fuer diesen Fall sicher).
+
+    Sonderwuensche/Verbrauchsmittel (manuelle Positionen) bleiben komplett unangetastet - fuer
+    neue Verbrauchsmittel weiterhin separat append_standard_items_to_shopping_list aufrufen.
+    """
+    camp_year = shopping_list.camp_year
+    price_year = camp_year.year if camp_year else None
+    assign_shopping_dates = any(
+        item.shopping_date is not None for item in shopping_list.items if not is_manual_item(item)
+    )
+    aggregates = _aggregate_recipe_items(camp_year, assign_shopping_dates=assign_shopping_dates)
+
+    existing_by_key: dict[tuple[int, str, date | None], ShoppingListItem] = {
+        (item.ingredient_id, item.unit, item.shopping_date): item
+        for item in shopping_list.items
+        if not is_manual_item(item)
+    }
+
+    created: list[ShoppingListItem] = []
+    updated: list[ShoppingListItem] = []
+    seen_keys: set[tuple[int, str, date | None]] = set()
+
+    for key, aggregate in aggregates.items():
+        seen_keys.add(key)
+        quantity = aggregate.quantity.quantize(Decimal("0.001"))
+        needed_date = min(aggregate.needed_dates) if aggregate.needed_dates else None
+        recipes_text = ", ".join(sorted(aggregate.recipe_names))
+        existing = existing_by_key.get(key)
+        if existing is not None:
+            if existing.quantity != quantity or existing.needed_date != needed_date or existing.linked_recipes_text != recipes_text:
+                existing.quantity = quantity
+                existing.needed_date = needed_date
+                existing.linked_recipes_text = recipes_text
+                if price_year is not None:
+                    existing.estimated_price_per_unit, existing.estimated_total_price = _estimate_price(
+                        session, aggregate.ingredient_id, aggregate.unit, quantity, price_year
+                    )
+                updated.append(existing)
+        else:
+            estimated_price_per_unit, estimated_total = (None, None)
+            if price_year is not None:
+                estimated_price_per_unit, estimated_total = _estimate_price(
+                    session, aggregate.ingredient_id, aggregate.unit, quantity, price_year
+                )
+            item = ShoppingListItem(
+                shopping_list=shopping_list,
+                ingredient_id=aggregate.ingredient_id,
+                quantity=quantity,
+                unit=aggregate.unit,
+                estimated_price_per_unit=estimated_price_per_unit,
+                estimated_total_price=estimated_total,
+                needed_date=needed_date,
+                shopping_date=aggregate.shopping_date,
+                status="offen",
+                linked_recipes_text=recipes_text,
+            )
+            session.add(item)
+            created.append(item)
+
+    orphaned = [item for key, item in existing_by_key.items() if key not in seen_keys]
+
+    session.flush()
+    return ShoppingListUpdateResult(created=created, updated=updated, orphaned=orphaned)
 
 
 def _shopping_unit_for_item(item_unit: str, ingredient: Ingredient | None) -> str:

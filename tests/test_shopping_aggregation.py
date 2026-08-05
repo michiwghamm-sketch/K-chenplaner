@@ -869,6 +869,119 @@ def test_append_standard_items_to_existing_shopping_list_is_idempotent(session_f
         assert "Batterien AAA" not in names
 
 
+def test_update_shopping_list_from_meal_plan_adjusts_changed_portions(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+        recipe = Recipe(name="Spaghetti", normalized_name="spaghetti", meal_type="Hauptgericht", default_portions=10)
+        recipe.ingredients.append(
+            RecipeIngredient(ingredient=ingredient, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        entry = MealPlanEntry(
+            meal_date=date(2026, 8, 2),
+            meal_type="Mittagessen",
+            recipe=recipe,
+            planned_portions=20,
+            status="geplant",
+        )
+        camp_year.meal_plan_entries.append(entry)
+        session.add(camp_year)
+        session.flush()
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+        shopping_list_id, entry_id = shopping_list.id, entry.id
+        item = shopping_list.items[0]
+        assert item.quantity == Decimal("2.000")
+
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(ingredient.id, "kg", Decimal("2.000"))]
+        )
+        allocation_id = trip.allocations[0].id
+
+    with session_scope(session_factory) as session:
+        entry = session.get(MealPlanEntry, entry_id)
+        entry.planned_portions = 30
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        result = shopping_service.update_shopping_list_from_meal_plan(session, shopping_list)
+        assert len(result.updated) == 1
+        assert result.created == []
+        assert result.orphaned == []
+        assert result.updated[0].quantity == Decimal("3.000")
+
+    with session_scope(session_factory) as session:
+        # Bereits geplanter Einkauf (Trip/Allocation) bleibt trotz Mengenaenderung erhalten.
+        allocation = session.get(ShoppingListItemAllocation, allocation_id)
+        assert allocation is not None
+        assert allocation.quantity == Decimal("2.000")
+
+
+def test_update_shopping_list_from_meal_plan_adds_new_and_flags_removed_recipes(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        nudeln = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+        reis = Ingredient(name="Reis", normalized_name="reis", default_unit="kg")
+        spaghetti = Recipe(name="Spaghetti", normalized_name="spaghetti", meal_type="Hauptgericht", default_portions=10)
+        spaghetti.ingredients.append(
+            RecipeIngredient(ingredient=nudeln, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        reisgericht = Recipe(name="Reispfanne", normalized_name="reispfanne", meal_type="Hauptgericht", default_portions=10)
+        reisgericht.ingredients.append(
+            RecipeIngredient(ingredient=reis, quantity=Decimal("0.100"), unit="kg", price_unit="kg", sort_order=1)
+        )
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        entry = MealPlanEntry(
+            meal_date=date(2026, 8, 2), meal_type="Mittagessen", recipe=spaghetti, planned_portions=20, status="geplant"
+        )
+        camp_year.meal_plan_entries.append(entry)
+        session.add_all([camp_year, reisgericht])
+        session.flush()
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+        shopping_list_id, camp_year_id, entry_id = shopping_list.id, camp_year.id, entry.id
+
+    with session_scope(session_factory) as session:
+        # Wochenplan aendert sich: Spaghetti raus, Reispfanne rein.
+        entry = session.get(MealPlanEntry, entry_id)
+        entry.status = "abgesagt"
+        camp_year = session.get(CampYear, camp_year_id)
+        reisgericht = session.query(Recipe).filter_by(normalized_name="reispfanne").one()
+        camp_year.meal_plan_entries.append(
+            MealPlanEntry(meal_date=date(2026, 8, 3), meal_type="Mittagessen", recipe=reisgericht, planned_portions=10, status="geplant")
+        )
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        result = shopping_service.update_shopping_list_from_meal_plan(session, shopping_list)
+        assert [item.ingredient.name for item in result.created] == ["Reis"]
+        assert result.updated == []
+        assert [item.ingredient.name for item in result.orphaned] == ["Nudeln"]
+        # Die verwaiste Position bleibt in der Liste erhalten, nur nicht mehr automatisch gepflegt.
+        assert any(item.ingredient.name == "Nudeln" for item in shopping_list.items)
+
+
+def test_update_shopping_list_from_meal_plan_leaves_manual_items_untouched(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        session.add(camp_year)
+        session.flush()
+        shopping_list = shopping_service.generate_shopping_list(session, camp_year, assign_shopping_dates=False)
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=sonnencreme, quantity=Decimal("1"), unit="Stk", requested_by="Björn"
+        )
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        result = shopping_service.update_shopping_list_from_meal_plan(session, shopping_list)
+        assert result.created == []
+        assert result.updated == []
+        assert result.orphaned == []
+        names = [item.ingredient.name for item in shopping_list.items if item.ingredient]
+        assert names == ["Sonnencreme"]
+
+
 def test_add_manual_shopping_item_creates_unrecipe_position(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

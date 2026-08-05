@@ -81,8 +81,18 @@ class ShoppingView(QWidget):
         top_row.addWidget(self.camp_year_combo)
 
         generate_button = QPushButton("Einkaufsliste generieren", self)
+        generate_button.setToolTip("Erzeugt eine komplett neue Einkaufsliste aus dem aktuellen Wochenplan.")
         generate_button.clicked.connect(self._generate_list)
         top_row.addWidget(generate_button)
+
+        update_button = QPushButton("Einkaufsliste aktualisieren", self)
+        update_button.setToolTip(
+            "Gleicht die ausgewählte Einkaufsliste mit dem aktuellen Wochenplan ab (z. B. nach "
+            "geänderten Portionen), statt sie neu zu erstellen - bereits geplante Einkäufe, "
+            "Sonderwünsche und Verbrauchsmittel bleiben dabei erhalten."
+        )
+        update_button.clicked.connect(self._update_list_from_meal_plan)
+        top_row.addWidget(update_button)
 
         plan_trip_button = QPushButton("Einkauf planen...", self)
         plan_trip_button.setToolTip(
@@ -625,6 +635,30 @@ class ShoppingView(QWidget):
             item_count = len(shopping_list.items)
         info_dialog(self, f"Einkaufsliste mit {item_count} Positionen erstellt.")
         self._reload_list_combo()
+
+    def _update_list_from_meal_plan(self) -> None:
+        shopping_list_id = self.list_combo.currentData()
+        if shopping_list_id is None:
+            error_dialog(self, "Es ist keine Einkaufsliste ausgewählt.")
+            return
+        with self.context.session() as session:
+            shopping_list = session.get(ShoppingList, shopping_list_id)
+            if shopping_list is None:
+                return
+            result = shopping_service.update_shopping_list_from_meal_plan(session, shopping_list)
+            created_count = len(result.created)
+            updated_count = len(result.updated)
+            orphaned_names = sorted({item.ingredient.name for item in result.orphaned if item.ingredient})
+
+        message = f"{created_count} Position(en) neu hinzugefügt, {updated_count} Menge(n) aktualisiert."
+        if orphaned_names:
+            message += (
+                "\n\nDiese Positionen kommen im aktuellen Wochenplan nicht mehr vor, wurden aber "
+                "nicht automatisch gelöscht (z. B. falls bereits eingekauft/zugeteilt):\n- "
+                + "\n- ".join(orphaned_names)
+            )
+        info_dialog(self, message)
+        self._reload_table()
 
     def _delete_list(self) -> None:
         shopping_list_id = self.list_combo.currentData()
