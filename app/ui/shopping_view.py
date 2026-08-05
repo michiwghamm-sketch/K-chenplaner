@@ -99,6 +99,15 @@ class ShoppingView(QWidget):
         add_item_button.clicked.connect(self._add_manual_item)
         top_row.addWidget(add_item_button)
 
+        self.delete_item_button = QPushButton("Position löschen", self)
+        self.delete_item_button.setProperty("role", "danger")
+        self.delete_item_button.setToolTip(
+            "Entfernt die ausgewählte Sonderwunsch-/Verbrauchsmittel-Position wieder aus der Liste "
+            "(nur in der Wochenliste-/Gesamtlisten-Ansicht, nicht für Rezept-Positionen)."
+        )
+        self.delete_item_button.clicked.connect(self._delete_selected_item)
+        top_row.addWidget(self.delete_item_button)
+
         append_standard_items_button = QPushButton("Verbrauchsmittel ergänzen", self)
         append_standard_items_button.setToolTip(
             "Fügt aktive Verbrauchsmittel zu der ausgewählten Einkaufsliste hinzu, ohne die Liste neu zu generieren."
@@ -235,6 +244,7 @@ class ShoppingView(QWidget):
         selected_trip_id = self._selected_trip_id()
         self.edit_trip_button.setVisible(selected_trip_id is not None)
         self.delete_trip_button.setVisible(selected_trip_id is not None)
+        self.delete_item_button.setVisible(self.group_combo.currentData() in ("none", "day"))
         shopping_list_id = self.list_combo.currentData()
         if shopping_list_id is None:
             self.total_label.setText("Gesamtsumme: -")
@@ -608,6 +618,45 @@ class ShoppingView(QWidget):
                 error_dialog(self, str(exc))
                 return
         info_dialog(self, "Position hinzugefügt.")
+        self._reload_table()
+
+    def _delete_selected_item(self) -> None:
+        mode = self.group_combo.currentData()
+        if mode not in ("none", "day"):
+            error_dialog(self, "Bitte zuerst die Wochenliste- oder Gesamtlisten-Ansicht wählen.")
+            return
+        row = self.table.currentRow()
+        name_item = self.table.item(row, 0) if row >= 0 else None
+        item_id = name_item.data(1000) if name_item is not None else None
+        if item_id is None:
+            error_dialog(self, "Bitte zuerst eine Position in der Tabelle auswählen.")
+            return
+
+        with self.context.session() as session:
+            item = session.get(ShoppingListItem, item_id)
+            if item is None:
+                return
+            label = item.ingredient.name if item.ingredient else ""
+            is_manual = shopping_service.is_manual_item(item)
+        if not is_manual:
+            error_dialog(
+                self,
+                f"'{label}' kommt aus dem Wochenplan und kann nicht einzeln gelöscht werden - "
+                "stattdessen den Wochenplan anpassen und die Liste aktualisieren.",
+            )
+            return
+        if not confirm_dialog(self, "Position löschen", f"'{label}' wirklich aus der Liste entfernen?"):
+            return
+
+        with self.context.session() as session:
+            item = session.get(ShoppingListItem, item_id)
+            if item is None:
+                return
+            try:
+                shopping_service.delete_shopping_list_item(session, item)
+            except ValueError as exc:
+                error_dialog(self, str(exc))
+                return
         self._reload_table()
 
     def _generate_list(self) -> None:

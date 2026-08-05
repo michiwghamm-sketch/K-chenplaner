@@ -240,6 +240,26 @@ def add_manual_shopping_item(
     return item
 
 
+def delete_shopping_list_item(session, item: ShoppingListItem) -> None:
+    """Entfernt eine einzelne Position (Sonderwunsch/Verbrauchsmittel) wieder aus der Liste.
+
+    Bewusst nur fuer manuelle Positionen (siehe is_manual_item) - rezeptbasierte Zeilen sind das
+    Ergebnis der Wochenplan-Aggregation und sollen ueber den Wochenplan bzw. "Einkaufsliste
+    aktualisieren" gepflegt werden, nicht per Einzel-Loeschung, sonst kaeme beim naechsten
+    Aktualisieren/Generieren dieselbe Zeile wieder. Ist die Position bereits einem Einkauf
+    zugeteilt, wird die Loeschung abgelehnt statt die Allocation zu verwaisen - erst im
+    zugehoerigen Einkauf entfernen/neu zuteilen, dann hier loeschen."""
+    if not is_manual_item(item):
+        raise ValueError("Nur Sonderwünsche/Verbrauchsmittel können einzeln gelöscht werden, keine Rezept-Positionen.")
+    has_allocation = session.execute(
+        select(ShoppingListItemAllocation.id).where(ShoppingListItemAllocation.shopping_list_item_id == item.id)
+    ).first()
+    if has_allocation:
+        raise ValueError("Position ist bereits einem Einkauf zugeteilt - bitte zuerst dort entfernen.")
+    session.delete(item)
+    session.flush()
+
+
 def previous_year_quantity(session, camp_year: CampYear, ingredient_id: int, unit: str | None) -> Decimal | None:
     """Summe der Menge dieser Zutat+Einheit im letzten Camp-Jahr VOR camp_year.year, das eine
     Einkaufsliste hat - rein informativ, um beim Pflegen von Standard-/manuellen Positionen den
