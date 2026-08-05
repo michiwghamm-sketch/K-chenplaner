@@ -376,6 +376,10 @@ class SimilarIngredientsWarningDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Ähnliche Zutaten gefunden")
+        # Die Liste zeigt Name+Aehnlichkeit+Grund+Verwendungszaehler in einer Zeile - ohne
+        # Mindestbreite wurde das bei laengeren Gruenden ("gleicher Name, andere
+        # Schreibweise, ...") mit "..." abgeschnitten statt lesbar zu sein.
+        self.setMinimumWidth(520)
 
         info = QLabel(
             f"'{name}' ist folgenden bestehenden Zutaten sehr ähnlich. Eventuell ist das bereits "
@@ -1706,18 +1710,26 @@ class ManageStandardItemsDialog(QDialog):
     ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Verbrauchsmittel verwalten")
-        self.setMinimumWidth(820)
+        # Breiter als frueher: manche Verbrauchsmittel-Namen (z. B. nach dem Metro-Kassenbon-
+        # Aufraeumen) sind deutlich laenger als die urspruenglich angenommenen kurzen Namen und
+        # wurden in der Zutat-Spalte sonst abgeschnitten. Mindesthoehe + Stretch auf die Tabelle
+        # (statt die Tabelle ungebremst waechst) verhindert, dass das Fenster bei vielen
+        # Verbrauchsmitteln (z. B. 30+) hoeher als der Bildschirm wird und Buttons am unteren Rand
+        # abgeschnitten/ueberlappt werden - stattdessen scrollt die Tabelle selbst.
+        self.setMinimumSize(1000, 460)
+        self.resize(1050, 620)
         self._ingredients = ingredients
         self._removed_ids: list[int] = []
 
         self.table = QTableWidget(0, len(self._COLUMNS), self)
         self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Interactive)
-        for column, width in enumerate((220, 90, 110, 220, 70, 90)):
+        for column, width in enumerate((320, 90, 110, 220, 70, 120)):
             self.table.horizontalHeader().resizeSection(column, width)
         self.table.verticalHeader().setVisible(False)
         for row_data in rows:
             self._add_row(row_data)
+        self.table.resizeRowsToContents()
 
         add_button = QPushButton("+ Position hinzufügen", self)
         add_button.clicked.connect(lambda: self._add_row(None))
@@ -1727,10 +1739,13 @@ class ManageStandardItemsDialog(QDialog):
         buttons.rejected.connect(self.reject)
 
         layout = QVBoxLayout(self)
-        layout.addWidget(
-            QLabel("Diese Verbrauchsmittel werden bei jeder neu generierten Einkaufsliste automatisch mit übernommen.", self)
+        label = QLabel(
+            "Diese Verbrauchsmittel werden bei jeder neu generierten Einkaufsliste automatisch mit übernommen.",
+            self,
         )
-        layout.addWidget(self.table)
+        label.setWordWrap(True)
+        layout.addWidget(label)
+        layout.addWidget(self.table, stretch=1)
         layout.addWidget(add_button)
         layout.addWidget(buttons)
 
@@ -1777,6 +1792,7 @@ class ManageStandardItemsDialog(QDialog):
         remove_button = QPushButton("Entfernen", self.table)
         remove_button.clicked.connect(lambda: self._remove_row(ingredient_combo))
         self.table.setCellWidget(row, 5, remove_button)
+        self.table.resizeRowsToContents()
 
     def _remove_row(self, marker_widget: QWidget) -> None:
         for row in range(self.table.rowCount()):
