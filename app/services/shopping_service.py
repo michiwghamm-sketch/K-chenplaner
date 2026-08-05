@@ -16,8 +16,20 @@ from app.models import (
     ShoppingListItemAllocation,
     ShoppingTrip,
     StandardShoppingItem,
+    ingredient_category_sort_key,
 )
 from app.services import planning_service, price_service
+
+
+def _category_sort_key(entry) -> tuple[tuple[int, str], str]:
+    """Sortierschluessel fuer Einkaufslisten-Positionen/Allocations nach Zutaten-Kategorie
+    (siehe app.models.ingredient_category_sort_key) und danach alphabetisch nach Zutatname -
+    hilft beim tatsaechlichen Einkaufen, weil gleichartige Sachen (Obst, Tiefkuehl, ...)
+    zusammen stehen statt in Zufallsreihenfolge."""
+    ingredient = entry.ingredient
+    category = ingredient.category if ingredient else None
+    name = (ingredient.name if ingredient else "").lower()
+    return (ingredient_category_sort_key(category), name)
 
 
 @dataclass(slots=True)
@@ -316,8 +328,11 @@ def group_by_shopping_day(shopping_list: ShoppingList) -> dict[date | None, list
 
 
 def grouped_by_day_ordered(shopping_list: ShoppingList) -> list[tuple[date | None, list[ShoppingListItem]]]:
-    """Tage aufsteigend sortiert, Positionen ohne Einkaufstag zuletzt."""
+    """Tage aufsteigend sortiert, Positionen ohne Einkaufstag zuletzt; innerhalb eines Tages nach
+    Zutaten-Kategorie sortiert (siehe _category_sort_key)."""
     groups = group_by_shopping_day(shopping_list)
+    for items in groups.values():
+        items.sort(key=_category_sort_key)
     return sorted(groups.items(), key=lambda pair: (pair[0] is None, pair[0]))
 
 
@@ -328,13 +343,16 @@ class AggregatedShoppingItem:
     unit: str
     estimated_total_price: Decimal | None
     has_missing_price: bool
+    category: str | None = None
 
 
 def aggregated_items_sorted(shopping_list: ShoppingList) -> list[AggregatedShoppingItem]:
     """Fasst Positionen derselben Zutat+Einheit zu einer Zeile mit Gesamtmenge zusammen (z. B.
-    wenn dieselbe Zutat an mehreren Einkaufstagen gebraucht wird) und sortiert alphabetisch nach
-    Zutatname - fuer die ungruppierte Ansicht/den PDF-Export ohne Tag/Händler-Gliederung, wo
-    dieselbe Zutat sonst mehrfach als unsortierte Teilmenge auftaucht statt als eine Gesamtmenge."""
+    wenn dieselbe Zutat an mehreren Einkaufstagen gebraucht wird) und sortiert nach Zutaten-
+    Kategorie und danach alphabetisch nach Zutatname - fuer die ungruppierte Ansicht/den
+    PDF-Export ohne Tag/Händler-Gliederung, wo dieselbe Zutat sonst mehrfach als unsortierte
+    Teilmenge auftaucht statt als eine Gesamtmenge, und wo die Kategorie-Sortierung beim
+    tatsaechlichen Einkaufen hilft."""
     groups: dict[tuple[object, str], list[ShoppingListItem]] = defaultdict(list)
     for item in shopping_list.items:
         group_key = item.ingredient_id if item.ingredient_id is not None else f"_item_{item.id}"
@@ -342,7 +360,8 @@ def aggregated_items_sorted(shopping_list: ShoppingList) -> list[AggregatedShopp
 
     aggregated: list[AggregatedShoppingItem] = []
     for items in groups.values():
-        name = items[0].ingredient.name if items[0].ingredient else ""
+        ingredient = items[0].ingredient
+        name = ingredient.name if ingredient else ""
         total_quantity = sum((item.quantity for item in items), Decimal("0"))
         total_price = None
         if all(item.estimated_total_price is not None for item in items):
@@ -354,9 +373,10 @@ def aggregated_items_sorted(shopping_list: ShoppingList) -> list[AggregatedShopp
                 unit=items[0].unit or "",
                 estimated_total_price=total_price,
                 has_missing_price=any(item.estimated_price_per_unit is None for item in items),
+                category=ingredient.category if ingredient else None,
             )
         )
-    aggregated.sort(key=lambda row: row.ingredient_name.lower())
+    aggregated.sort(key=lambda row: (ingredient_category_sort_key(row.category), row.ingredient_name.lower()))
     return aggregated
 
 
@@ -701,18 +721,24 @@ def delete_shopping_trip(session, trip: ShoppingTrip) -> None:
 
 
 def grouped_by_store_ordered_allocations(shopping_list: ShoppingList) -> list[tuple[str, list[ShoppingListItemAllocation]]]:
-    """Allocations aller Trips einer Liste, gruppiert nach Händler (alphabetisch)."""
+    """Allocations aller Trips einer Liste, gruppiert nach Händler (alphabetisch); innerhalb eines
+    Händlers nach Zutaten-Kategorie sortiert (siehe _category_sort_key) - hilft beim Einkaufen."""
     groups: dict[str, list[ShoppingListItemAllocation]] = defaultdict(list)
     for allocation in shopping_list.allocations:
         groups[allocation.trip.store].append(allocation)
+    for allocations in groups.values():
+        allocations.sort(key=_category_sort_key)
     return sorted(groups.items(), key=lambda pair: pair[0].lower())
 
 
 def grouped_by_person_ordered(shopping_list: ShoppingList) -> list[tuple[str | None, list[ShoppingListItemAllocation]]]:
-    """Allocations aller Trips einer Liste, gruppiert nach zugewiesener Person (unzugeordnet zuletzt)."""
+    """Allocations aller Trips einer Liste, gruppiert nach zugewiesener Person (unzugeordnet
+    zuletzt); innerhalb einer Person nach Zutaten-Kategorie sortiert."""
     groups: dict[str | None, list[ShoppingListItemAllocation]] = defaultdict(list)
     for allocation in shopping_list.allocations:
         groups[allocation.assigned_to].append(allocation)
+    for allocations in groups.values():
+        allocations.sort(key=_category_sort_key)
     return sorted(groups.items(), key=lambda pair: (pair[0] is None, (pair[0] or "").lower()))
 
 

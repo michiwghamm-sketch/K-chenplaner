@@ -9,7 +9,7 @@ from sqlalchemy import select
 
 from app.config import AppConfig
 from app.db import initialize_database, session_scope
-from app.models import CampYear, ShoppingList, ShoppingListItemAllocation
+from app.models import CampYear, ShoppingList, ShoppingListItemAllocation, ingredient_category_sort_key
 from app.services import ingredient_service, shopping_service
 
 SESSION_KEY = "eingeloggt"
@@ -152,7 +152,11 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 trip_ids = sorted({allocation.shopping_trip_id for allocation in allocations})
                 sorted_allocations = sorted(
                     allocations,
-                    key=lambda a: (a.status == "gekauft", (a.ingredient.name if a.ingredient else "").lower()),
+                    key=lambda a: (
+                        a.status == "gekauft",
+                        ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
+                        (a.ingredient.name if a.ingredient else "").lower(),
+                    ),
                 )
                 all_shown_allocations.extend(sorted_allocations)
                 groups_view.append({"store": store, "trip_ids": trip_ids, "positionen": sorted_allocations})
