@@ -69,6 +69,31 @@ class Ingredient(Base):
 
 NON_FOOD_CATEGORY = "Non-Food"
 
+# Vorschlagsliste fuer Ingredient.category (weiterhin Freitext, siehe oben) - Reihenfolge
+# entspricht der gewuenschten Sortierung in der Einkaufsliste (grob an typischen
+# Supermarkt-Abteilungen orientiert, damit man beim Einkaufen nicht kreuz und quer laeuft).
+# Zutaten ohne Kategorie landen einsortiert am Ende (siehe INGREDIENT_CATEGORY_SORT_ORDER).
+INGREDIENT_CATEGORIES: tuple[str, ...] = (
+    "Obst",
+    "Gemüse",
+    "Frischware",
+    "Tiefkühl",
+    "Dosen/Konserven",
+    "Trockenware",
+    NON_FOOD_CATEGORY,
+)
+INGREDIENT_CATEGORY_SORT_ORDER: dict[str, int] = {name: index for index, name in enumerate(INGREDIENT_CATEGORIES)}
+
+
+def ingredient_category_sort_key(category: str | None) -> tuple[int, str]:
+    """Sortierschluessel fuer die Einkaufsliste: bekannte Kategorien in obiger Reihenfolge (Obst
+    zuerst, Non-Food zuletzt). Unkategorisierte Zutaten (category=None) werden VOR Non-Food
+    einsortiert - vermutlich noch nicht gepflegtes Food statt bewusstes Non-Food. Frei getippte,
+    unbekannte Kategorien landen ganz am Ende."""
+    if not category:
+        return (len(INGREDIENT_CATEGORIES) - 1, "")
+    return (INGREDIENT_CATEGORY_SORT_ORDER.get(category, len(INGREDIENT_CATEGORIES)), category)
+
 
 class IngredientAlias(Base):
     __tablename__ = "ingredient_aliases"

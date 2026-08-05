@@ -406,6 +406,37 @@ def test_grouped_by_store_ordered_allocations_sorts_alphabetically(session_facto
         assert [store for store, _ in ordered] == ["Aldi", "Rewe"]
 
 
+def test_grouped_by_day_ordered_sorts_by_ingredient_category_then_name(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        muellsaecke = Ingredient(name="Muellsaecke", normalized_name="muellsaecke", default_unit="Stk", category="Non-Food")
+        apfel = Ingredient(name="Apfel", normalized_name="apfel", default_unit="kg", category="Obst")
+        banane = Ingredient(name="Banane", normalized_name="banane", default_unit="kg", category="Obst")
+        nudeln = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg", category=None)
+        session.add_all([muellsaecke, apfel, banane, nudeln])
+        session.flush()
+        shopping_list.items.extend(
+            [
+                # Absichtlich in "falscher" Reihenfolge eingefuegt.
+                ShoppingListItem(ingredient=muellsaecke, quantity=Decimal("1"), unit="Stk"),
+                ShoppingListItem(ingredient=nudeln, quantity=Decimal("1"), unit="kg"),
+                ShoppingListItem(ingredient=banane, quantity=Decimal("1"), unit="kg"),
+                ShoppingListItem(ingredient=apfel, quantity=Decimal("1"), unit="kg"),
+            ]
+        )
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        ((_, items),) = shopping_service.grouped_by_day_ordered(shopping_list)
+        # Obst zuerst (alphabetisch: Apfel vor Banane), dann unkategorisiert (Nudeln), dann Non-Food.
+        assert [item.ingredient.name for item in items] == ["Apfel", "Banane", "Nudeln", "Muellsaecke"]
+
+
 def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

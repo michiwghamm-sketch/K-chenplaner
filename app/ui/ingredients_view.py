@@ -8,6 +8,7 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QApplication,
     QCheckBox,
+    QComboBox,
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
@@ -29,7 +30,7 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 
 from app.context import AppContext
-from app.models import NON_FOOD_CATEGORY
+from app.models import INGREDIENT_CATEGORIES, NON_FOOD_CATEGORY
 from app.services import ingredient_service, open_prices_category_service, open_prices_service, price_service, shopping_service, unit_service
 from app.ui.dialogs import (
     AddPriceDialog,
@@ -91,6 +92,7 @@ class IngredientsView(QWidget):
         self.context = context
         self._current_ingredient_id: int | None = None
         self._unit_names: list[str] = []
+        self._category_suggestions: list[str] = []
         self._build_ui()
         self.refresh()
 
@@ -165,18 +167,22 @@ class IngredientsView(QWidget):
         self.name_edit = QLineEdit(right_content)
         self.unit_edit = UnitComboBox(right_content)
         self.active_checkbox = QCheckBox("Aktiv", right_content)
-        self.non_food_checkbox = QCheckBox("Ist Non-Food (kein Rezept-Zutat)", right_content)
-        self.non_food_checkbox.setToolTip(
-            "Blendet diese Zutat aus der Rezept-Zutaten-Auswahl aus - taucht aber weiterhin "
-            "normal in der Einkaufsliste auf."
+        self.category_combo = QComboBox(right_content)
+        self.category_combo.setEditable(True)
+        self.category_combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+        self.category_combo.setToolTip(
+            "Kategorie fuer die Sortierung in der Einkaufsliste (z. B. Obst, Gemüse, Tiefkühl, "
+            "Trockenware) - freier Text, eigene Kategorien moeglich. \"Non-Food\" blendet die "
+            "Zutat zusaetzlich aus der Rezept-Zutaten-Auswahl aus, taucht aber weiterhin normal "
+            "in der Einkaufsliste auf."
         )
         self.notes_edit = QPlainTextEdit(right_content)
         self.notes_edit.setFixedHeight(70)
 
         form.addRow("Name", self.name_edit)
         form.addRow("Standardeinheit", self.unit_edit)
+        form.addRow("Kategorie", self.category_combo)
         form.addRow("", self.active_checkbox)
-        form.addRow("", self.non_food_checkbox)
         form.addRow("Notizen", self.notes_edit)
         left_column.addLayout(form)
 
@@ -247,6 +253,10 @@ class IngredientsView(QWidget):
     def refresh(self) -> None:
         with self.context.session() as session:
             self._unit_names = unit_service.list_unit_names(session)
+            used_categories = ingredient_service.list_used_categories(session)
+        self._category_suggestions = list(INGREDIENT_CATEGORIES) + [
+            category for category in used_categories if category not in INGREDIENT_CATEGORIES
+        ]
         self._reload_list()
         self._reload_price_overview()
 
@@ -323,7 +333,9 @@ class IngredientsView(QWidget):
         self.unit_edit.set_units(self._unit_names)
         self.unit_edit.set_current_unit(None)
         self.active_checkbox.setChecked(True)
-        self.non_food_checkbox.setChecked(False)
+        self.category_combo.clear()
+        self.category_combo.addItems(self._category_suggestions)
+        self.category_combo.setCurrentIndex(-1)
         self.notes_edit.clear()
         self.barcode_label.setText("Kein Produkt verknuepft")
         self.remove_barcode_button.setEnabled(False)
@@ -343,7 +355,9 @@ class IngredientsView(QWidget):
             self.unit_edit.set_units(self._unit_names)
             self.unit_edit.set_current_unit(ingredient.default_unit)
             self.active_checkbox.setChecked(ingredient.active)
-            self.non_food_checkbox.setChecked(ingredient.category == NON_FOOD_CATEGORY)
+            self.category_combo.clear()
+            self.category_combo.addItems(self._category_suggestions)
+            self.category_combo.setCurrentText(ingredient.category or "")
             self.notes_edit.setPlainText(ingredient.notes or "")
 
             if ingredient.barcode:
@@ -433,7 +447,7 @@ class IngredientsView(QWidget):
                     name=name,
                     default_unit=self.unit_edit.current_unit(),
                     active=self.active_checkbox.isChecked(),
-                    category=NON_FOOD_CATEGORY if self.non_food_checkbox.isChecked() else None,
+                    category=self.category_combo.currentText().strip() or None,
                     notes=self.notes_edit.toPlainText().strip() or None,
                 )
             except ValueError as exc:

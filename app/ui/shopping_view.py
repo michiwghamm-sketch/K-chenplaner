@@ -22,7 +22,7 @@ from PySide6.QtWidgets import (
 from sqlalchemy import select
 
 from app.context import AppContext
-from app.models import CampYear, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip
+from app.models import CampYear, ShoppingList, ShoppingListItem, ShoppingListItemAllocation, ShoppingTrip, ingredient_category_sort_key
 from app.services import export_service, ingredient_service, shopping_service, unit_service
 from app.ui.dialogs import (
     AddManualShoppingItemDialog,
@@ -289,7 +289,14 @@ class ShoppingView(QWidget):
                 trip = session.get(ShoppingTrip, selected_trip_id)
                 if trip is not None:
                     self._add_band_row(f"Einkauf {trip.store}")
-                    for allocation in sorted(trip.allocations, key=lambda a: (a.status == "gekauft", (a.ingredient.name if a.ingredient else "").lower())):
+                    for allocation in sorted(
+                        trip.allocations,
+                        key=lambda a: (
+                            a.status == "gekauft",
+                            ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
+                            (a.ingredient.name if a.ingredient else "").lower(),
+                        ),
+                    ):
                         self._add_allocation_row(allocation)
             else:
                 for item in _aggregate_total_view_items(shopping_list.items):
@@ -819,4 +826,11 @@ def _aggregate_total_view_items(items) -> list:
                 requested_by=", ".join(sorted(requested_by_names)) if requested_by_names else None,
             )
         )
-    return sorted(aggregated, key=lambda item: ((item.ingredient.name if item.ingredient else "").lower(), item.unit or ""))
+    return sorted(
+        aggregated,
+        key=lambda item: (
+            ingredient_category_sort_key(item.ingredient.category if item.ingredient else None),
+            (item.ingredient.name if item.ingredient else "").lower(),
+            item.unit or "",
+        ),
+    )

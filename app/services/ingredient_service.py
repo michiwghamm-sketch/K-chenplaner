@@ -37,6 +37,13 @@ def search_ingredients(
     return ingredients
 
 
+def list_used_categories(session: Session) -> list[str]:
+    """Bereits verwendete Ingredient.category-Werte, dedupliziert und alphabetisch - ergaenzt die
+    Standardwerte aus app.models.INGREDIENT_CATEGORIES um eigene, frei getippte Kategorien."""
+    values = session.execute(select(Ingredient.category).where(Ingredient.category.isnot(None)).distinct()).scalars().all()
+    return sorted(values)
+
+
 def generate_unique_ingredient_name(session: Session, base_name: str = "Neue Zutat") -> str:
     """Findet einen freien Namen für eine neue Zutat (z. B. wenn 'Neue Zutat' bereits existiert)."""
     candidate = base_name
