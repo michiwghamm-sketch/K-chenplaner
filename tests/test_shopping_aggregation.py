@@ -457,6 +457,7 @@ def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -
             session, shopping_list, store="Metro", participants=["Anna", "Ben"], selections=[(ingredient_id, "kg", Decimal("20.000"))]
         )
         assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("10.000")
+        assert shopping_service.allocated_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("20.000")
         # Eine Auswahl = ein Listeneintrag = eine Allocation, komplett an eine Person.
         assert len(trip.allocations) == 1
         assert trip.allocations[0].shopping_list_item_id == item.id
