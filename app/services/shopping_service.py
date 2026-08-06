@@ -569,6 +569,15 @@ def remaining_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id
     return total - allocated
 
 
+def allocated_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
+    """Menge einer Zutat, die bereits einem Einkauf (Trip) zugeteilt ist - unabhaengig davon, ob
+    schon tatsaechlich gekauft wurde. Ergaenzt remaining_quantity_for_ingredient (= Gesamtbedarf
+    minus dieser Menge): zusammen zeigen sie, wie viel noch gar nicht verplant ist, getrennt
+    davon, wie viel physisch noch gekauft werden muss (siehe need_purchase_remaining_summary)."""
+    key = _ingredient_key(ingredient_id, unit)
+    return _allocated_totals(shopping_list).get(key, Decimal("0"))
+
+
 def purchased_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
     key = _ingredient_key(ingredient_id, unit)
     return sum(

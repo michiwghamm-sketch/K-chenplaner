@@ -1290,14 +1290,27 @@ class PlanShoppingTripDialog(QDialog):
     Welche Zutaten ueberhaupt zur Debatte stehen, entscheidet der Aufrufer VORHER (typischerweise
     per Zeilenauswahl in der Haupt-Einkaufsliste, wo Kategorie/Preis/Restmenge schon sichtbar
     sind) - `groups` enthaelt nur noch genau diese Auswahl. Eine Zutat auf 0 setzen entfernt sie
-    wieder aus diesem Einkauf, ohne dass es dafuer eine eigene Checkbox braucht."""
+    wieder aus diesem Einkauf, ohne dass es dafuer eine eigene Checkbox braucht.
+
+    `default_quantities` (optional) ueberschreibt den vorausgefuellten Mengenwert je
+    (ingredient_id, unit) - z. B. wenn in der Tagesansicht nur EIN Tag markiert wurde, soll
+    dessen Tagesbedarf vorausgefuellt sein, nicht automatisch die komplette Restmenge ueber alle
+    Tage. Die Obergrenze bleibt trotzdem immer die komplette Restmenge (group.remaining_quantity),
+    falls doch mehr mitgenommen werden soll."""
 
     _COLUMNS = ("Zutat", "Kategorie", "Noch offen", "Menge für diesen Einkauf", "Einheit")
 
-    def __init__(self, groups: list[shopping_service.PlannableIngredientGroup], parent: QWidget | None = None) -> None:
+    def __init__(
+        self,
+        groups: list[shopping_service.PlannableIngredientGroup],
+        parent: QWidget | None = None,
+        *,
+        default_quantities: dict[tuple[int | None, str], Decimal] | None = None,
+    ) -> None:
         super().__init__(parent)
         self.setWindowTitle("Einkauf planen")
         self.setMinimumWidth(720)
+        self._default_quantities = default_quantities or {}
 
         self.store_edit = QLineEdit(self)
         self.store_edit.setPlaceholderText("z. B. Metro")
@@ -1354,12 +1367,15 @@ class PlanShoppingTripDialog(QDialog):
         remaining_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 2, remaining_item)
 
+        default_quantity = self._default_quantities.get((group.ingredient_id, group.unit), group.remaining_quantity)
+        default_quantity = min(default_quantity, group.remaining_quantity)
+
         quantity_spin = QDoubleSpinBox(self.table)
         quantity_spin.setProperty("ingredient_id", group.ingredient_id)
         quantity_spin.setProperty("unit", group.unit)
         quantity_spin.setDecimals(3)
         quantity_spin.setRange(0, float(group.remaining_quantity))
-        quantity_spin.setValue(float(group.remaining_quantity))
+        quantity_spin.setValue(float(default_quantity))
         self.table.setCellWidget(row, 3, quantity_spin)
 
         unit_item = QTableWidgetItem(group.unit)
