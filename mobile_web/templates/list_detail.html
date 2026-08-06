@@ -44,7 +44,7 @@
 
   {% for group in groups %}
     <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem; display:flex; justify-content:space-between; align-items:center;">
-      <span>{{ group.store }}</span>
+      <span>{{ group.store }}{% if group.planned_date_text %} <span style="font-weight:400;">— {{ group.planned_date_text }}</span>{% endif %}</span>
       <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store) }}" class="neu-mischen-form" style="margin:0;">
         <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
       </form>

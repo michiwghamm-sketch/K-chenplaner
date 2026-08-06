@@ -35,6 +35,8 @@ from app.services import ingredient_service, open_prices_category_service, open_
 from app.ui.dialogs import (
     AddPriceDialog,
     BarcodeSearchDialog,
+    BulkCategorizeIngredientsDialog,
+    IngredientCategoryRow,
     ManageStandardItemsDialog,
     OpenPricesProductPriceDialog,
     RecipeIngredientChoice,
@@ -143,6 +145,12 @@ class IngredientsView(QWidget):
             "Einkaufsliste automatisch mit übernommen werden."
         )
         self.manage_standard_items_button.clicked.connect(self._manage_standard_items)
+        self.bulk_categorize_button = QPushButton("Kategorien zuordnen...", left)
+        self.bulk_categorize_button.setToolTip(
+            "Vielen Zutaten auf einmal eine Kategorie zuweisen (Obst, Gemüse, Tiefkühl, ...) - "
+            "steuert die Sortierung der Einkaufsliste."
+        )
+        self.bulk_categorize_button.clicked.connect(self._bulk_categorize_ingredients)
 
         left_layout.addWidget(self.search_bar)
         left_layout.addWidget(self.active_only_checkbox)
@@ -151,6 +159,7 @@ class IngredientsView(QWidget):
         left_layout.addWidget(new_button)
         left_layout.addWidget(self.assign_barcodes_button)
         left_layout.addWidget(self.manage_standard_items_button)
+        left_layout.addWidget(self.bulk_categorize_button)
         splitter.addWidget(left)
 
         right_content = QWidget(self)
@@ -656,6 +665,35 @@ class IngredientsView(QWidget):
                         error_dialog(self, str(exc))
 
         info_dialog(self, "Verbrauchsmittel gespeichert.")
+
+    def _bulk_categorize_ingredients(self) -> None:
+        with self.context.session() as session:
+            rows = [
+                IngredientCategoryRow(id=ingredient.id, name=ingredient.name, category=ingredient.category)
+                for ingredient in ingredient_service.search_ingredients(session, active_only=False)
+            ]
+            used_categories = ingredient_service.list_used_categories(session)
+        suggestions = list(INGREDIENT_CATEGORIES) + [c for c in used_categories if c not in INGREDIENT_CATEGORIES]
+
+        dialog = BulkCategorizeIngredientsDialog(rows, suggestions, self)
+        if dialog.exec() != BulkCategorizeIngredientsDialog.DialogCode.Accepted:
+            return
+        changes = dialog.result_data()
+
+        updated = 0
+        with self.context.session() as session:
+            for row in rows:
+                new_category = changes.get(row.id)
+                if new_category == row.category:
+                    continue
+                ingredient = session.get(ingredient_service.Ingredient, row.id)
+                if ingredient is not None:
+                    ingredient.category = new_category
+                    updated += 1
+
+        info_dialog(self, f"{updated} Zutat(en) kategorisiert.")
+        self.refresh()
+        self._reload_detail()
 
     def _add_price(self) -> None:
         if self._current_ingredient_id is None:

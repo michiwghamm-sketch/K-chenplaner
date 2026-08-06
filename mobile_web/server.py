@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import secrets
+from datetime import date
 from decimal import Decimal, InvalidOperation
 
 from flask import Flask, abort, jsonify, redirect, render_template, request, session, url_for
@@ -150,6 +151,7 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 if not allocations:
                     continue
                 trip_ids = sorted({allocation.shopping_trip_id for allocation in allocations})
+                planned_dates = sorted({a.trip.planned_date for a in allocations if a.trip.planned_date})
                 sorted_allocations = sorted(
                     allocations,
                     key=lambda a: (
@@ -159,7 +161,14 @@ def create_app(config: AppConfig | None = None) -> Flask:
                     ),
                 )
                 all_shown_allocations.extend(sorted_allocations)
-                groups_view.append({"store": store, "trip_ids": trip_ids, "positionen": sorted_allocations})
+                groups_view.append(
+                    {
+                        "store": store,
+                        "trip_ids": trip_ids,
+                        "planned_date_text": ", ".join(d.strftime("%d.%m.%Y") for d in planned_dates) or None,
+                        "positionen": sorted_allocations,
+                    }
+                )
 
             total_items = len(all_shown_allocations)
             bought_items = sum(1 for allocation in all_shown_allocations if allocation.status == "gekauft")
@@ -254,6 +263,11 @@ def create_app(config: AppConfig | None = None) -> Flask:
 
             store = (request.form.get("store") or "").strip()
             participants = [name.strip() for name in (request.form.get("teilnehmer") or "").split(",") if name.strip()]
+            raw_planned_date = request.form.get("einkaufstag") or ""
+            try:
+                planned_date = date.fromisoformat(raw_planned_date) if raw_planned_date else None
+            except ValueError:
+                planned_date = None
             selections = []
             for group_key in request.form.getlist("position"):
                 raw_ingredient_id = request.form.get(f"ingredient_id_{group_key}", "")
@@ -270,7 +284,12 @@ def create_app(config: AppConfig | None = None) -> Flask:
 
             try:
                 shopping_service.create_shopping_trip(
-                    db_session, shopping_list, store=store, participants=participants, selections=selections
+                    db_session,
+                    shopping_list,
+                    store=store,
+                    participants=participants,
+                    selections=selections,
+                    planned_date=planned_date,
                 )
             except ValueError as exc:
                 return (
