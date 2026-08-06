@@ -40,6 +40,7 @@ from app.ui.widgets import COLOR_CRITICAL, PageHeader
 
 SHOPPING_TABLE_COLUMNS = (
     "Zutat",
+    "Kategorie",
     "Gesamtmenge",
     "Bereits gekauft",
     "Benoetigte Restmenge",
@@ -351,31 +352,32 @@ class ShoppingView(QWidget):
         name_item = QTableWidgetItem(item.ingredient.name if item.ingredient else "")
         name_item.setData(1000, item.id)
         self.table.setItem(row, 0, name_item)
-        self.table.setItem(row, 1, QTableWidgetItem(_format_decimal(item.quantity)))
+        self.table.setItem(row, 1, QTableWidgetItem((item.ingredient.category if item.ingredient else None) or ""))
+        self.table.setItem(row, 2, QTableWidgetItem(_format_decimal(item.quantity)))
         shopping_list = shopping_list or item.shopping_list
         _set_purchase_cells(self.table, row, shopping_list, item.ingredient_id, item.unit)
-        self.table.setItem(row, 4, QTableWidgetItem(item.unit or ""))
+        self.table.setItem(row, 5, QTableWidgetItem(item.unit or ""))
         price_item = QTableWidgetItem(
             _format_money(item.estimated_price_per_unit) if item.estimated_price_per_unit is not None else "fehlt"
         )
         if item.estimated_price_per_unit is None:
             price_item.setForeground(QColor(COLOR_CRITICAL))
-        self.table.setItem(row, 5, price_item)
-        self.table.setItem(row, 6, QTableWidgetItem(_format_money(item.estimated_total_price) if item.estimated_total_price is not None else ""))
+        self.table.setItem(row, 6, price_item)
+        self.table.setItem(row, 7, QTableWidgetItem(_format_money(item.estimated_total_price) if item.estimated_total_price is not None else ""))
         # Haendler/Status stehen ab jetzt auf den Allocations eines Einkaufs (siehe "Nach
         # Haendler"/"Nach Nutzer") - hier (Wochenliste/Gesamtliste) nur noch Altlast-Anzeige.
-        self.table.setItem(row, 7, QTableWidgetItem(item.store or ""))
-        self.table.setItem(row, 8, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
-        self.table.setItem(row, 9, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
-        self.table.setItem(row, 10, QTableWidgetItem(item.status or ""))
+        self.table.setItem(row, 8, QTableWidgetItem(item.store or ""))
+        self.table.setItem(row, 9, QTableWidgetItem(shopping_service.format_date_de(item.needed_date)))
+        self.table.setItem(row, 10, QTableWidgetItem(shopping_service.format_date_de(item.shopping_date)))
+        self.table.setItem(row, 11, QTableWidgetItem(item.status or ""))
         if shopping_service.is_manual_item(item):
             label = "Sonderwunsch" + (f" ({item.requested_by})" if item.requested_by else "")
             manual_item = QTableWidgetItem(label)
             manual_item.setForeground(QColor(ORANGE))
-            self.table.setItem(row, 11, manual_item)
+            self.table.setItem(row, 12, manual_item)
         else:
-            self.table.setItem(row, 11, QTableWidgetItem(item.linked_recipes_text or ""))
-        self.table.setItem(row, 12, QTableWidgetItem(""))
+            self.table.setItem(row, 12, QTableWidgetItem(item.linked_recipes_text or ""))
+        self.table.setItem(row, 13, QTableWidgetItem(""))
 
     def _add_allocation_row(self, allocation: ShoppingListItemAllocation) -> None:
         shopping_list = allocation.shopping_list
@@ -385,20 +387,21 @@ class ShoppingView(QWidget):
         name_item = QTableWidgetItem(allocation.ingredient.name if allocation.ingredient else "")
         name_item.setData(1000, allocation.id)
         self.table.setItem(row, 0, name_item)
-        self.table.setItem(row, 1, QTableWidgetItem(_format_decimal(allocation.quantity)))
+        self.table.setItem(row, 1, QTableWidgetItem((allocation.ingredient.category if allocation.ingredient else None) or ""))
+        self.table.setItem(row, 2, QTableWidgetItem(_format_decimal(allocation.quantity)))
         _set_purchase_cells(self.table, row, shopping_list, allocation.ingredient_id, allocation.unit)
-        self.table.setItem(row, 4, QTableWidgetItem(allocation.unit or ""))
+        self.table.setItem(row, 5, QTableWidgetItem(allocation.unit or ""))
         price_item = QTableWidgetItem(_format_money(price_per_unit) if price_per_unit is not None else "fehlt")
         if price_per_unit is None:
             price_item.setForeground(QColor(COLOR_CRITICAL))
-        self.table.setItem(row, 5, price_item)
+        self.table.setItem(row, 6, price_item)
         allocation_price = price_per_unit * allocation.quantity if price_per_unit is not None else None
-        self.table.setItem(row, 6, QTableWidgetItem(_format_money(allocation_price) if allocation_price is not None else ""))
-        self.table.setItem(row, 7, QTableWidgetItem(allocation.trip.store))
+        self.table.setItem(row, 7, QTableWidgetItem(_format_money(allocation_price) if allocation_price is not None else ""))
+        self.table.setItem(row, 8, QTableWidgetItem(allocation.trip.store))
         # Bedarfsdatum/Einkaufstag sind pro Einkaufstag (ShoppingListItem) verschieden und lassen
         # sich fuer eine zutatenbezogene Allocation nicht eindeutig zuordnen - siehe Wochenliste.
-        self.table.setItem(row, 8, QTableWidgetItem(""))
         self.table.setItem(row, 9, QTableWidgetItem(""))
+        self.table.setItem(row, 10, QTableWidgetItem(""))
         status_text = allocation.status
         if allocation.status == "gekauft":
             quantity = allocation.purchased_quantity if allocation.purchased_quantity is not None else allocation.quantity
@@ -406,9 +409,9 @@ class ShoppingView(QWidget):
             status_text = f"gekauft: {_format_decimal(quantity)} {allocation.unit or ''}"
             if date_text:
                 status_text += f" am {date_text}"
-        self.table.setItem(row, 10, QTableWidgetItem(status_text))
-        self.table.setItem(row, 11, QTableWidgetItem(shopping_service.ingredient_linked_recipes(shopping_list, allocation.ingredient_id, allocation.unit)))
-        self.table.setItem(row, 12, QTableWidgetItem(allocation.assigned_to or ""))
+        self.table.setItem(row, 11, QTableWidgetItem(status_text))
+        self.table.setItem(row, 12, QTableWidgetItem(shopping_service.ingredient_linked_recipes(shopping_list, allocation.ingredient_id, allocation.unit)))
+        self.table.setItem(row, 13, QTableWidgetItem(allocation.assigned_to or ""))
 
     def _edit_selected_trip(self) -> None:
         trip_id = self._selected_trip_id()
@@ -802,8 +805,8 @@ def _set_purchase_cells(
     remaining_item = QTableWidgetItem(f"{_format_decimal(remaining)} {unit_text}".strip())
     if history:
         purchased_item.setToolTip(history)
-    table.setItem(row, 2, purchased_item)
-    table.setItem(row, 3, remaining_item)
+    table.setItem(row, 3, purchased_item)
+    table.setItem(row, 4, remaining_item)
 
 
 def _aggregate_total_view_items(items) -> list:
