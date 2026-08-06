@@ -671,13 +671,17 @@ def create_shopping_trip(
     store: str,
     participants: list[str],
     selections: list[tuple[int | None, str, Decimal]],
+    planned_date: date | None = None,
 ) -> ShoppingTrip:
     """Legt einen Einkauf (Trip) an: waehlt Gesamtmengen noch offener Zutaten fuer einen
     Haendler aus und verteilt sie zufaellig gleichmaessig auf die Teilnehmer.
 
     `selections` sind (ingredient_id, unit, gewuenschte Menge)-Tripel, wie sie
     items_available_for_planning liefert - jede Auswahl wird zu genau einer Allocation
-    (einem Listeneintrag), es wird nichts auf mehrere Zeilen aufgesplittet."""
+    (einem Listeneintrag), es wird nichts auf mehrere Zeilen aufgesplittet.
+
+    `planned_date` ist optional und haelt fest, an welchem Tag dieser Haendler-Besuch
+    stattfinden soll (siehe ShoppingTrip.planned_date)."""
     store = store.strip()
     if not store:
         raise ValueError("Händler darf nicht leer sein.")
@@ -696,7 +700,12 @@ def create_shopping_trip(
         if quantity > remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit):
             raise ValueError(f"Menge für '{label}' übersteigt die noch offene Restmenge.")
 
-    trip = ShoppingTrip(shopping_list=shopping_list, store=store, participants_text=", ".join(participants) or None)
+    trip = ShoppingTrip(
+        shopping_list=shopping_list,
+        store=store,
+        participants_text=", ".join(participants) or None,
+        planned_date=planned_date,
+    )
     session.add(trip)
     for ingredient_id, unit, quantity in selections:
         item = _representative_item(shopping_list, ingredient_id, unit)

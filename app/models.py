@@ -466,6 +466,12 @@ class ShoppingTrip(Base):
     # Freitext, kommagetrennt - gleiches Muster wie MealPlanEntry/CampDay.responsible_person,
     # kein eigenes Person-Modell noetig fuer eine so kleine Vereins-App.
     participants_text: Mapped[Optional[str]] = mapped_column(Text)
+    # Wann dieser Haendler-Besuch stattfinden soll - optional, wird beim "Einkauf planen"-
+    # Assistenten (Desktop & Mobile) mit abgefragt. Bewusst unabhaengig vom automatisch
+    # hergeleiteten ShoppingListItem.shopping_date (das ist pro Rezept-Zutat/Mahlzeit-Bedarf,
+    # nicht pro tatsaechlichem Einkauf) - ein Trip kann mehrere Zutaten mit unterschiedlichen
+    # Bedarfsdaten buendeln, trotzdem an EINEM Tag eingekauft werden.
+    planned_date: Mapped[Optional[date]] = mapped_column(Date)
     created_at: Mapped[datetime] = created_timestamp_column()
     updated_at: Mapped[datetime] = updated_timestamp_column()
 

@@ -233,9 +233,14 @@ class ShoppingView(QWidget):
                 shopping_list = session.get(ShoppingList, shopping_list_id)
                 if shopping_list is not None:
                     shopping_service.migrate_legacy_store_status(session, shopping_list)
-                    for trip in sorted(shopping_list.trips, key=lambda trip: (trip.store.lower(), trip.created_at)):
+                    for trip in sorted(
+                        shopping_list.trips,
+                        key=lambda trip: (trip.store.lower(), trip.planned_date is None, trip.planned_date, trip.created_at),
+                    ):
                         label = f"Einkauf {trip.store}"
-                        if len([other for other in shopping_list.trips if other.store == trip.store]) > 1:
+                        if trip.planned_date:
+                            label = f"{label} am {shopping_service.format_date_de(trip.planned_date)}"
+                        elif len([other for other in shopping_list.trips if other.store == trip.store]) > 1:
                             label = f"{label} ({trip.created_at:%d.%m.%Y %H:%M})"
                         self.group_combo.addItem(label, f"trip:{trip.id}")
         index = self.group_combo.findData(current_mode)
@@ -288,7 +293,10 @@ class ShoppingView(QWidget):
             elif selected_trip_id is not None:
                 trip = session.get(ShoppingTrip, selected_trip_id)
                 if trip is not None:
-                    self._add_band_row(f"Einkauf {trip.store}")
+                    band_label = f"Einkauf {trip.store}"
+                    if trip.planned_date:
+                        band_label = f"{band_label} am {shopping_service.format_date_de(trip.planned_date)}"
+                    self._add_band_row(band_label)
                     for allocation in sorted(
                         trip.allocations,
                         key=lambda a: (
@@ -435,7 +443,15 @@ class ShoppingView(QWidget):
         if len(trip_ids) > 1:
             with self.context.session() as session:
                 trips = [session.get(ShoppingTrip, trip_id) for trip_id in trip_ids]
-                labels = [f"{trip.created_at:%d.%m.%Y %H:%M} ({len(trip.allocations)} Positionen)" for trip in trips]
+                labels = [
+                    (
+                        f"Einkaufstag {shopping_service.format_date_de(trip.planned_date)}"
+                        if trip.planned_date
+                        else f"angelegt {trip.created_at:%d.%m.%Y %H:%M}"
+                    )
+                    + f" ({len(trip.allocations)} Positionen)"
+                    for trip in trips
+                ]
             choice = prompt_choice(
                 self, "Einkauf auswählen", f"Mehrere Einkäufe bei '{store}' - welcher soll bearbeitet werden?", labels
             )
@@ -469,6 +485,7 @@ class ShoppingView(QWidget):
             available_groups = shopping_service.items_available_for_planning(trip.shopping_list)
             store_value = trip.store
             participants_text = trip.participants_text or ""
+            planned_date_value = trip.planned_date
 
         dialog = EditShoppingTripDialog(
             store=store_value,
@@ -476,6 +493,7 @@ class ShoppingView(QWidget):
             rows=rows,
             available_groups=available_groups,
             status_options=shopping_service.ALLOWED_ITEM_STATUSES,
+            planned_date=planned_date_value,
             parent=self,
         )
         if dialog.exec() != EditShoppingTripDialog.DialogCode.Accepted:
@@ -500,6 +518,7 @@ class ShoppingView(QWidget):
             if result["store"]:
                 trip.store = result["store"]
             trip.participants_text = result["participants_text"] or None
+            trip.planned_date = result["planned_date"]
             rows_by_id = {row["id"]: row for row in result["rows"]}
             new_selections = [
                 (row["ingredient_id"], row["unit"], row["quantity"])
@@ -563,6 +582,7 @@ class ShoppingView(QWidget):
                     store=result["store"],
                     participants=result["participants"],
                     selections=result["selections"],
+                    planned_date=result["planned_date"],
                 )
             except ValueError as exc:
                 error_dialog(self, str(exc))

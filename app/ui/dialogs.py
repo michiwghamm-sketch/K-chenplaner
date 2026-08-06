@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, replace
+from datetime import date
 from decimal import Decimal, InvalidOperation
 import random
 import re
@@ -9,6 +10,7 @@ from types import SimpleNamespace
 from PySide6.QtCore import QDate, QObject, QSize, Qt, QThread, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QDateEdit,
@@ -1297,9 +1299,22 @@ class PlanShoppingTripDialog(QDialog):
         self.participants_edit = QLineEdit(self)
         self.participants_edit.setPlaceholderText("z. B. Anna, Ben, Chris (kommagetrennt)")
 
+        self.planned_date_checkbox = QCheckBox("Einkaufstag festlegen", self)
+        self.planned_date_checkbox.toggled.connect(self._on_planned_date_toggled)
+        self.planned_date_edit = QDateEdit(self)
+        self.planned_date_edit.setCalendarPopup(True)
+        self.planned_date_edit.setDisplayFormat("dd.MM.yyyy")
+        self.planned_date_edit.setDate(QDate.currentDate())
+        self.planned_date_edit.setEnabled(False)
+        planned_date_row = QHBoxLayout()
+        planned_date_row.addWidget(self.planned_date_checkbox)
+        planned_date_row.addWidget(self.planned_date_edit)
+        planned_date_row.addStretch(1)
+
         form = QFormLayout()
         form.addRow("Händler", self.store_edit)
         form.addRow("Teilnehmer", self.participants_edit)
+        form.addRow("Einkaufstag", planned_date_row)
 
         self.table = QTableWidget(0, len(self._COLUMNS), self)
         self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
@@ -1351,6 +1366,9 @@ class PlanShoppingTripDialog(QDialog):
         unit_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 4, unit_item)
 
+    def _on_planned_date_toggled(self, checked: bool) -> None:
+        self.planned_date_edit.setEnabled(checked)
+
     def result_data(self) -> dict:
         participants = [name.strip() for name in self.participants_edit.text().split(",") if name.strip()]
         selections = []
@@ -1362,10 +1380,12 @@ class PlanShoppingTripDialog(QDialog):
             if quantity_spin.value() <= 0:
                 continue
             selections.append((checkbox.property("ingredient_id"), checkbox.property("unit"), Decimal(str(quantity_spin.value()))))
+        planned_date = self.planned_date_edit.date().toPython() if self.planned_date_checkbox.isChecked() else None
         return {
             "store": self.store_edit.text().strip(),
             "participants": participants,
             "selections": selections,
+            "planned_date": planned_date,
         }
 
 
@@ -1402,6 +1422,7 @@ class EditShoppingTripDialog(QDialog):
         rows: list[TripAllocationRow],
         available_groups: list[shopping_service.PlannableIngredientGroup],
         status_options: tuple[str, ...],
+        planned_date: date | None = None,
         parent: QWidget | None = None,
     ) -> None:
         super().__init__(parent)
@@ -1416,9 +1437,25 @@ class EditShoppingTripDialog(QDialog):
         self.participants_edit = QLineEdit(participants_text, self)
         self.participants_edit.setPlaceholderText("z. B. Anna, Ben, Chris (kommagetrennt)")
 
+        self.planned_date_checkbox = QCheckBox("Einkaufstag festlegen", self)
+        self.planned_date_checkbox.setChecked(planned_date is not None)
+        self.planned_date_checkbox.toggled.connect(self._on_planned_date_toggled)
+        self.planned_date_edit = QDateEdit(self)
+        self.planned_date_edit.setCalendarPopup(True)
+        self.planned_date_edit.setDisplayFormat("dd.MM.yyyy")
+        self.planned_date_edit.setDate(
+            QDate(planned_date.year, planned_date.month, planned_date.day) if planned_date else QDate.currentDate()
+        )
+        self.planned_date_edit.setEnabled(planned_date is not None)
+        planned_date_row = QHBoxLayout()
+        planned_date_row.addWidget(self.planned_date_checkbox)
+        planned_date_row.addWidget(self.planned_date_edit)
+        planned_date_row.addStretch(1)
+
         form = QFormLayout()
         form.addRow("Händler", self.store_edit)
         form.addRow("Teilnehmer", self.participants_edit)
+        form.addRow("Einkaufstag", planned_date_row)
 
         self.table = QTableWidget(0, len(self._COLUMNS), self)
         self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
@@ -1578,6 +1615,9 @@ class EditShoppingTripDialog(QDialog):
     def was_delete_requested(self) -> bool:
         return self._delete_requested
 
+    def _on_planned_date_toggled(self, checked: bool) -> None:
+        self.planned_date_edit.setEnabled(checked)
+
     def result_data(self) -> dict:
         rows = []
         for row in range(self.table.rowCount()):
@@ -1594,11 +1634,13 @@ class EditShoppingTripDialog(QDialog):
                     "status": status_combo.currentText(),
                 }
             )
+        planned_date = self.planned_date_edit.date().toPython() if self.planned_date_checkbox.isChecked() else None
         return {
             "store": self.store_edit.text().strip(),
             "participants_text": self.participants_edit.text().strip(),
             "rows": rows,
             "removed_ids": self._removed_ids,
+            "planned_date": planned_date,
         }
 
 
@@ -1824,6 +1866,116 @@ class ManageStandardItemsDialog(QDialog):
                 }
             )
         return {"rows": rows, "removed_ids": self._removed_ids}
+
+
+@dataclass(slots=True)
+class IngredientCategoryRow:
+    id: int
+    name: str
+    category: str | None
+
+
+class BulkCategorizeIngredientsDialog(QDialog):
+    """Ordnet vielen Zutaten auf einmal eine Kategorie zu (Obst, Gemüse, ...) - fuer die
+    Kategorie-Sortierung der Einkaufsliste noetig, aber bei vielen bestehenden Zutaten zu
+    muehsam, das einzeln ueber das Zutaten-Formular zu pflegen. Mehrere Zeilen markieren
+    (Strg-/Umschalt-Klick) und "Auf Auswahl anwenden" nutzen, um dieselbe Kategorie in einem
+    Schritt fuer alle markierten Zutaten zu setzen (z. B. alle Gemuesesorten auf einmal)."""
+
+    _COLUMNS = ("Zutat", "Kategorie")
+
+    def __init__(
+        self, rows: list[IngredientCategoryRow], category_suggestions: list[str], parent: QWidget | None = None
+    ) -> None:
+        super().__init__(parent)
+        self.setWindowTitle("Kategorien zuordnen")
+        self.setMinimumSize(680, 480)
+        self.resize(720, 640)
+        self._category_suggestions = category_suggestions
+        # Einzige Quelle der Wahrheit fuer bereits vorgenommene (noch ungespeicherte) Aenderungen -
+        # wird bei jedem Neuaufbau der Tabelle (Filter-Checkbox) UND vor result_data() aus der
+        # gerade sichtbaren Tabelle aktualisiert, damit ein Umschalten des Filters keine bereits
+        # eingetragene Kategorie einer dadurch ausgeblendeten Zeile verwirft.
+        self._pending_values: dict[int, str | None] = {row.id: row.category for row in rows}
+        self._all_rows = rows
+
+        self.only_uncategorized_checkbox = QCheckBox("Nur unkategorisierte Zutaten anzeigen", self)
+        self.only_uncategorized_checkbox.setChecked(True)
+        self.only_uncategorized_checkbox.toggled.connect(self._reload_rows)
+
+        self.bulk_category_combo = QComboBox(self)
+        self.bulk_category_combo.setEditable(True)
+        self.bulk_category_combo.addItems(category_suggestions)
+        self.bulk_category_combo.setCurrentIndex(-1)
+        apply_bulk_button = QPushButton("Auf Auswahl anwenden", self)
+        apply_bulk_button.clicked.connect(self._apply_bulk_category)
+
+        bulk_row = QHBoxLayout()
+        bulk_row.addWidget(QLabel("Zeilen markieren (Strg-/Umschalt-Klick), dann:", self))
+        bulk_row.addWidget(self.bulk_category_combo, 1)
+        bulk_row.addWidget(apply_bulk_button)
+
+        self.table = QTableWidget(0, len(self._COLUMNS), self)
+        self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
+        self.table.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeMode.Stretch)
+        self.table.horizontalHeader().resizeSection(1, 220)
+        self.table.verticalHeader().setVisible(False)
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
+        self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self.accept)
+        buttons.rejected.connect(self.reject)
+
+        layout = QVBoxLayout(self)
+        layout.addWidget(self.only_uncategorized_checkbox)
+        layout.addLayout(bulk_row)
+        layout.addWidget(self.table, stretch=1)
+        layout.addWidget(buttons)
+
+        self._reload_rows()
+
+    def _sync_pending_from_table(self) -> None:
+        for table_row in range(self.table.rowCount()):
+            ingredient_id = self.table.item(table_row, 0).data(1000)
+            combo = self.table.cellWidget(table_row, 1)
+            self._pending_values[ingredient_id] = combo.currentText().strip() or None
+
+    def _reload_rows(self) -> None:
+        self._sync_pending_from_table()
+        only_uncategorized = self.only_uncategorized_checkbox.isChecked()
+        visible_rows = [
+            row for row in self._all_rows if not only_uncategorized or not self._pending_values.get(row.id)
+        ]
+        self.table.setRowCount(0)
+        for row in sorted(visible_rows, key=lambda r: r.name.lower()):
+            table_row = self.table.rowCount()
+            self.table.insertRow(table_row)
+            name_item = QTableWidgetItem(row.name)
+            name_item.setData(1000, row.id)
+            name_item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
+            self.table.setItem(table_row, 0, name_item)
+
+            combo = QComboBox(self.table)
+            combo.setEditable(True)
+            combo.setInsertPolicy(QComboBox.InsertPolicy.NoInsert)
+            combo.addItems(self._category_suggestions)
+            combo.setCurrentText(self._pending_values.get(row.id) or "")
+            self.table.setCellWidget(table_row, 1, combo)
+        self.table.resizeRowsToContents()
+
+    def _apply_bulk_category(self) -> None:
+        category = self.bulk_category_combo.currentText().strip()
+        if not category:
+            return
+        for index in self.table.selectionModel().selectedRows():
+            combo = self.table.cellWidget(index.row(), 1)
+            combo.setCurrentText(category)
+
+    def result_data(self) -> dict[int, str | None]:
+        self._sync_pending_from_table()
+        return dict(self._pending_values)
 
 
 class ScaleRecipeDialog(QDialog):

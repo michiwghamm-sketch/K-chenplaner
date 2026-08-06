@@ -185,6 +185,7 @@ def test_plan_trip_form_and_submit_creates_allocation(tmp_path, monkeypatch):
         data={
             "store": "Metro",
             "teilnehmer": "Anna, Ben",
+            "einkaufstag": "2026-08-05",
             "position": ["0"],
             "ingredient_id_0": str(ingredient_id),
             "unit_0": unit,
@@ -194,6 +195,13 @@ def test_plan_trip_form_and_submit_creates_allocation(tmp_path, monkeypatch):
     )
     assert submit.status_code == 200
     assert "Metro".encode() in submit.data
+    assert "05.08.2026".encode() in submit.data
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        trip = session.query(ShoppingTrip).filter_by(store="Metro").one()
+        assert trip.planned_date == date(2026, 8, 5)
 
 
 def test_person_filter_shows_only_assigned_allocations(tmp_path, monkeypatch):

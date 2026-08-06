@@ -468,6 +468,35 @@ def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -
             )
 
 
+def test_create_shopping_trip_stores_optional_planned_date(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        karotten = Ingredient(name="Karotten", normalized_name="karotten", default_unit="kg")
+        shopping_list.items.append(ShoppingListItem(ingredient=karotten, quantity=Decimal("10.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, karotten.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        trip_with_date = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Metro",
+            participants=[],
+            selections=[(ingredient_id, "kg", Decimal("5.000"))],
+            planned_date=date(2026, 8, 5),
+        )
+        assert trip_with_date.planned_date == date(2026, 8, 5)
+
+        trip_without_date = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Edeka", participants=[], selections=[(ingredient_id, "kg", Decimal("5.000"))]
+        )
+        assert trip_without_date.planned_date is None
+
+
 def test_add_allocations_to_existing_trip_uses_open_restmenge(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")
