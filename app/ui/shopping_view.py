@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
+    QAbstractItemView,
     QCheckBox,
     QComboBox,
     QFileDialog,
@@ -102,8 +103,10 @@ class ShoppingView(QWidget):
 
         plan_trip_button = QPushButton("Einkauf planen...", self)
         plan_trip_button.setToolTip(
-            "Wählt Teilmengen der noch offenen Positionen für einen Händler aus und verteilt sie "
-            "zufällig gleichmäßig auf die mitkommenden Personen."
+            "Zuerst in der Wochenliste-/Gesamtlisten-Ansicht die gewünschten Positionen in der "
+            "Tabelle markieren (Strg-/Umschalt-Klick für mehrere), dann hier klicken - fragt "
+            "Händler, Teilnehmer, Einkaufstag und Mengen ab und verteilt zufällig gleichmäßig "
+            "auf die mitkommenden Personen."
         )
         plan_trip_button.clicked.connect(self._plan_shopping_trip)
         top_row.addWidget(plan_trip_button)
@@ -194,6 +197,11 @@ class ShoppingView(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSortingEnabled(True)
+        # Zeilen markierbar (Strg-/Umschalt-Klick fuer mehrere) - "Einkauf planen" nutzt diese
+        # Auswahl direkt aus der Hauptliste (mit Kategorie/Preis/Restmenge sichtbar), statt
+        # nochmal in einem eigenen Dialog auswaehlen zu lassen (siehe _plan_shopping_trip).
+        self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
+        self.table.setSelectionMode(QAbstractItemView.SelectionMode.ExtendedSelection)
         for index, action in self._column_actions.items():
             self.table.setColumnHidden(index, not action.isChecked())
             action.toggled.connect(lambda checked, i=index: self._on_column_toggled(i, checked))
@@ -589,16 +597,59 @@ class ShoppingView(QWidget):
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
 
+    def _selected_ingredient_keys(self) -> list[tuple[int | None, str]]:
+        """Eindeutige (ingredient_id, unit)-Paare aus den aktuell in der Tabelle markierten
+        Zeilen - nur sinnvoll in der Wochenliste-/Gesamtlisten-Ansicht (dort sind Zeilen echte
+        ShoppingListItem-Positionen, siehe _add_item_row); in Händler-/Personen-/Trip-Ansicht
+        sind Zeilen bereits bestehende Allocations, keine offenen Positionen zum Planen."""
+        if self.group_combo.currentData() not in ("none", "day"):
+            return []
+        item_ids = []
+        for index in self.table.selectionModel().selectedRows():
+            name_item = self.table.item(index.row(), 0)
+            item_id = name_item.data(1000) if name_item is not None else None
+            if item_id is not None:
+                item_ids.append(item_id)
+        if not item_ids:
+            return []
+        keys: list[tuple[int | None, str]] = []
+        seen: set[tuple[int | None, str]] = set()
+        with self.context.session() as session:
+            for item_id in item_ids:
+                item = session.get(ShoppingListItem, item_id)
+                if item is None:
+                    continue
+                key = (item.ingredient_id, item.unit or "")
+                if key not in seen:
+                    seen.add(key)
+                    keys.append(key)
+        return keys
+
     def _plan_shopping_trip(self) -> None:
         shopping_list_id = self.list_combo.currentData()
         if shopping_list_id is None:
             error_dialog(self, "Es ist keine Einkaufsliste ausgewählt.")
             return
+        selected_keys = self._selected_ingredient_keys()
+        if not selected_keys:
+            error_dialog(
+                self,
+                "Bitte zuerst in der Wochenliste- oder Gesamtlisten-Ansicht die gewünschten "
+                "Positionen in der Tabelle markieren (anklicken, für mehrere Strg- oder "
+                "Umschalt-Klick) und dann erneut auf \"Einkauf planen...\" klicken.",
+            )
+            return
+
         with self.context.session() as session:
             shopping_list = session.get(ShoppingList, shopping_list_id)
-            plannable = shopping_service.items_available_for_planning(shopping_list)
+            plannable_by_key = {
+                (group.ingredient_id, group.unit): group
+                for group in shopping_service.items_available_for_planning(shopping_list)
+            }
+        plannable = [plannable_by_key[key] for key in selected_keys if key in plannable_by_key]
+        skipped = len(selected_keys) - len(plannable)
         if not plannable:
-            info_dialog(self, "Alle Positionen sind bereits vollständig einem Einkauf zugeteilt.")
+            info_dialog(self, "Die markierten Positionen sind bereits vollständig einem Einkauf zugeteilt.")
             return
 
         dialog = PlanShoppingTripDialog(plannable, self)
@@ -606,7 +657,7 @@ class ShoppingView(QWidget):
             return
         result = dialog.result_data()
         if not result["selections"]:
-            error_dialog(self, "Bitte mindestens eine Position auswählen.")
+            error_dialog(self, "Mindestens eine Menge muss größer als 0 sein.")
             return
 
         with self.context.session() as session:
@@ -624,7 +675,10 @@ class ShoppingView(QWidget):
                 error_dialog(self, str(exc))
                 return
             trip_id = trip.id
-        info_dialog(self, "Einkauf angelegt.")
+        message = "Einkauf angelegt."
+        if skipped:
+            message += f" ({skipped} markierte Position(en) waren bereits vollständig zugeteilt und wurden übersprungen.)"
+        info_dialog(self, message)
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
 

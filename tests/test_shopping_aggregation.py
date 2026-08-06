@@ -576,6 +576,33 @@ def test_items_available_for_planning_combines_ingredient_across_shopping_days(s
         assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("10.000")
 
 
+def test_items_available_for_planning_includes_category_and_sorts_by_it(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        apfel = Ingredient(name="Apfel", normalized_name="apfel", default_unit="kg", category="Obst")
+        muellsaecke = Ingredient(name="Müllsäcke", normalized_name="muellsaecke", default_unit="Stk", category="Non-Food")
+        mehl = Ingredient(name="Mehl", normalized_name="mehl", default_unit="kg")
+        session.add_all([camp_year, shopping_list, apfel, muellsaecke, mehl])
+        session.flush()
+        shopping_list.items.extend(
+            [
+                ShoppingListItem(ingredient=muellsaecke, quantity=Decimal("2.000"), unit="Stk"),
+                ShoppingListItem(ingredient=apfel, quantity=Decimal("3.000"), unit="kg"),
+                ShoppingListItem(ingredient=mehl, quantity=Decimal("1.000"), unit="kg"),
+            ]
+        )
+        session.flush()
+        shopping_list_id = shopping_list.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        groups = shopping_service.items_available_for_planning(shopping_list)
+        # Obst vor unkategorisiert (Mehl) vor Non-Food, siehe ingredient_category_sort_key.
+        assert [g.ingredient_name for g in groups] == ["Apfel", "Mehl", "Müllsäcke"]
+        assert [g.category for g in groups] == ["Obst", None, "Non-Food"]
+
+
 def test_migrate_legacy_store_status_creates_one_trip_per_store(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

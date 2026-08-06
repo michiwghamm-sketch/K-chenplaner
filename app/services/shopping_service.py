@@ -619,6 +619,7 @@ class PlannableIngredientGroup:
     ingredient_name: str
     unit: str
     remaining_quantity: Decimal
+    category: str | None = None
 
 
 def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableIngredientGroup]:
@@ -626,8 +627,11 @@ def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableI
     totals = _ingredient_totals(shopping_list)
     allocated = _allocated_totals(shopping_list)
     names: dict[tuple[int | None, str], str] = {}
+    categories: dict[tuple[int | None, str], str | None] = {}
     for item in shopping_list.items:
-        names[_ingredient_key(item.ingredient_id, item.unit)] = item.ingredient.name if item.ingredient else ""
+        key = _ingredient_key(item.ingredient_id, item.unit)
+        names[key] = item.ingredient.name if item.ingredient else ""
+        categories[key] = item.ingredient.category if item.ingredient else None
 
     result = []
     for key, total in totals.items():
@@ -637,10 +641,14 @@ def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableI
         ingredient_id, unit = key
         result.append(
             PlannableIngredientGroup(
-                ingredient_id=ingredient_id, ingredient_name=names.get(key, ""), unit=unit, remaining_quantity=remaining
+                ingredient_id=ingredient_id,
+                ingredient_name=names.get(key, ""),
+                unit=unit,
+                remaining_quantity=remaining,
+                category=categories.get(key),
             )
         )
-    result.sort(key=lambda group: group.ingredient_name.lower())
+    result.sort(key=lambda group: (ingredient_category_sort_key(group.category), group.ingredient_name.lower()))
     return result
 
 

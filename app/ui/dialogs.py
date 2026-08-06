@@ -1283,11 +1283,16 @@ class MealSlotDialog(QDialog):
 
 
 class PlanShoppingTripDialog(QDialog):
-    """"Einkauf planen"-Assistent: Händler + Teilnehmer wählen, Teilmengen der noch offenen
-    Zutaten (mit Gesamtmenge über alle Einkaufstage) auswählen - wird beim Bestätigen
-    zufällig gleichmäßig auf die Teilnehmer verteilt (siehe shopping_service.create_shopping_trip)."""
+    """"Einkauf planen"-Assistent: Händler, Teilnehmer und Einkaufstag festlegen, Mengen fuer die
+    Positionen bestaetigen/anpassen - wird beim Bestaetigen zufaellig gleichmaessig auf die
+    Teilnehmer verteilt (siehe shopping_service.create_shopping_trip).
 
-    _COLUMNS = ("Kaufen", "Zutat", "Noch offen", "Menge für diesen Einkauf", "Einheit")
+    Welche Zutaten ueberhaupt zur Debatte stehen, entscheidet der Aufrufer VORHER (typischerweise
+    per Zeilenauswahl in der Haupt-Einkaufsliste, wo Kategorie/Preis/Restmenge schon sichtbar
+    sind) - `groups` enthaelt nur noch genau diese Auswahl. Eine Zutat auf 0 setzen entfernt sie
+    wieder aus diesem Einkauf, ohne dass es dafuer eine eigene Checkbox braucht."""
+
+    _COLUMNS = ("Zutat", "Kategorie", "Noch offen", "Menge für diesen Einkauf", "Einheit")
 
     def __init__(self, groups: list[shopping_service.PlannableIngredientGroup], parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -1319,7 +1324,6 @@ class PlanShoppingTripDialog(QDialog):
         self.table = QTableWidget(0, len(self._COLUMNS), self)
         self.table.setHorizontalHeaderLabels(list(self._COLUMNS))
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
-        self.table.horizontalHeader().resizeSection(0, 70)
         self.table.verticalHeader().setVisible(False)
         for group in groups:
             self._add_row(group)
@@ -1330,7 +1334,7 @@ class PlanShoppingTripDialog(QDialog):
 
         layout = QVBoxLayout(self)
         layout.addLayout(form)
-        layout.addWidget(QLabel("Zutaten, die bei diesem Einkauf besorgt werden sollen:", self))
+        layout.addWidget(QLabel("Mengen für diesen Einkauf (0 = diese Position nicht mitnehmen):", self))
         layout.addWidget(self.table)
         layout.addWidget(buttons)
 
@@ -1338,25 +1342,21 @@ class PlanShoppingTripDialog(QDialog):
         row = self.table.rowCount()
         self.table.insertRow(row)
 
-        checkbox = QCheckBox(self.table)
-        checkbox.setProperty("ingredient_id", group.ingredient_id)
-        checkbox.setProperty("unit", group.unit)
-        checkbox_container = QWidget(self.table)
-        checkbox_layout = QHBoxLayout(checkbox_container)
-        checkbox_layout.addWidget(checkbox)
-        checkbox_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        checkbox_layout.setContentsMargins(0, 0, 0, 0)
-        self.table.setCellWidget(row, 0, checkbox_container)
-
         name_item = QTableWidgetItem(group.ingredient_name)
         name_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
-        self.table.setItem(row, 1, name_item)
+        self.table.setItem(row, 0, name_item)
+
+        category_item = QTableWidgetItem(group.category or "")
+        category_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
+        self.table.setItem(row, 1, category_item)
 
         remaining_item = QTableWidgetItem(f"{shopping_service.format_quantity_de(group.remaining_quantity)} {group.unit}")
         remaining_item.setFlags(Qt.ItemFlag.ItemIsEnabled)
         self.table.setItem(row, 2, remaining_item)
 
         quantity_spin = QDoubleSpinBox(self.table)
+        quantity_spin.setProperty("ingredient_id", group.ingredient_id)
+        quantity_spin.setProperty("unit", group.unit)
         quantity_spin.setDecimals(3)
         quantity_spin.setRange(0, float(group.remaining_quantity))
         quantity_spin.setValue(float(group.remaining_quantity))
@@ -1373,13 +1373,10 @@ class PlanShoppingTripDialog(QDialog):
         participants = [name.strip() for name in self.participants_edit.text().split(",") if name.strip()]
         selections = []
         for row in range(self.table.rowCount()):
-            checkbox = self.table.cellWidget(row, 0).findChild(QCheckBox)
-            if not checkbox.isChecked():
-                continue
             quantity_spin = self.table.cellWidget(row, 3)
             if quantity_spin.value() <= 0:
                 continue
-            selections.append((checkbox.property("ingredient_id"), checkbox.property("unit"), Decimal(str(quantity_spin.value()))))
+            selections.append((quantity_spin.property("ingredient_id"), quantity_spin.property("unit"), Decimal(str(quantity_spin.value()))))
         planned_date = self.planned_date_edit.date().toPython() if self.planned_date_checkbox.isChecked() else None
         return {
             "store": self.store_edit.text().strip(),
