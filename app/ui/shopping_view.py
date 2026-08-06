@@ -650,10 +650,29 @@ class ShoppingView(QWidget):
                 (group.ingredient_id, group.unit): group
                 for group in shopping_service.items_available_for_planning(shopping_list)
             }
+            # Fuer eine praezise Rueckmeldung: warum genau wurde eine markierte Position nicht
+            # angeboten? "Gesamtmenge 0" (z. B. eine Rezeptzutat, die bei aktueller Portionenzahl
+            # auf 0 gerundet wird) ist ein ganz anderer, harmloserer Fall als "schon komplett
+            # gekauft" - beides unter "bereits zugeteilt" zu melden war irrefuehrend.
+            skip_reasons: dict[tuple[int | None, str], str] = {}
+            for key in selected_quantities:
+                if key in plannable_by_key:
+                    continue
+                ingredient_id, unit = key
+                needed, _purchased, _remaining, _history = shopping_service.need_purchase_remaining_summary(
+                    shopping_list, ingredient_id, unit
+                )
+                name = next(
+                    (i.ingredient.name for i in shopping_list.items if i.ingredient_id == ingredient_id and i.ingredient),
+                    str(ingredient_id),
+                )
+                if needed <= 0:
+                    skip_reasons[key] = f"{name}: Gesamtmenge ist 0, nichts zu planen"
+                else:
+                    skip_reasons[key] = f"{name}: bereits vollständig gekauft"
         plannable = [plannable_by_key[key] for key in selected_quantities if key in plannable_by_key]
-        skipped = len(selected_quantities) - len(plannable)
         if not plannable:
-            info_dialog(self, "Die markierten Positionen sind bereits vollständig einem Einkauf zugeteilt.")
+            info_dialog(self, "Für die markierten Positionen gibt es nichts zu planen:\n- " + "\n- ".join(skip_reasons.values()))
             return
 
         dialog = PlanShoppingTripDialog(plannable, self, default_quantities=selected_quantities)
@@ -680,8 +699,8 @@ class ShoppingView(QWidget):
                 return
             trip_id = trip.id
         message = "Einkauf angelegt."
-        if skipped:
-            message += f" ({skipped} markierte Position(en) waren bereits vollständig zugeteilt und wurden übersprungen.)"
+        if skip_reasons:
+            message += "\n\nÜbersprungen:\n- " + "\n- ".join(skip_reasons.values())
         info_dialog(self, message)
         self._reload_group_combo(select_mode=f"trip:{trip_id}")
         self._reload_table()
