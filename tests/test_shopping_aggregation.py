@@ -463,10 +463,85 @@ def test_create_shopping_trip_rejects_quantity_over_remaining(session_factory) -
         assert trip.allocations[0].shopping_list_item_id == item.id
         assert trip.allocations[0].assigned_to in ("Anna", "Ben")
 
+        # Ist die gesamte Zutat bereits GEKAUFT (nicht nur offen eingeplant), gibt es nichts mehr
+        # zum Verschieben - das uebersteigt dann wirklich die Gesamtmenge.
+        shopping_service.mark_allocation_purchased(trip.allocations[0], Decimal("20.000"))
         with pytest.raises(ValueError):
             shopping_service.create_shopping_trip(
                 session, shopping_list, store="Edeka", participants=[], selections=[(ingredient_id, "kg", Decimal("15.000"))]
             )
+
+
+def test_create_shopping_trip_borrows_quantity_from_other_open_allocation(session_factory) -> None:
+    """Realer Anwendungsfall: die komplette Menge ist schon fuer einen spaeteren Einkauf (Montag)
+    eingeplant, aber ein Teil wird spontan bei einem anderen (frueheren) Einkauf mitgenommen -
+    die Menge soll automatisch verschoben werden, statt den zweiten Einkauf abzulehnen."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        gurken = Ingredient(name="Gurken", normalized_name="gurken", default_unit="kg")
+        shopping_list.items.append(ShoppingListItem(ingredient=gurken, quantity=Decimal("10.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, gurken.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        montag = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Metro",
+            participants=[],
+            selections=[(ingredient_id, "kg", Decimal("10.000"))],
+            planned_date=date(2026, 8, 10),
+        )
+        assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("0.000")
+
+        # Spontaner frueherer Einkauf: 2 kg Gurken - obwohl "eigentlich" nichts mehr offen ist,
+        # wird die Menge automatisch aus dem Montags-Einkauf verschoben.
+        samstag = shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Rewe",
+            participants=[],
+            selections=[(ingredient_id, "kg", Decimal("2.000"))],
+            planned_date=date(2026, 8, 8),
+        )
+        assert len(samstag.allocations) == 1
+        assert samstag.allocations[0].quantity == Decimal("2.000")
+        assert montag.allocations[0].quantity == Decimal("8.000")
+        # Gesamtmenge bleibt unveraendert - nur verschoben, nicht vermehrt.
+        assert shopping_service.allocated_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("10.000")
+        assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("0.000")
+
+
+def test_create_shopping_trip_borrow_removes_allocation_left_at_zero(session_factory) -> None:
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        gurken = Ingredient(name="Gurken", normalized_name="gurken", default_unit="kg")
+        shopping_list.items.append(ShoppingListItem(ingredient=gurken, quantity=Decimal("5.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, gurken.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        montag = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(ingredient_id, "kg", Decimal("5.000"))]
+        )
+        montag_allocation_id = montag.allocations[0].id
+
+        shopping_service.create_shopping_trip(
+            session, shopping_list, store="Rewe", participants=[], selections=[(ingredient_id, "kg", Decimal("5.000"))]
+        )
+
+    with session_scope(session_factory) as session:
+        # Die komplett leergeraeumte Montags-Allocation wird entfernt statt als 0-kg-Karteileiche
+        # stehen zu bleiben.
+        assert session.get(ShoppingListItemAllocation, montag_allocation_id) is None
 
 
 def test_create_shopping_trip_stores_optional_planned_date(session_factory) -> None:
@@ -532,12 +607,52 @@ def test_add_allocations_to_existing_trip_uses_open_restmenge(session_factory) -
         assert created[0].ingredient_id == zwiebeln.id
         assert created[0].assigned_to == "Anna"
         assert shopping_service.remaining_quantity_for_ingredient(shopping_list, zwiebeln.id, "kg") == Decimal("2.000")
+
+        # Die bereits zugeteilten 3 kg sind schon GEKAUFT (kein Verschieben mehr moeglich), die
+        # restlichen 2 kg sind gar keiner Allocation zugeordnet - zusammen reicht das nicht fuer
+        # nochmal 3 kg, das wird also weiterhin abgelehnt.
+        shopping_service.mark_allocation_purchased(created[0], Decimal("3.000"))
         with pytest.raises(ValueError):
             shopping_service.add_allocations_to_trip(
                 session,
                 trip,
                 selections=[(zwiebeln.id, "kg", Decimal("3.000"))],
             )
+
+
+def test_items_available_for_planning_still_includes_fully_allocated_but_unpurchased_ingredient(
+    session_factory,
+) -> None:
+    """Realer Anwendungsfall (siehe test_create_shopping_trip_borrows_quantity_from_other_open_allocation):
+    eine Zutat, die schon komplett einem anderen, noch nicht abgeschlossenen Einkauf zugeteilt
+    ist, soll beim Planen eines WEITEREN Einkaufs trotzdem waehlbar bleiben, weil die Menge bei
+    Bedarf automatisch verschoben wird - erst tatsaechlich Gekauftes faellt raus."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        gurken = Ingredient(name="Gurken", normalized_name="gurken", default_unit="kg")
+        shopping_list.items.append(ShoppingListItem(ingredient=gurken, quantity=Decimal("10.000"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, gurken.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(ingredient_id, "kg", Decimal("10.000"))]
+        )
+        # Komplett offen zugeteilt - remaining_quantity_for_ingredient ist 0 ...
+        assert shopping_service.remaining_quantity_for_ingredient(shopping_list, ingredient_id, "kg") == Decimal("0.000")
+        # ... trotzdem weiterhin waehlbar fuer einen neuen Einkauf (Menge wird bei Bedarf verschoben).
+        groups = shopping_service.items_available_for_planning(shopping_list)
+        assert [g.ingredient_name for g in groups] == ["Gurken"]
+        assert groups[0].remaining_quantity == Decimal("10.000")
+
+        # Erst wenn tatsaechlich gekauft wurde, sinkt die waehlbare Menge entsprechend.
+        shopping_service.mark_allocation_purchased(trip.allocations[0], Decimal("4.000"))
+        groups = shopping_service.items_available_for_planning(shopping_list)
+        assert groups[0].remaining_quantity == Decimal("6.000")
 
 
 def test_items_available_for_planning_combines_ingredient_across_shopping_days(session_factory) -> None:

@@ -578,6 +578,52 @@ def allocated_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id
     return _allocated_totals(shopping_list).get(key, Decimal("0"))
 
 
+def _borrow_sort_key(allocation: ShoppingListItemAllocation) -> tuple[int, int]:
+    """Reihenfolge, in der offene Allocations fuer eine automatische Reduzierung herangezogen
+    werden (siehe _free_up_quantity): zuerst Trips ohne festen Einkaufstag (am flexibelsten),
+    danach Trips mit dem am weitesten in der Zukunft liegenden Einkaufstag zuerst - je naeher ein
+    Einkauf bevorsteht, desto eher bleibt er unangetastet."""
+    planned = allocation.trip.planned_date
+    if planned is None:
+        return (0, 0)
+    return (1, -planned.toordinal())
+
+
+def _free_up_quantity(
+    session, shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None, shortfall: Decimal
+) -> Decimal:
+    """Reduziert offene (noch nicht gekaufte) Allocations dieser Zutat in ANDEREN Trips, um Platz
+    fuer eine neue/groessere Allocation zu schaffen - deckt den Fall ab, dass eine Zutat schon
+    komplett einem spaeteren Einkauf zugeteilt ist, aber ein Teil davon spontan frueher/anderswo
+    gekauft werden soll: die Gesamtmenge fuer die Woche aendert sich nicht, sie wird nur zwischen
+    den Einkaeufen verschoben (siehe create_shopping_trip/add_allocations_to_trip). Bereits
+    gekaufte Allocations werden nie angetastet - das waere schon real eingekauft.
+
+    Gibt die tatsaechlich freigemachte Menge zurueck (kann kleiner als `shortfall` sein, wenn
+    nicht genug offene Allocations vorhanden sind - der Aufrufer prueft das selbst)."""
+    key = _ingredient_key(ingredient_id, unit)
+    candidates = sorted(
+        (
+            allocation
+            for allocation in shopping_list.allocations
+            if _ingredient_key(allocation.ingredient_id, allocation.unit) == key and allocation.status != "gekauft"
+        ),
+        key=_borrow_sort_key,
+    )
+    freed = Decimal("0")
+    for allocation in candidates:
+        if freed >= shortfall:
+            break
+        take = min(allocation.quantity, shortfall - freed)
+        new_quantity = allocation.quantity - take
+        if new_quantity <= 0:
+            session.delete(allocation)
+        else:
+            allocation.quantity = new_quantity
+        freed += take
+    return freed
+
+
 def purchased_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
     key = _ingredient_key(ingredient_id, unit)
     return sum(
@@ -588,6 +634,19 @@ def purchased_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id
         ),
         Decimal("0"),
     )
+
+
+def plannable_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> Decimal:
+    """Obergrenze fuer eine NEUE Allocation dieser Zutat = Gesamtbedarf minus bereits Gekauftes.
+    Anders als remaining_quantity_for_ingredient (= Gesamtbedarf minus JEDE Allocation, offen
+    oder gekauft) zaehlt hier bereits anderweitig offen eingeplante Menge mit, weil sie bei
+    Bedarf automatisch von dort hierher verschoben werden kann (siehe _free_up_quantity) - nur
+    tatsaechlich schon Gekauftes ist wirklich weg."""
+    key = _ingredient_key(ingredient_id, unit)
+    total = _ingredient_totals(shopping_list).get(key, Decimal("0"))
+    purchased = purchased_quantity_for_ingredient(shopping_list, ingredient_id, unit)
+    plannable = total - purchased
+    return plannable if plannable > 0 else Decimal("0")
 
 
 def purchase_history_summary(shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None) -> str:
@@ -619,10 +678,12 @@ def need_purchase_remaining_summary(
 
 @dataclass(slots=True)
 class PlannableIngredientGroup:
-    """Eine Zutat mit ihrer noch offenen Gesamtmenge (ueber alle Einkaufstage zusammengefasst) -
-    Datenquelle fuer den "Einkauf planen"-Assistenten. Eine hier ausgewaehlte Menge wird zu
-    GENAU EINEM Listeneintrag (einer Allocation), unabhaengig davon, auf wie viele
-    ShoppingListItem-Zeilen der Bedarf im Wochenplan urspruenglich verteilt war."""
+    """Eine Zutat mit der maximal fuer einen NEUEN Einkauf waehlbaren Menge (Gesamtbedarf minus
+    bereits Gekauftes, siehe plannable_quantity_for_ingredient) - Datenquelle fuer den "Einkauf
+    planen"-Assistenten. Eine hier ausgewaehlte Menge wird zu GENAU EINEM Listeneintrag (einer
+    Allocation), unabhaengig davon, auf wie viele ShoppingListItem-Zeilen der Bedarf im
+    Wochenplan urspruenglich verteilt war; ist die Menge bereits (teilweise) anderswo offen
+    eingeplant, wird sie beim Anlegen automatisch dorthin verschoben."""
 
     ingredient_id: int | None
     ingredient_name: str
@@ -632,9 +693,14 @@ class PlannableIngredientGroup:
 
 
 def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableIngredientGroup]:
-    """Zutaten mit noch nicht zugeteilter Restmenge, alphabetisch sortiert."""
+    """Zutaten, die noch nicht vollstaendig GEKAUFT sind, alphabetisch sortiert.
+
+    Bewusst nicht auf "noch keinem Einkauf zugeteilt" (remaining_quantity_for_ingredient)
+    eingeschraenkt: auch eine Zutat, die schon komplett einem anderen (spaeteren) Einkauf offen
+    zugeteilt ist, bleibt hier waehlbar - die Menge kann bei Bedarf automatisch dorthin
+    verschoben werden (siehe create_shopping_trip/_free_up_quantity). Erst tatsaechlich
+    Gekauftes ist wirklich nicht mehr verfuegbar."""
     totals = _ingredient_totals(shopping_list)
-    allocated = _allocated_totals(shopping_list)
     names: dict[tuple[int | None, str], str] = {}
     categories: dict[tuple[int | None, str], str | None] = {}
     for item in shopping_list.items:
@@ -643,17 +709,17 @@ def items_available_for_planning(shopping_list: ShoppingList) -> list[PlannableI
         categories[key] = item.ingredient.category if item.ingredient else None
 
     result = []
-    for key, total in totals.items():
-        remaining = total - allocated.get(key, Decimal("0"))
-        if remaining <= 0:
-            continue
+    for key, _total in totals.items():
         ingredient_id, unit = key
+        plannable = plannable_quantity_for_ingredient(shopping_list, ingredient_id, unit)
+        if plannable <= 0:
+            continue
         result.append(
             PlannableIngredientGroup(
                 ingredient_id=ingredient_id,
                 ingredient_name=names.get(key, ""),
                 unit=unit,
-                remaining_quantity=remaining,
+                remaining_quantity=plannable,
                 category=categories.get(key),
             )
         )
@@ -698,7 +764,13 @@ def create_shopping_trip(
     (einem Listeneintrag), es wird nichts auf mehrere Zeilen aufgesplittet.
 
     `planned_date` ist optional und haelt fest, an welchem Tag dieser Haendler-Besuch
-    stattfinden soll (siehe ShoppingTrip.planned_date)."""
+    stattfinden soll (siehe ShoppingTrip.planned_date).
+
+    Uebersteigt eine gewuenschte Menge die noch offene Restmenge, wird automatisch versucht, die
+    fehlende Menge aus anderen, noch nicht gekauften Allocations derselben Zutat freizumachen
+    (siehe _free_up_quantity) - z. B. wenn Zutat X schon komplett einem spaeteren Einkauf
+    zugeteilt ist, aber ein Teil davon spontan hier gebraucht wird. Reicht auch das nicht,
+    wird abgelehnt (die Gesamtmenge fuer die Woche waere sonst ueberschritten)."""
     store = store.strip()
     if not store:
         raise ValueError("Händler darf nicht leer sein.")
@@ -714,8 +786,12 @@ def create_shopping_trip(
         label = names.get(key) or str(ingredient_id)
         if quantity <= 0:
             raise ValueError(f"Menge für '{label}' muss größer als 0 sein.")
-        if quantity > remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit):
-            raise ValueError(f"Menge für '{label}' übersteigt die noch offene Restmenge.")
+        available = remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit)
+        if quantity > available:
+            shortfall = quantity - available
+            freed = _free_up_quantity(session, shopping_list, ingredient_id, unit, shortfall)
+            if freed < shortfall:
+                raise ValueError(f"Menge für '{label}' übersteigt die insgesamt benötigte Gesamtmenge.")
 
     trip = ShoppingTrip(
         shopping_list=shopping_list,
@@ -750,8 +826,9 @@ def add_allocations_to_trip(
     """Haengt weitere offene Positionen an einen bestehenden Einkauf an.
 
     Wird im Desktop-Dialog "Einkauf bearbeiten" genutzt, wenn beim Bearbeiten noch nicht
-    verplante Restmengen in denselben Einkauf aufgenommen werden sollen.
-    """
+    verplante Restmengen in denselben Einkauf aufgenommen werden sollen. Wie create_shopping_trip
+    wird bei Bedarf automatisch Menge aus anderen, noch nicht gekauften Allocations derselben
+    Zutat freigemacht (siehe _free_up_quantity)."""
     if not selections:
         return []
 
@@ -765,8 +842,12 @@ def add_allocations_to_trip(
         label = names.get(key) or str(ingredient_id)
         if quantity <= 0:
             raise ValueError(f"Menge fuer '{label}' muss groesser als 0 sein.")
-        if quantity > remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit):
-            raise ValueError(f"Menge fuer '{label}' uebersteigt die noch offene Restmenge.")
+        available = remaining_quantity_for_ingredient(shopping_list, ingredient_id, unit)
+        if quantity > available:
+            shortfall = quantity - available
+            freed = _free_up_quantity(session, shopping_list, ingredient_id, unit, shortfall)
+            if freed < shortfall:
+                raise ValueError(f"Menge fuer '{label}' uebersteigt die insgesamt benoetigte Gesamtmenge.")
 
     participants = _parse_participants(trip.participants_text)
     created: list[ShoppingListItemAllocation] = []
