@@ -1298,7 +1298,7 @@ class PlanShoppingTripDialog(QDialog):
     Tage. Die Obergrenze bleibt trotzdem immer die komplette Restmenge (group.remaining_quantity),
     falls doch mehr mitgenommen werden soll."""
 
-    _COLUMNS = ("Zutat", "Kategorie", "Noch offen", "Menge für diesen Einkauf", "Einheit")
+    _COLUMNS = ("Zutat", "Kategorie", "Verfügbar", "Menge für diesen Einkauf", "Einheit")
 
     def __init__(
         self,
