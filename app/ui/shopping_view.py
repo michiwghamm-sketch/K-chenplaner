@@ -5,7 +5,7 @@ from decimal import Decimal
 from pathlib import Path
 from types import SimpleNamespace
 
-from PySide6.QtGui import QColor
+from PySide6.QtGui import QAction, QColor
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
+    QMenu,
     QPushButton,
     QTableWidget,
     QTableWidgetItem,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -37,6 +39,9 @@ from app.ui.dialogs import (
 )
 from app.ui.theme import ORANGE
 from app.ui.widgets import COLOR_CRITICAL, PageHeader
+from app.utils.paths import load_user_settings, save_user_settings
+
+HIDDEN_COLUMNS_SETTINGS_KEY = "shopping_view_hidden_columns"
 
 SHOPPING_TABLE_COLUMNS = (
     "Zutat",
@@ -159,6 +164,26 @@ class ShoppingView(QWidget):
         self.delete_trip_button.setProperty("role", "danger")
         self.delete_trip_button.clicked.connect(self._delete_selected_trip)
         group_row.addWidget(self.delete_trip_button)
+
+        self.columns_button = QToolButton(self)
+        self.columns_button.setText("Spalten ▾")
+        self.columns_button.setToolTip("Zeigt/verbirgt einzelne Spalten der Tabelle.")
+        self.columns_button.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+        columns_menu = QMenu(self.columns_button)
+        # "Zutat" (Spalte 0) bleibt immer sichtbar - ohne Namen ist die Zeile nicht zuzuordnen.
+        hidden_columns = set(load_user_settings().get(HIDDEN_COLUMNS_SETTINGS_KEY, []))
+        self._column_actions: dict[int, QAction] = {}
+        for index, name in enumerate(SHOPPING_TABLE_COLUMNS):
+            if index == 0:
+                continue
+            action = QAction(name, columns_menu)
+            action.setCheckable(True)
+            action.setChecked(name not in hidden_columns)
+            columns_menu.addAction(action)
+            self._column_actions[index] = action
+        self.columns_button.setMenu(columns_menu)
+        group_row.addWidget(self.columns_button)
+
         group_row.addStretch(1)
         self.total_label = QLabel("Gesamtsumme: -", self)
         group_row.addWidget(self.total_label)
@@ -169,6 +194,9 @@ class ShoppingView(QWidget):
         self.table.verticalHeader().setVisible(False)
         self.table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
         self.table.setSortingEnabled(True)
+        for index, action in self._column_actions.items():
+            self.table.setColumnHidden(index, not action.isChecked())
+            action.toggled.connect(lambda checked, i=index: self._on_column_toggled(i, checked))
         layout.addWidget(self.table)
 
         export_row = QHBoxLayout()
@@ -183,6 +211,11 @@ class ShoppingView(QWidget):
         export_row.addWidget(export_pdf_button)
         export_row.addStretch(1)
         layout.addLayout(export_row)
+
+    def _on_column_toggled(self, index: int, checked: bool) -> None:
+        self.table.setColumnHidden(index, not checked)
+        hidden = [SHOPPING_TABLE_COLUMNS[i] for i, action in self._column_actions.items() if not action.isChecked()]
+        save_user_settings({HIDDEN_COLUMNS_SETTINGS_KEY: hidden})
 
     def refresh(self) -> None:
         self.camp_year_combo.blockSignals(True)
