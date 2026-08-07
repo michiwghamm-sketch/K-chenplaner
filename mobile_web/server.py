@@ -140,26 +140,33 @@ def create_app(config: AppConfig | None = None) -> Flask:
             shopping_service.migrate_legacy_store_status(db_session, shopping_list)
 
             current_person = request.args.get("person") or None
+            current_store = request.args.get("store") or None
+            sort_mode = request.args.get("sort") or "category"
             persons = [name for name, _ in shopping_service.grouped_by_person_ordered(shopping_list) if name]
 
             groups = shopping_service.grouped_by_store_ordered_allocations(shopping_list)
+            stores = [store for store, _ in groups]
+
             groups_view = []
             all_shown_allocations = []
             for store, allocations in groups:
+                if current_store and store != current_store:
+                    continue
                 if current_person:
                     allocations = [a for a in allocations if a.assigned_to == current_person]
                 if not allocations:
                     continue
                 trip_ids = sorted({allocation.shopping_trip_id for allocation in allocations})
                 planned_dates = sorted({a.trip.planned_date for a in allocations if a.trip.planned_date})
-                sorted_allocations = sorted(
-                    allocations,
-                    key=lambda a: (
+                if sort_mode == "name":
+                    sort_key = lambda a: (a.ingredient.name if a.ingredient else "").lower()  # noqa: E731
+                else:
+                    sort_key = lambda a: (  # noqa: E731
                         a.status == "gekauft",
                         ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
                         (a.ingredient.name if a.ingredient else "").lower(),
-                    ),
-                )
+                    )
+                sorted_allocations = sorted(allocations, key=sort_key)
                 all_shown_allocations.extend(sorted_allocations)
                 groups_view.append(
                     {
@@ -180,6 +187,9 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 bought_items=bought_items,
                 persons=persons,
                 current_person=current_person,
+                stores=stores,
+                current_store=current_store,
+                sort_mode=sort_mode,
             )
 
     @app.get("/liste/<int:list_id>/status")
@@ -192,9 +202,12 @@ def create_app(config: AppConfig | None = None) -> Flask:
             if shopping_list is None:
                 abort(404)
             current_person = request.args.get("person") or None
+            current_store = request.args.get("store") or None
             allocations = shopping_list.allocations
             if current_person:
                 allocations = [a for a in allocations if a.assigned_to == current_person]
+            if current_store:
+                allocations = [a for a in allocations if a.trip.store == current_store]
             return jsonify(
                 {
                     "positionen": [
@@ -363,7 +376,15 @@ def create_app(config: AppConfig | None = None) -> Flask:
             for trip in shopping_list.trips:
                 if trip.store == store:
                     shopping_service.reshuffle_trip_assignments(trip, participants)
-        return redirect(url_for("list_detail", list_id=list_id))
+        return redirect(
+            url_for(
+                "list_detail",
+                list_id=list_id,
+                store=request.args.get("return_store") or None,
+                person=request.args.get("person") or None,
+                sort=request.args.get("sort") or None,
+            )
+        )
 
     @app.get("/manifest.webmanifest")
     def manifest():

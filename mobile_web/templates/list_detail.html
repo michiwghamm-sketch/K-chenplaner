@@ -29,23 +29,46 @@
     </a>
   </div>
 
+  {% if stores|length > 1 %}
+    <div style="display:flex; gap: 0.4rem; overflow-x:auto; padding: 0.2rem 0 0.4rem;">
+      <a href="{{ url_for('list_detail', list_id=shopping_list.id, person=current_person, sort=sort_mode) }}" style="text-decoration:none; flex-shrink:0;">
+        <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if not current_store else 'var(--karte-bg)' }}; color: {{ '#fff' if not current_store else 'var(--text)' }}; border: 1px solid var(--rand);">Alle Einkäufe</span>
+      </a>
+      {% for store in stores %}
+        <a href="{{ url_for('list_detail', list_id=shopping_list.id, store=store, person=current_person, sort=sort_mode) }}" style="text-decoration:none; flex-shrink:0;">
+          <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if current_store == store else 'var(--karte-bg)' }}; color: {{ '#fff' if current_store == store else 'var(--text)' }}; border: 1px solid var(--rand);">{{ store }}</span>
+        </a>
+      {% endfor %}
+    </div>
+  {% endif %}
+
   {% if persons %}
     <div style="display:flex; gap: 0.4rem; overflow-x:auto; padding: 0.2rem 0 0.6rem;">
-      <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}" style="text-decoration:none; flex-shrink:0;">
+      <a href="{{ url_for('list_detail', list_id=shopping_list.id, store=current_store, sort=sort_mode) }}" style="text-decoration:none; flex-shrink:0;">
         <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if not current_person else 'var(--karte-bg)' }}; color: {{ '#fff' if not current_person else 'var(--text)' }}; border: 1px solid var(--rand);">Alle</span>
       </a>
       {% for person in persons %}
-        <a href="{{ url_for('list_detail', list_id=shopping_list.id, person=person) }}" style="text-decoration:none; flex-shrink:0;">
+        <a href="{{ url_for('list_detail', list_id=shopping_list.id, person=person, store=current_store, sort=sort_mode) }}" style="text-decoration:none; flex-shrink:0;">
           <span style="display:inline-block; padding: 0.4rem 0.8rem; border-radius: 999px; font-size:0.85rem; background: {{ 'var(--grün)' if current_person == person else 'var(--karte-bg)' }}; color: {{ '#fff' if current_person == person else 'var(--text)' }}; border: 1px solid var(--rand);">{{ person }}</span>
         </a>
       {% endfor %}
     </div>
   {% endif %}
 
+  <div style="display:flex; align-items:center; gap: 0.5rem; padding: 0 0 0.6rem; font-size:0.85rem; color: var(--text-schwach);">
+    <span>Sortierung:</span>
+    <a href="{{ url_for('list_detail', list_id=shopping_list.id, store=current_store, person=current_person, sort='category') }}" style="text-decoration:none;">
+      <span style="padding: 0.25rem 0.6rem; border-radius: 999px; background: {{ 'var(--grün)' if sort_mode != 'name' else 'var(--karte-bg)' }}; color: {{ '#fff' if sort_mode != 'name' else 'var(--text)' }}; border: 1px solid var(--rand);">Kategorie</span>
+    </a>
+    <a href="{{ url_for('list_detail', list_id=shopping_list.id, store=current_store, person=current_person, sort='name') }}" style="text-decoration:none;">
+      <span style="padding: 0.25rem 0.6rem; border-radius: 999px; background: {{ 'var(--grün)' if sort_mode == 'name' else 'var(--karte-bg)' }}; color: {{ '#fff' if sort_mode == 'name' else 'var(--text)' }}; border: 1px solid var(--rand);">Zutat (A-Z)</span>
+    </a>
+  </div>
+
   {% for group in groups %}
     <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem; display:flex; justify-content:space-between; align-items:center;">
       <span>{{ group.store }}{% if group.planned_date_text %} <span style="font-weight:400;">— {{ group.planned_date_text }}</span>{% endif %}</span>
-      <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store) }}" class="neu-mischen-form" style="margin:0;">
+      <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store, return_store=current_store, person=current_person, sort=sort_mode) }}" class="neu-mischen-form" style="margin:0;">
         <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
       </form>
     </h2>
@@ -181,7 +204,7 @@
 
   // Live-Aktualisierung: alle 15s pruefen, ob jemand anderes (anderes Handy, Desktop-App)
   // zwischenzeitlich etwas abgehakt/neu gemischt hat, ohne dass man selbst neu laden muss.
-  const statusUrl = "{{ url_for('list_status', list_id=shopping_list.id, person=current_person) }}";
+  const statusUrl = "{{ url_for('list_status', list_id=shopping_list.id, person=current_person, store=current_store) }}";
 
   function positionAktualisieren(label, istGekauft, pos) {
     const box = label.querySelector('.position-checkbox');
