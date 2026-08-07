@@ -3,7 +3,7 @@
 ; Kompilieren: ISCC installer\zelakueche.iss  (erzeugt Output\ZelaKueche-Setup.exe)
 
 #define MyAppName "ZelaKueche"
-#define MyAppVersion "1.3.0"
+#define MyAppVersion "1.4.0"
 #define MyAppPublisher "Kolping Zeltlager"
 #define MyAppExeName "ZelaKueche.exe"
 #define MySourceDist "..\dist\ZelaKueche"
