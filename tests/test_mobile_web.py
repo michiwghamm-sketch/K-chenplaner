@@ -204,6 +204,93 @@ def test_plan_trip_form_and_submit_creates_allocation(tmp_path, monkeypatch):
         assert trip.planned_date == date(2026, 8, 5)
 
 
+def test_store_filter_shows_only_selected_store(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id = _seed_shopping_list(config)
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import Ingredient, ShoppingList
+
+        shopping_list = session.get(ShoppingList, list_id)
+        item = shopping_list.items[0]
+        remaining = shopping_service.remaining_quantity_for_ingredient(shopping_list, item.ingredient_id, item.unit)
+        shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Edeka",
+            participants=[],
+            selections=[(item.ingredient_id, item.unit, remaining)],
+        )
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=sonnencreme, quantity=Decimal("1"), unit="Stk"
+        )
+        shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(sonnencreme.id, "Stk", Decimal("1"))]
+        )
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    only_edeka = client.get(f"/liste/{list_id}?store=Edeka")
+    assert only_edeka.status_code == 200
+    assert "Nudeln".encode() in only_edeka.data
+    assert "Sonnencreme".encode() not in only_edeka.data
+
+    only_metro = client.get(f"/liste/{list_id}?store=Metro")
+    assert only_metro.status_code == 200
+    assert "Sonnencreme".encode() in only_metro.data
+    assert "Nudeln".encode() not in only_metro.data
+
+    all_stores = client.get(f"/liste/{list_id}")
+    assert "Nudeln".encode() in all_stores.data
+    assert "Sonnencreme".encode() in all_stores.data
+
+
+def test_sort_mode_name_orders_alphabetically_across_categories(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id = _seed_shopping_list(config)
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import Ingredient, ShoppingList
+
+        shopping_list = session.get(ShoppingList, list_id)
+        item = shopping_list.items[0]
+        remaining = shopping_service.remaining_quantity_for_ingredient(shopping_list, item.ingredient_id, item.unit)
+        # Zwiebel als "Obst" markiert (fachlich falsch, aber fuer den Test wichtig): nach
+        # Kategorie sortiert kommt Zwiebel (Obst) VOR Apfel (Trockenware), alphabetisch ist es
+        # umgekehrt - so lassen sich beide Sortiermodi eindeutig unterscheiden.
+        item.ingredient.category = "Obst"
+        apfel = Ingredient(name="Apfel", normalized_name="apfel", default_unit="Stk", category="Trockenware")
+        session.add(apfel)
+        session.flush()
+        shopping_service.add_manual_shopping_item(session, shopping_list, ingredient=apfel, quantity=Decimal("1"), unit="Stk")
+        shopping_service.create_shopping_trip(
+            session,
+            shopping_list,
+            store="Edeka",
+            participants=[],
+            selections=[(item.ingredient_id, item.unit, remaining), (apfel.id, "Stk", Decimal("1"))],
+        )
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    by_category = client.get(f"/liste/{list_id}?sort=category").data.decode("utf-8")
+    assert by_category.index("Nudeln") < by_category.index("Apfel")
+
+    by_name = client.get(f"/liste/{list_id}?sort=name").data.decode("utf-8")
+    assert by_name.index("Apfel") < by_name.index("Nudeln")
+
+
 def test_person_filter_shows_only_assigned_allocations(tmp_path, monkeypatch):
     monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
     config = _make_config(tmp_path)

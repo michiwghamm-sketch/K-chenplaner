@@ -68,6 +68,10 @@ GROUP_MODES = (
     ("Nach Händler", "store"),
     ("Nach Nutzer", "person"),
 )
+SORT_MODES = (
+    ("Kategorie", "category"),
+    ("Zutat (A-Z)", "name"),
+)
 
 
 class ShoppingView(QWidget):
@@ -162,6 +166,19 @@ class ShoppingView(QWidget):
             self.group_combo.addItem(label, mode)
         self.group_combo.currentIndexChanged.connect(self._reload_table)
         group_row.addWidget(self.group_combo)
+
+        group_row.addWidget(QLabel("Sortierung:", self))
+        self.sort_combo = QComboBox(self)
+        for label, mode in SORT_MODES:
+            self.sort_combo.addItem(label, mode)
+        self.sort_combo.setToolTip(
+            "Reihenfolge der Positionen innerhalb eines Tages/Händlers/einer Person/eines "
+            "Einkaufs. Bei \"Keine Gruppierung\" stattdessen einfach auf eine Spaltenüberschrift "
+            "klicken."
+        )
+        self.sort_combo.currentIndexChanged.connect(self._reload_table)
+        group_row.addWidget(self.sort_combo)
+
         self.edit_trip_button = QPushButton("Einkauf bearbeiten...", self)
         self.edit_trip_button.clicked.connect(self._edit_selected_trip)
         group_row.addWidget(self.edit_trip_button)
@@ -321,18 +338,20 @@ class ShoppingView(QWidget):
 
             if mode == "day":
                 for shopping_date, items in shopping_service.grouped_by_day_ordered(shopping_list):
+                    items = self._sorted_by_current_mode(items)
                     self._add_band_row(shopping_service.format_shopping_day_label(shopping_date), items=items)
                     for item in items:
                         self._add_item_row(item, shopping_list)
             elif mode == "store":
                 for store, allocations in shopping_service.grouped_by_store_ordered_allocations(shopping_list):
+                    allocations = self._sorted_by_current_mode(allocations)
                     self._add_band_row(store, on_edit=lambda s=store, allocs=allocations: self._edit_shopping_trip(s, allocs))
                     for allocation in allocations:
                         self._add_allocation_row(allocation)
             elif mode == "person":
                 for person, allocations in shopping_service.grouped_by_person_ordered(shopping_list):
                     self._add_band_row(person or shopping_service.UNASSIGNED_PERSON_LABEL)
-                    for allocation in allocations:
+                    for allocation in self._sorted_by_current_mode(allocations):
                         self._add_allocation_row(allocation)
             elif selected_trip_id is not None:
                 trip = session.get(ShoppingTrip, selected_trip_id)
@@ -341,14 +360,21 @@ class ShoppingView(QWidget):
                     if trip.planned_date:
                         band_label = f"{band_label} am {shopping_service.format_date_de(trip.planned_date)}"
                     self._add_band_row(band_label)
-                    for allocation in sorted(
-                        trip.allocations,
-                        key=lambda a: (
-                            a.status == "gekauft",
-                            ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
-                            (a.ingredient.name if a.ingredient else "").lower(),
-                        ),
-                    ):
+                    if self.sort_combo.currentData() == "name":
+                        trip_allocations = sorted(
+                            trip.allocations,
+                            key=lambda a: (a.ingredient.name if a.ingredient else "").lower(),
+                        )
+                    else:
+                        trip_allocations = sorted(
+                            trip.allocations,
+                            key=lambda a: (
+                                a.status == "gekauft",
+                                ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
+                                (a.ingredient.name if a.ingredient else "").lower(),
+                            ),
+                        )
+                    for allocation in trip_allocations:
                         self._add_allocation_row(allocation)
             else:
                 for item in _aggregate_total_view_items(shopping_list.items):
@@ -362,6 +388,15 @@ class ShoppingView(QWidget):
         self.table.resizeRowsToContents()
         # Sortieren wuerde die Gruppen-Baender und ihre Zeilen auseinanderreissen.
         self.table.setSortingEnabled(mode == "none")
+
+    def _sorted_by_current_mode(self, entries: list) -> list:
+        """Sortiert Positionen/Allocations innerhalb einer Gruppe (Tag/Händler/Person) nach der
+        gewählten Sortierung (siehe SORT_MODES/self.sort_combo) - die Services liefern
+        standardmäßig nach Kategorie, hier wird bei Bedarf auf rein alphabetisch nach Zutatname
+        umsortiert."""
+        if self.sort_combo.currentData() != "name":
+            return entries
+        return sorted(entries, key=lambda entry: (entry.ingredient.name if entry.ingredient else "").lower())
 
     def _add_band_row(self, label: str, *, items=None, on_edit=None) -> None:
         row = self.table.rowCount()
