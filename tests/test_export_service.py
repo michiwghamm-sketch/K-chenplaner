@@ -194,6 +194,50 @@ def test_export_weekly_recipe_sheets_to_pdf_scales_to_planned_portions(session_f
         assert out_path.read_bytes().startswith(b"%PDF")
 
 
+def test_export_weekly_recipe_sheets_to_pdf_deduplicates_repeated_recipe(session_factory, tmp_path, monkeypatch) -> None:
+    """Ein Rezept, das an mehreren Tagen/Mahlzeiten geplant ist, soll nur EINE Karte bekommen
+    (Portionen aufsummiert, alle Vorkommen im Untertitel), statt einer Karte je Vorkommen."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Doppelt geplant", start_date=date(2026, 8, 1), end_date=date(2026, 8, 3))
+        recipe = Recipe(name="Spaghetti Napoli", normalized_name="spaghetti napoli", default_portions=10)
+        ingredient = Ingredient(name="Nudeln", normalized_name="nudeln", default_unit="kg")
+        session.add_all([camp_year, recipe, ingredient])
+        session.flush()
+        recipe_service.add_ingredient_to_recipe(session, recipe, ingredient_id=ingredient.id, quantity=Decimal("1.000"), unit="kg")
+        camp_year.meal_plan_entries.extend(
+            [
+                MealPlanEntry(
+                    meal_date=date(2026, 8, 1), meal_type="Mittagessen", recipe=recipe, planned_portions=50, status="geplant"
+                ),
+                MealPlanEntry(
+                    meal_date=date(2026, 8, 3), meal_type="Abendessen", recipe=recipe, planned_portions=30, status="geplant"
+                ),
+            ]
+        )
+        session.flush()
+        camp_year_id = camp_year.id
+
+    calls = []
+    original_story = export_service._recipe_pdf_story
+
+    def spy(recipe, cost_result, *, subtitle=None):
+        calls.append((recipe.name, cost_result.portions, subtitle))
+        return original_story(recipe, cost_result, subtitle=subtitle)
+
+    monkeypatch.setattr(export_service, "_recipe_pdf_story", spy)
+
+    with session_scope(session_factory) as session:
+        camp_year = session.get(CampYear, camp_year_id)
+        export_service.export_weekly_recipe_sheets_to_pdf(session, camp_year, tmp_path / "rezeptblaetter.pdf")
+
+    assert len(calls) == 1
+    name, portions, subtitle = calls[0]
+    assert name == "Spaghetti Napoli"
+    assert portions == 80
+    assert "Mittagessen" in subtitle
+    assert "Abendessen" in subtitle
+
+
 def test_export_weekly_recipe_sheets_to_pdf_rejects_empty_plan(session_factory, tmp_path) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Leerer Plan", start_date=date(2026, 8, 1), end_date=date(2026, 8, 3))
