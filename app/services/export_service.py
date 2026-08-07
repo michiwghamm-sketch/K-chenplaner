@@ -393,9 +393,10 @@ def export_weekly_plan_to_pdf(session, camp_year: CampYear, path: Path) -> Path:
 
 
 def export_weekly_recipe_sheets_to_pdf(session, camp_year: CampYear, path: Path) -> Path:
-    """Exportiert alle im Wochenplan eingeplanten Rezepte als ein PDF, eine Karte je geplanter
-    Mahlzeit (nicht je Rezept - dieselbe Zutat kann an mehreren Tagen mit unterschiedlicher
-    Portionenzahl stehen), jeweils auf die im Wochenplan eingestellte Portionenzahl skaliert."""
+    """Exportiert alle im Wochenplan eingeplanten Rezepte als ein PDF, EINE Karte je Rezept -
+    auch wenn ein Rezept an mehreren Tagen/Mahlzeiten geplant ist, taucht es nur einmal auf
+    (keine Dopplungen). Die Karte ist auf die Summe der Portionen ueber alle Vorkommen skaliert,
+    das "Geplant"-Feld listet alle Tage/Mahlzeiten auf, an denen das Rezept eingeplant ist."""
     path.parent.mkdir(parents=True, exist_ok=True)
 
     entries = [
@@ -409,6 +410,10 @@ def export_weekly_recipe_sheets_to_pdf(session, camp_year: CampYear, path: Path)
     meal_type_order = {meal_type: index for index, meal_type in enumerate(planning_service.DEFAULT_MEAL_TYPES)}
     entries.sort(key=lambda entry: (entry.meal_date or date.max, meal_type_order.get(entry.meal_type or "", 99)))
 
+    entries_by_recipe: dict[int, list] = {}
+    for entry in entries:
+        entries_by_recipe.setdefault(entry.recipe_id, []).append(entry)
+
     doc = SimpleDocTemplate(
         str(path),
         pagesize=A4,
@@ -420,19 +425,23 @@ def export_weekly_recipe_sheets_to_pdf(session, camp_year: CampYear, path: Path)
     )
 
     story: list = []
-    for index, entry in enumerate(entries):
-        cost_result = recipe_service.calculate_recipe_cost(
-            session, entry.recipe, portions=entry.planned_portions, year=camp_year.year
-        )
-        if entry.meal_date:
-            day_label = f"{planning_service.weekday_name(entry.meal_date)}, {entry.meal_date.strftime('%d.%m.%Y')}"
-            subtitle = f"{entry.meal_type} - {day_label}" if entry.meal_type else day_label
-        else:
-            subtitle = entry.meal_type
+    for index, recipe_entries in enumerate(entries_by_recipe.values()):
+        recipe = recipe_entries[0].recipe
+        total_portions = sum(entry.planned_portions for entry in recipe_entries)
+        cost_result = recipe_service.calculate_recipe_cost(session, recipe, portions=total_portions, year=camp_year.year)
+
+        occurrence_labels = []
+        for entry in recipe_entries:
+            if entry.meal_date:
+                day_label = f"{planning_service.weekday_name(entry.meal_date)}, {entry.meal_date.strftime('%d.%m.%Y')}"
+                occurrence_labels.append(f"{entry.meal_type} - {day_label}" if entry.meal_type else day_label)
+            elif entry.meal_type:
+                occurrence_labels.append(entry.meal_type)
+        subtitle = "; ".join(occurrence_labels) or None
 
         if index > 0:
             story.append(PageBreak())
-        story.extend(_recipe_pdf_story(entry.recipe, cost_result, subtitle=subtitle))
+        story.extend(_recipe_pdf_story(recipe, cost_result, subtitle=subtitle))
 
     doc.build(story)
     return path
