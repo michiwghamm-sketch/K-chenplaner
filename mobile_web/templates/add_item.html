@@ -40,7 +40,17 @@
 
       <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Gewünscht von</label>
       <input name="gewuenscht_von" placeholder="z. B. Björn (optional)"
-        style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+        style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);{% if trips %} margin-bottom:0.8rem;{% endif %}">
+
+      {% if trips %}
+        <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Direkt einem Einkauf zuordnen (optional)</label>
+        <select name="trip_id" style="width:100%; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+          <option value="">Noch keinem Einkauf zuordnen</option>
+          {% for trip in trips %}
+            <option value="{{ trip.id }}">{{ trip.label }}</option>
+          {% endfor %}
+        </select>
+      {% endif %}
     </div>
 
     <button type="submit" style="width:100%; margin-top:1rem; padding:0.9rem; font-size:1.05rem; font-weight:600; border:none; border-radius:10px; background: var(--grün); color:#fff;">

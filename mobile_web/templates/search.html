@@ -1,0 +1,74 @@
+{% extends "base.html" %}
+{% block title %}Suche{% endblock %}
+{% block body %}
+<header>
+  <h1>Zutat suchen</h1>
+  <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}">Zurück</a>
+</header>
+<main>
+  <form method="get" action="{{ url_for('search_ingredients', list_id=shopping_list.id) }}" class="karte" style="padding: 0.7rem 1rem; display:flex; gap:0.5rem;">
+    <input
+      type="search" name="q" value="{{ query }}" placeholder="z. B. Gurke" autofocus
+      style="flex:1; padding:0.6rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);"
+    >
+    <button type="submit" style="padding:0.6rem 1rem; border-radius:8px; border:none; background: var(--grün); color:#fff; font-weight:600;">Suchen</button>
+  </form>
+
+  {% if query and not results %}
+    <div class="karte" style="padding: 1.2rem; margin-top:1rem; color: var(--text-schwach);">
+      Keine Zutat gefunden für "{{ query }}".
+    </div>
+  {% endif %}
+
+  {% for result in results %}
+    <div class="karte" style="margin-top:1rem; padding: 0.9rem 1rem;">
+      <div style="font-weight:600; font-size:1.05rem;">{{ result.name }}</div>
+      <div style="font-size:0.78rem; color: var(--text-schwach); margin-bottom:0.6rem;">
+        {% if result.category %}{{ result.category }} · {% endif %}Gesamtbedarf: {{ result.needed }} {{ result.unit }}
+      </div>
+
+      {% if result.allocations %}
+        <div style="font-size:0.85rem; font-weight:600; margin-bottom:0.3rem;">Bereits eingeplant:</div>
+        {% for allocation in result.allocations %}
+          <div style="display:flex; align-items:center; gap:0.6rem; padding:0.5rem 0; border-bottom:1px solid var(--rand);">
+            <div style="flex:1;">
+              {{ allocation.store }} — {{ allocation.quantity }} {{ result.unit }}
+              {% if allocation.status == 'gekauft' %} <span style="color: var(--text-schwach);">(gekauft)</span>{% endif %}
+            </div>
+            <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=allocation.trip_id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ result.name }} aus diesem Einkauf entfernen?');" style="margin:0;">
+              <input type="hidden" name="from_search" value="1">
+              <input type="hidden" name="q" value="{{ query }}">
+              <button type="submit" style="font-size:0.75rem; padding: 0.35rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: #c0392b;">Entfernen</button>
+            </form>
+          </div>
+        {% endfor %}
+      {% endif %}
+
+      {% if result.plannable_raw|float > 0 %}
+        {% if trips %}
+          <form method="post" action="{{ url_for('add_to_trip_from_search', list_id=shopping_list.id) }}" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.6rem;">
+            <input type="hidden" name="ingredient_id" value="{{ result.ingredient_id }}">
+            <input type="hidden" name="unit" value="{{ result.unit }}">
+            <input type="hidden" name="q" value="{{ query }}">
+            <select name="trip_id" style="flex:1; padding:0.5rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text);">
+              {% for trip in trips %}
+                <option value="{{ trip.id }}">{{ trip.label }}</option>
+              {% endfor %}
+            </select>
+            <input
+              type="number" step="0.001" min="0.001" max="{{ result.plannable_raw }}" value="{{ result.plannable_raw }}"
+              name="menge"
+              style="width:5rem; padding:0.5rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text); text-align:right;"
+            >
+            <button type="submit" style="padding:0.5rem 0.8rem; border-radius:8px; border:none; background: var(--grün); color:#fff; font-weight:600; font-size:0.85rem;">+</button>
+          </form>
+        {% else %}
+          <div style="font-size:0.8rem; color: var(--text-schwach); margin-top:0.5rem;">
+            Noch kein Einkauf geplant - <a href="{{ url_for('plan_trip_form', list_id=shopping_list.id) }}">Einkauf planen</a>
+          </div>
+        {% endif %}
+      {% endif %}
+    </div>
+  {% endfor %}
+</main>
+{% endblock %}
