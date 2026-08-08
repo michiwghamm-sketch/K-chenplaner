@@ -10,7 +10,7 @@ from sqlalchemy import select
 
 from app.config import AppConfig
 from app.db import initialize_database, session_scope
-from app.models import CampYear, ShoppingList, ShoppingListItemAllocation, ingredient_category_sort_key
+from app.models import CampYear, ShoppingList, ShoppingListItemAllocation, ShoppingTrip, ingredient_category_sort_key
 from app.services import ingredient_service, shopping_service
 
 SESSION_KEY = "eingeloggt"
@@ -28,6 +28,17 @@ def _plannable_view(shopping_list: ShoppingList) -> list[dict]:
         }
         for index, group in enumerate(shopping_service.items_available_for_planning(shopping_list))
     ]
+
+
+def _sorted_trip_allocations(trip: ShoppingTrip) -> list[ShoppingListItemAllocation]:
+    return sorted(
+        trip.allocations,
+        key=lambda a: (
+            a.status == "gekauft",
+            ingredient_category_sort_key(a.ingredient.category if a.ingredient else None),
+            (a.ingredient.name if a.ingredient else "").lower(),
+        ),
+    )
 
 
 def create_app(config: AppConfig | None = None) -> Flask:
@@ -385,6 +396,86 @@ def create_app(config: AppConfig | None = None) -> Flask:
                 sort=request.args.get("sort") or None,
             )
         )
+
+    @app.get("/liste/<int:list_id>/einkauf/<int:trip_id>/bearbeiten")
+    def edit_trip_form(list_id: int, trip_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            trip = db_session.get(ShoppingTrip, trip_id)
+            if shopping_list is None or trip is None or trip.shopping_list_id != list_id:
+                abort(404)
+            return render_template(
+                "edit_trip.html",
+                shopping_list=shopping_list,
+                trip=trip,
+                allocations=_sorted_trip_allocations(trip),
+                plannable=_plannable_view(shopping_list),
+                error=None,
+            )
+
+    @app.post("/liste/<int:list_id>/einkauf/<int:trip_id>/bearbeiten")
+    def edit_trip_submit(list_id: int, trip_id: int):
+        with session_scope(session_factory) as db_session:
+            shopping_list = db_session.get(ShoppingList, list_id)
+            trip = db_session.get(ShoppingTrip, trip_id)
+            if shopping_list is None or trip is None or trip.shopping_list_id != list_id:
+                abort(404)
+
+            selections = []
+            for group_key in request.form.getlist("position"):
+                raw_ingredient_id = request.form.get(f"ingredient_id_{group_key}", "")
+                ingredient_id = int(raw_ingredient_id) if raw_ingredient_id else None
+                unit = request.form.get(f"unit_{group_key}", "")
+                raw_quantity = request.form.get(f"menge_{group_key}")
+                try:
+                    quantity = Decimal(raw_quantity) if raw_quantity else None
+                except InvalidOperation:
+                    quantity = None
+                if quantity is None or quantity <= 0:
+                    continue
+                selections.append((ingredient_id, unit, quantity))
+
+            error = None
+            if not selections:
+                error = "Bitte mindestens eine Position mit Menge auswählen."
+            else:
+                try:
+                    shopping_service.add_allocations_to_trip(db_session, trip, selections)
+                except ValueError as exc:
+                    error = str(exc)
+
+            if error:
+                return (
+                    render_template(
+                        "edit_trip.html",
+                        shopping_list=shopping_list,
+                        trip=trip,
+                        allocations=_sorted_trip_allocations(trip),
+                        plannable=_plannable_view(shopping_list),
+                        error=error,
+                    ),
+                    400,
+                )
+
+        return redirect(url_for("edit_trip_form", list_id=list_id, trip_id=trip_id))
+
+    @app.post("/liste/<int:list_id>/einkauf/<int:trip_id>/position/<int:allocation_id>/entfernen")
+    def remove_trip_position(list_id: int, trip_id: int, allocation_id: int):
+        with session_scope(session_factory) as db_session:
+            allocation = db_session.get(ShoppingListItemAllocation, allocation_id)
+            if allocation is None or allocation.shopping_trip_id != trip_id:
+                abort(404)
+            shopping_service.delete_allocation(db_session, allocation)
+        return redirect(url_for("edit_trip_form", list_id=list_id, trip_id=trip_id))
+
+    @app.post("/liste/<int:list_id>/einkauf/<int:trip_id>/loeschen")
+    def delete_trip(list_id: int, trip_id: int):
+        with session_scope(session_factory) as db_session:
+            trip = db_session.get(ShoppingTrip, trip_id)
+            if trip is None or trip.shopping_list_id != list_id:
+                abort(404)
+            shopping_service.delete_shopping_trip(db_session, trip)
+        return redirect(url_for("list_detail", list_id=list_id))
 
     @app.get("/manifest.webmanifest")
     def manifest():
