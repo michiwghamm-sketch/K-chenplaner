@@ -66,11 +66,18 @@
   </div>
 
   {% for group in groups %}
-    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem; display:flex; justify-content:space-between; align-items:center;">
+    <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem; display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:0.4rem;">
       <span>{{ group.store }}{% if group.planned_date_text %} <span style="font-weight:400;">— {{ group.planned_date_text }}</span>{% endif %}</span>
-      <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store, return_store=current_store, person=current_person, sort=sort_mode) }}" class="neu-mischen-form" style="margin:0;">
-        <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
-      </form>
+      <span style="display:flex; gap:0.4rem;">
+        {% for trip_id in group.trip_ids %}
+          <a href="{{ url_for('edit_trip_form', list_id=shopping_list.id, trip_id=trip_id) }}" style="text-decoration:none;">
+            <span style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text); display:inline-block;">Bearbeiten{% if group.trip_ids|length > 1 %} ({{ loop.index }}){% endif %}</span>
+          </a>
+        {% endfor %}
+        <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store, return_store=current_store, person=current_person, sort=sort_mode) }}" class="neu-mischen-form" style="margin:0;">
+          <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
+        </form>
+      </span>
     </h2>
     <div class="karte">
       {% for allocation in group.positionen %}

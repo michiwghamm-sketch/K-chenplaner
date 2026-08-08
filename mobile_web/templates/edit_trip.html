@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Einkauf bearbeiten{% endblock %}
+{% block body %}
+<header>
+  <h1>Einkauf {{ trip.store }}</h1>
+  <a href="{{ url_for('list_detail', list_id=shopping_list.id) }}">Zurück</a>
+</header>
+<main>
+  {% if error %}
+    <div class="karte" style="padding: 0.9rem 1rem; color: #c0392b;">{{ error }}</div>
+  {% endif %}
+
+  <div class="karte" style="padding: 0.9rem 1rem; font-size:0.85rem; color: var(--text-schwach);">
+    {% if trip.planned_date %}Einkaufstag: {{ trip.planned_date.strftime('%d.%m.%Y') }}<br>{% endif %}
+    Teilnehmer: {{ trip.participants_text or "-" }}
+  </div>
+
+  <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">Positionen</h2>
+  <div class="karte">
+    {% for allocation in allocations %}
+      <div style="display:flex; align-items:center; gap:0.7rem; padding:0.8rem 1rem; border-bottom:1px solid var(--rand);">
+        <div style="flex:1;">
+          <div style="font-weight:600;">{{ allocation.ingredient.name if allocation.ingredient else "?" }}</div>
+          <div style="font-size:0.78rem; color: var(--text-schwach);">
+            {{ allocation.quantity|menge }} {{ allocation.unit or "" }}
+            {% if allocation.status == 'gekauft' %} — bereits gekauft{% endif %}
+          </div>
+        </div>
+        <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=trip.id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ (allocation.ingredient.name if allocation.ingredient else "Position") }} aus diesem Einkauf entfernen?');" style="margin:0;">
+          <button type="submit" style="font-size:0.75rem; padding: 0.4rem 0.7rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: #c0392b;">Entfernen</button>
+        </form>
+      </div>
+    {% else %}
+      <div style="padding: 1.2rem; color: var(--text-schwach);">Noch keine Positionen in diesem Einkauf.</div>
+    {% endfor %}
+  </div>
+
+  <h2 style="font-size: 0.95rem; color: var(--text-schwach); margin: 1.2rem 0 0.4rem;">Position hinzufügen</h2>
+  {% if not plannable %}
+    <div class="karte" style="padding: 1.2rem; color: var(--text-schwach);">
+      Alle Positionen der Liste sind bereits vollständig einem Einkauf zugeteilt.
+    </div>
+  {% else %}
+    <form method="post" action="{{ url_for('edit_trip_submit', list_id=shopping_list.id, trip_id=trip.id) }}">
+      <div class="karte">
+        {% for item in plannable %}
+          <div style="display:flex; align-items:center; gap:0.7rem; padding:0.8rem 1rem; border-bottom:1px solid var(--rand);">
+            <input type="checkbox" name="position" value="{{ item.group_key }}" style="width:1.3rem; height:1.3rem; flex-shrink:0; accent-color: var(--grün);">
+            <input type="hidden" name="ingredient_id_{{ item.group_key }}" value="{{ item.ingredient_id }}">
+            <input type="hidden" name="unit_{{ item.group_key }}" value="{{ item.unit }}">
+            <div style="flex:1;">
+              <div style="font-weight:600;">{{ item.name }}</div>
+              <div style="font-size:0.78rem; color: var(--text-schwach);">noch offen: {{ item.remaining }} {{ item.unit }}</div>
+            </div>
+            <input
+              type="number" step="0.001" min="0" max="{{ item.remaining_raw }}" value="{{ item.remaining_raw }}"
+              name="menge_{{ item.group_key }}"
+              style="width:5.5rem; padding:0.4rem; border-radius:8px; border:1px solid var(--rand); background: var(--karte-bg); color: var(--text); text-align:right;"
+            >
+          </div>
+        {% endfor %}
+      </div>
+
+      <button type="submit" style="width:100%; margin-top:1rem; padding:0.9rem; font-size:1.05rem; font-weight:600; border:none; border-radius:10px; background: var(--grün); color:#fff;">
+        Ausgewählte Positionen hinzufügen
+      </button>
+    </form>
+  {% endif %}
+
+  <form method="post" action="{{ url_for('delete_trip', list_id=shopping_list.id, trip_id=trip.id) }}" onsubmit="return confirm('Diesen kompletten Einkauf mit allen Positionen unwiderruflich löschen?');" style="margin-top:1.5rem;">
+    <button type="submit" style="width:100%; padding:0.8rem; font-size:0.95rem; font-weight:600; border:1px solid #c0392b; border-radius:10px; background: var(--karte-bg); color:#c0392b;">
+      Einkauf komplett löschen
+    </button>
+  </form>
+</main>
+{% endblock %}

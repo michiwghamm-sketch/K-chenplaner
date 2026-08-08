@@ -291,6 +291,130 @@ def test_sort_mode_name_orders_alphabetically_across_categories(tmp_path, monkey
     assert by_name.index("Apfel") < by_name.index("Nudeln")
 
 
+def test_edit_trip_form_shows_current_positions_and_plannable_items(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        trip_id = session.get(ShoppingListItemAllocation, allocation_id).shopping_trip_id
+
+        from app.models import Ingredient, ShoppingList
+
+        shopping_list = session.get(ShoppingList, list_id)
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=sonnencreme, quantity=Decimal("1"), unit="Stk"
+        )
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.get(f"/liste/{list_id}/einkauf/{trip_id}/bearbeiten")
+    assert response.status_code == 200
+    assert "Nudeln".encode() in response.data
+    assert "Sonnencreme".encode() in response.data
+
+
+def test_edit_trip_submit_adds_position(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import Ingredient, ShoppingList, ShoppingListItemAllocation
+
+        trip_id = session.get(ShoppingListItemAllocation, allocation_id).shopping_trip_id
+        shopping_list = session.get(ShoppingList, list_id)
+        sonnencreme = Ingredient(name="Sonnencreme", normalized_name="sonnencreme", default_unit="Stk")
+        session.add(sonnencreme)
+        session.flush()
+        shopping_service.add_manual_shopping_item(
+            session, shopping_list, ingredient=sonnencreme, quantity=Decimal("1"), unit="Stk"
+        )
+        sonnencreme_id = sonnencreme.id
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.post(
+        f"/liste/{list_id}/einkauf/{trip_id}/bearbeiten",
+        data={
+            "position": ["0"],
+            "ingredient_id_0": str(sonnencreme_id),
+            "unit_0": "Stk",
+            "menge_0": "1",
+        },
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        trip = session.get(ShoppingTrip, trip_id)
+        assert len(trip.allocations) == 2
+        assert any(a.ingredient.name == "Sonnencreme" for a in trip.allocations)
+
+
+def test_remove_trip_position_deletes_allocation(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        trip_id = session.get(ShoppingListItemAllocation, allocation_id).shopping_trip_id
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.post(
+        f"/liste/{list_id}/einkauf/{trip_id}/position/{allocation_id}/entfernen", follow_redirects=True
+    )
+    assert response.status_code == 200
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        assert session.get(ShoppingListItemAllocation, allocation_id) is None
+
+
+def test_delete_trip_removes_trip_and_allocations(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        trip_id = session.get(ShoppingListItemAllocation, allocation_id).shopping_trip_id
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.post(f"/liste/{list_id}/einkauf/{trip_id}/loeschen", follow_redirects=True)
+    assert response.status_code == 200
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        assert session.get(ShoppingTrip, trip_id) is None
+
+
 def test_person_filter_shows_only_assigned_allocations(tmp_path, monkeypatch):
     monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
     config = _make_config(tmp_path)
