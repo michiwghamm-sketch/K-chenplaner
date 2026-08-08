@@ -291,6 +291,98 @@ def test_sort_mode_name_orders_alphabetically_across_categories(tmp_path, monkey
     assert by_name.index("Apfel") < by_name.index("Nudeln")
 
 
+def test_search_finds_ingredient_and_shows_allocation_with_remove_option(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    found = client.get(f"/liste/{list_id}/suche?q=Nud")
+    assert found.status_code == 200
+    assert "Nudeln".encode() in found.data
+    assert "Edeka".encode() in found.data
+
+    not_found = client.get(f"/liste/{list_id}/suche?q=xyzxyz")
+    assert not_found.status_code == 200
+    assert "Keine Zutat gefunden".encode() in not_found.data
+
+
+def test_search_can_remove_position_and_redirects_back_to_search(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, allocation_id = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        trip_id = session.get(ShoppingListItemAllocation, allocation_id).shopping_trip_id
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.post(
+        f"/liste/{list_id}/einkauf/{trip_id}/position/{allocation_id}/entfernen",
+        data={"from_search": "1", "q": "Nud"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 302
+    assert "/suche?" in response.headers["Location"]
+    assert "q=Nud" in response.headers["Location"]
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingListItemAllocation
+
+        assert session.get(ShoppingListItemAllocation, allocation_id) is None
+
+
+def test_search_can_add_ingredient_to_existing_trip(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id = _seed_shopping_list(config)
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingList
+
+        shopping_list = session.get(ShoppingList, list_id)
+        item = shopping_list.items[0]
+        trip = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Edeka", participants=[], selections=[(item.ingredient_id, item.unit, Decimal("1"))]
+        )
+        trip_id = trip.id
+        ingredient_id = item.ingredient_id
+        unit = item.unit
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    found = client.get(f"/liste/{list_id}/suche?q=Nud")
+    assert found.status_code == 200
+    assert "Nudeln".encode() in found.data
+
+    response = client.post(
+        f"/liste/{list_id}/suche/hinzufuegen",
+        data={"ingredient_id": str(ingredient_id), "unit": unit, "menge": "1", "trip_id": str(trip_id), "q": "Nud"},
+        follow_redirects=True,
+    )
+    assert response.status_code == 200
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        trip = session.get(ShoppingTrip, trip_id)
+        # add_allocations_to_trip legt fuer jede Auswahl eine eigene Allocation an, statt mit
+        # einer bestehenden fuer dieselbe Zutat zusammenzufuehren (siehe "eine Auswahl = ein
+        # Listeneintrag" in ShoppingListItemAllocation).
+        assert len(trip.allocations) == 2
+        assert sum((a.quantity for a in trip.allocations), Decimal("0")) == Decimal("2.000")
+
+
 def test_edit_trip_form_shows_current_positions_and_plannable_items(tmp_path, monkeypatch):
     monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
     config = _make_config(tmp_path)
@@ -520,6 +612,40 @@ def test_add_manual_item_form_and_submit(tmp_path, monkeypatch):
         assert len(manual_items) == 1
         assert manual_items[0].ingredient.name == "Sonnencreme"
         assert manual_items[0].requested_by == "Björn"
+
+
+def test_add_manual_item_form_shows_and_assigns_to_existing_trip(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, _ = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    form = client.get(f"/liste/{list_id}/position-hinzufuegen")
+    assert form.status_code == 200
+    assert "Edeka".encode() in form.data
+    assert "Direkt einem Einkauf zuordnen".encode() in form.data
+
+    engine = create_engine_from_config(config)
+    session_factory = create_session_factory(engine)
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        trip_id = session.query(ShoppingTrip).filter_by(store="Edeka").one().id
+
+    submit = client.post(
+        f"/liste/{list_id}/position-hinzufuegen",
+        data={"name": "Sonnencreme", "menge": "1", "unit": "Stk", "trip_id": str(trip_id)},
+        follow_redirects=True,
+    )
+    assert submit.status_code == 200
+
+    with session_scope(session_factory) as session:
+        from app.models import ShoppingTrip
+
+        trip = session.get(ShoppingTrip, trip_id)
+        assert any(a.ingredient.name == "Sonnencreme" for a in trip.allocations)
 
 
 def test_add_manual_item_submit_rejects_missing_name(tmp_path, monkeypatch):
