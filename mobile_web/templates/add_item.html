@@ -14,7 +14,7 @@
     Für spontane Sonderwünsche oder Sachen, die nicht aus dem Wochenplan kommen (z. B. Non-Food).
   </div>
 
-  <form method="post" action="{{ url_for('add_manual_item_submit', list_id=shopping_list.id) }}">
+  <form method="post" action="{{ url_for('add_manual_item_submit', list_id=shopping_list.id) }}" class="js-offline-form">
     <div class="karte" style="padding: 0.9rem 1rem;">
       <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Was?</label>
       <input name="name" required list="zutaten-liste" placeholder="z. B. Sonnencreme"

@@ -79,7 +79,7 @@
             <span style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text); display:inline-block;">Bearbeiten{% if group.trip_ids|length > 1 %} ({{ loop.index }}){% endif %}</span>
           </a>
         {% endfor %}
-        <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store, return_store=current_store, person=current_person, sort=sort_mode) }}" class="neu-mischen-form" style="margin:0;">
+        <form method="post" action="{{ url_for('reshuffle_store', list_id=shopping_list.id, store=group.store, return_store=current_store, person=current_person, sort=sort_mode) }}" class="neu-mischen-form js-offline-form" style="margin:0;">
           <button type="submit" style="font-size:0.75rem; padding: 0.3rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: var(--text);">Neu mischen</button>
         </form>
       </span>
@@ -155,29 +155,24 @@
       const text = label.querySelector('.position-text');
       const wirdGekauft = box.checked;
 
-      let formData = null;
+      let eingabe = '';
       if (wirdGekauft) {
         const geplant = label.dataset.menge;
-        const eingabe = window.prompt('Wie viel wurde tatsächlich gekauft?', geplant);
+        eingabe = window.prompt('Wie viel wurde tatsächlich gekauft?', geplant);
         if (eingabe === null) {
           box.checked = false;
           return;
         }
-        formData = new URLSearchParams({ purchased_quantity: eingabe });
       }
+      const formData = wirdGekauft ? new URLSearchParams({ purchased_quantity: eingabe }) : null;
 
-      box.disabled = true;
-      try {
-        const antwort = await fetch(`/position/${allocationId}/umschalten`, { method: 'POST', body: formData });
-        if (!antwort.ok) throw new Error('Fehler beim Speichern');
-        const daten = await antwort.json();
+      function wendeOptimistischAn(menge, datumText) {
         text.style.opacity = wirdGekauft ? '0.45' : '1';
         text.style.textDecoration = wirdGekauft ? 'line-through' : 'none';
         const kaufText = label.querySelector('.kauf-text');
         if (kaufText) {
           if (wirdGekauft) {
-            const menge = daten.purchased_quantity || label.dataset.menge;
-            const datum = daten.purchased_at_text ? ` am ${daten.purchased_at_text}` : '';
+            const datum = datumText ? ` am ${datumText}` : '';
             kaufText.innerHTML = `<br>gekauft: ${menge} ${label.dataset.unit || ''}${datum}`;
             kaufText.style.display = 'inline';
           } else {
@@ -188,9 +183,28 @@
         gekauft += wirdGekauft ? 1 : -1;
         zaehler.textContent = gekauft;
         balken.style.width = gesamt ? `${(gekauft / gesamt) * 100}%` : '0%';
+      }
+
+      box.disabled = true;
+      try {
+        const antwort = await fetch(`/position/${allocationId}/umschalten`, { method: 'POST', body: formData });
+        if (!antwort.ok) throw new Error('Fehler beim Speichern');
+        const daten = await antwort.json();
+        wendeOptimistischAn(daten.purchased_quantity || label.dataset.menge, daten.purchased_at_text);
       } catch (fehler) {
-        box.checked = !wirdGekauft;
-        alert('Konnte nicht gespeichert werden - Internetverbindung prüfen und nochmal versuchen.');
+        if (fehler instanceof TypeError) {
+          // Kein Server erreichbar (offline) - Aktion merken und automatisch nachsenden, sobald
+          // wieder Verbindung da ist; der angeklickte Zustand bleibt optimistisch stehen, statt
+          // ihn zu verwerfen (siehe offline.js).
+          window.zkQueueRequest(
+            `/position/${allocationId}/umschalten`,
+            wirdGekauft ? [['purchased_quantity', eingabe]] : []
+          );
+          wendeOptimistischAn(eingabe || label.dataset.menge, null);
+        } else {
+          box.checked = !wirdGekauft;
+          alert('Konnte nicht gespeichert werden - bitte erneut versuchen.');
+        }
       } finally {
         box.disabled = false;
       }

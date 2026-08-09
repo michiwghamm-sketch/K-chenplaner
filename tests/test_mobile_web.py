@@ -661,3 +661,38 @@ def test_add_manual_item_submit_rejects_missing_name(tmp_path, monkeypatch):
         data={"name": "", "menge": "1", "unit": "Stk"},
     )
     assert response.status_code == 400
+
+
+def test_service_worker_served_at_root_with_no_cache(tmp_path, monkeypatch):
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    app = create_app(config=config)
+    client = app.test_client()
+
+    response = client.get("/sw.js")
+    assert response.status_code == 200
+    assert "javascript" in response.headers["Content-Type"]
+    assert response.headers["Cache-Control"] == "no-cache"
+
+
+def test_offline_forms_are_marked_for_client_side_interception(tmp_path, monkeypatch):
+    """Regressionstest: schreibende Formulare brauchen die Klasse "js-offline-form", damit
+    offline.js sie abfangen und bei fehlender Verbindung zwischenspeichern kann (siehe
+    mobile_web/static/offline.js). Kein Ersatz fuer echtes Browser-Testing der Offline-Logik,
+    stellt aber sicher, dass die Markierung bei Template-Aenderungen nicht versehentlich verloren
+    geht."""
+    monkeypatch.delenv("MOBILE_WEB_PIN", raising=False)
+    config = _make_config(tmp_path)
+    list_id, _ = _seed_shopping_list_with_trip(config, store="Edeka")
+
+    app = create_app(config=config)
+    client = app.test_client()
+
+    detail = client.get(f"/liste/{list_id}")
+    assert 'class="neu-mischen-form js-offline-form"'.encode() in detail.data
+
+    add_item_form = client.get(f"/liste/{list_id}/position-hinzufuegen")
+    assert 'class="js-offline-form"'.encode() in add_item_form.data
+
+    plan_trip_form_response = client.get(f"/liste/{list_id}/einkauf-planen")
+    assert 'class="js-offline-form"'.encode() in plan_trip_form_response.data
