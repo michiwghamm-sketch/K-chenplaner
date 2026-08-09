@@ -26,7 +26,7 @@
             {% if allocation.status == 'gekauft' %} — bereits gekauft{% endif %}
           </div>
         </div>
-        <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=trip.id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ (allocation.ingredient.name if allocation.ingredient else "Position") }} aus diesem Einkauf entfernen?');" style="margin:0;">
+        <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=trip.id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ (allocation.ingredient.name if allocation.ingredient else "Position") }} aus diesem Einkauf entfernen?');" class="js-offline-form" style="margin:0;">
           <button type="submit" style="font-size:0.75rem; padding: 0.4rem 0.7rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: #c0392b;">Entfernen</button>
         </form>
       </div>
@@ -41,7 +41,7 @@
       Alle Positionen der Liste sind bereits vollständig einem Einkauf zugeteilt.
     </div>
   {% else %}
-    <form method="post" action="{{ url_for('edit_trip_submit', list_id=shopping_list.id, trip_id=trip.id) }}">
+    <form method="post" action="{{ url_for('edit_trip_submit', list_id=shopping_list.id, trip_id=trip.id) }}" class="js-offline-form">
       <div class="karte">
         {% for item in plannable %}
           <div style="display:flex; align-items:center; gap:0.7rem; padding:0.8rem 1rem; border-bottom:1px solid var(--rand);">
@@ -67,7 +67,7 @@
     </form>
   {% endif %}
 
-  <form method="post" action="{{ url_for('delete_trip', list_id=shopping_list.id, trip_id=trip.id) }}" onsubmit="return confirm('Diesen kompletten Einkauf mit allen Positionen unwiderruflich löschen?');" style="margin-top:1.5rem;">
+  <form method="post" action="{{ url_for('delete_trip', list_id=shopping_list.id, trip_id=trip.id) }}" onsubmit="return confirm('Diesen kompletten Einkauf mit allen Positionen unwiderruflich löschen?');" class="js-offline-form" style="margin-top:1.5rem;">
     <button type="submit" style="width:100%; padding:0.8rem; font-size:0.95rem; font-weight:600; border:1px solid #c0392b; border-radius:10px; background: var(--karte-bg); color:#c0392b;">
       Einkauf komplett löschen
     </button>

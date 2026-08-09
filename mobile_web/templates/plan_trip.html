@@ -15,7 +15,7 @@
       Alle Positionen sind bereits vollständig einem Einkauf zugeteilt.
     </div>
   {% else %}
-    <form method="post" action="{{ url_for('plan_trip_submit', list_id=shopping_list.id) }}">
+    <form method="post" action="{{ url_for('plan_trip_submit', list_id=shopping_list.id) }}" class="js-offline-form">
       <div class="karte" style="padding: 0.9rem 1rem;">
         <label style="display:block; font-weight:600; margin-bottom:0.3rem;">Händler</label>
         <input name="store" required placeholder="z. B. Metro"

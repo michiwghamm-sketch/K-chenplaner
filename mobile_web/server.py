@@ -608,4 +608,13 @@ def create_app(config: AppConfig | None = None) -> Flask:
     def manifest():
         return app.send_static_file("manifest.webmanifest")
 
+    @app.get("/sw.js")
+    def service_worker():
+        # Muss an der Wurzel ausgeliefert werden (nicht unter /static/) - der Geltungsbereich
+        # eines Service Workers ist per Default auf sein eigenes Verzeichnis beschraenkt, unter
+        # /static/ koennte er also nur /static/-Requests abfangen, nicht die eigentlichen Seiten.
+        response = app.send_static_file("sw.js")
+        response.headers["Cache-Control"] = "no-cache"
+        return response
+
     return app

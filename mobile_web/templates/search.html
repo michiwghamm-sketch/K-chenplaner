@@ -35,7 +35,7 @@
               {{ allocation.store }} — {{ allocation.quantity }} {{ result.unit }}
               {% if allocation.status == 'gekauft' %} <span style="color: var(--text-schwach);">(gekauft)</span>{% endif %}
             </div>
-            <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=allocation.trip_id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ result.name }} aus diesem Einkauf entfernen?');" style="margin:0;">
+            <form method="post" action="{{ url_for('remove_trip_position', list_id=shopping_list.id, trip_id=allocation.trip_id, allocation_id=allocation.id) }}" onsubmit="return confirm('{{ result.name }} aus diesem Einkauf entfernen?');" class="js-offline-form" style="margin:0;">
               <input type="hidden" name="from_search" value="1">
               <input type="hidden" name="q" value="{{ query }}">
               <button type="submit" style="font-size:0.75rem; padding: 0.35rem 0.6rem; border-radius: 8px; border: 1px solid var(--rand); background: var(--karte-bg); color: #c0392b;">Entfernen</button>
@@ -46,7 +46,7 @@
 
       {% if result.plannable_raw|float > 0 %}
         {% if trips %}
-          <form method="post" action="{{ url_for('add_to_trip_from_search', list_id=shopping_list.id) }}" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.6rem;">
+          <form method="post" action="{{ url_for('add_to_trip_from_search', list_id=shopping_list.id) }}" class="js-offline-form" style="display:flex; align-items:center; gap:0.5rem; margin-top:0.6rem;">
             <input type="hidden" name="ingredient_id" value="{{ result.ingredient_id }}">
             <input type="hidden" name="unit" value="{{ result.unit }}">
             <input type="hidden" name="q" value="{{ query }}">
