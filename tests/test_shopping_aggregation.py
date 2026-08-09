@@ -544,6 +544,44 @@ def test_create_shopping_trip_borrow_removes_allocation_left_at_zero(session_fac
         assert session.get(ShoppingListItemAllocation, montag_allocation_id) is None
 
 
+def test_create_shopping_trip_borrows_unused_surplus_from_already_purchased_allocation(session_factory) -> None:
+    """Regressionstest fuer einen echten Bug: wurde bei einem bereits abgeschlossenen Einkauf
+    WENIGER gekauft als geplant (z. B. 3,225 kg Zwiebeln geplant, aber nur 3,0 kg tatsaechlich
+    gekauft), zaehlte die "insgesamt noch planbare Menge" (plannable_quantity_for_ingredient)
+    den ungenutzten Rest (0,225 kg) bereits mit - aber _free_up_quantity konnte ihn nicht
+    freimachen, weil gekaufte Allocations komplett ausgeschlossen waren. Ergebnis: Planen der
+    vollen angezeigten "noch offen"-Menge fuer einen neuen Einkauf schlug faelschlich fehl."""
+    with session_scope(session_factory) as session:
+        camp_year = CampYear(year=2026, name="Zeltlager 2026")
+        shopping_list = ShoppingList(name="Einkaufsliste", camp_year=camp_year)
+        zwiebel = Ingredient(name="Zwiebel", normalized_name="zwiebel", default_unit="kg")
+        shopping_list.items.append(ShoppingListItem(ingredient=zwiebel, quantity=Decimal("24.285"), unit="kg"))
+        session.add(camp_year)
+        session.add(shopping_list)
+        session.flush()
+        shopping_list_id, ingredient_id = shopping_list.id, zwiebel.id
+
+    with session_scope(session_factory) as session:
+        shopping_list = session.get(ShoppingList, shopping_list_id)
+        edeka = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Edeka", participants=[], selections=[(ingredient_id, "kg", Decimal("3.225"))]
+        )
+        shopping_service.mark_allocation_purchased(edeka.allocations[0], Decimal("3.000"))
+
+        plannable = shopping_service.plannable_quantity_for_ingredient(shopping_list, ingredient_id, "kg")
+        assert plannable == Decimal("21.285")
+
+        # Genau die angezeigte "noch offen"-Menge fuer einen neuen Einkauf auswaehlen - das darf
+        # nicht mehr fehlschlagen.
+        metro = shopping_service.create_shopping_trip(
+            session, shopping_list, store="Metro", participants=[], selections=[(ingredient_id, "kg", plannable)]
+        )
+        assert metro.allocations[0].quantity == Decimal("21.285")
+        # Die gekaufte Menge bei Edeka bleibt unangetastet, nur der ungenutzte Rest wurde entfernt.
+        assert edeka.allocations[0].quantity == Decimal("3.000")
+        assert edeka.allocations[0].purchased_quantity == Decimal("3.000")
+
+
 def test_create_shopping_trip_stores_optional_planned_date(session_factory) -> None:
     with session_scope(session_factory) as session:
         camp_year = CampYear(year=2026, name="Zeltlager 2026")

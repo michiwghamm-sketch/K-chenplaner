@@ -578,35 +578,55 @@ def allocated_quantity_for_ingredient(shopping_list: ShoppingList, ingredient_id
     return _allocated_totals(shopping_list).get(key, Decimal("0"))
 
 
-def _borrow_sort_key(allocation: ShoppingListItemAllocation) -> tuple[int, int]:
-    """Reihenfolge, in der offene Allocations fuer eine automatische Reduzierung herangezogen
-    werden (siehe _free_up_quantity): zuerst Trips ohne festen Einkaufstag (am flexibelsten),
-    danach Trips mit dem am weitesten in der Zukunft liegenden Einkaufstag zuerst - je naeher ein
-    Einkauf bevorsteht, desto eher bleibt er unangetastet."""
+def _borrow_sort_key(allocation: ShoppingListItemAllocation) -> tuple[int, int, int]:
+    """Reihenfolge, in der Allocations fuer eine automatische Reduzierung herangezogen werden
+    (siehe _free_up_quantity): zuerst der ungenutzte Rest bereits GEKAUFTER Allocations (geplant,
+    aber tatsaechlich weniger gekauft - der Rest wird ohnehin nicht mehr gebraucht, siehe
+    _borrowable_quantity), erst danach offene (noch nicht gekaufte) Allocations - dort zuerst
+    Trips ohne festen Einkaufstag (am flexibelsten), danach Trips mit dem am weitesten in der
+    Zukunft liegenden Einkaufstag zuerst, je naeher ein Einkauf bevorsteht, desto eher bleibt er
+    unangetastet."""
+    gekauft_zuerst = 0 if allocation.status == "gekauft" else 1
     planned = allocation.trip.planned_date
     if planned is None:
-        return (0, 0)
-    return (1, -planned.toordinal())
+        return (gekauft_zuerst, 0, 0)
+    return (gekauft_zuerst, 1, -planned.toordinal())
+
+
+def _borrowable_quantity(allocation: ShoppingListItemAllocation) -> Decimal:
+    """Menge einer Allocation, die noch verschoben werden kann, ohne bereits real Gekauftes
+    anzutasten. Bei offenen Allocations die volle Menge; bei bereits gekauften nur der ungenutzte
+    Rest zwischen geplanter und tatsaechlich gekaufter Menge (z. B. 3,225 kg geplant, aber nur
+    3,0 kg tatsaechlich gekauft - die restlichen 0,225 kg werden nie mehr gebraucht und koennen
+    fuer einen anderen Einkauf verwendet werden, statt unerreichbar in der gekauften Allocation
+    haengen zu bleiben)."""
+    if allocation.status != "gekauft":
+        return allocation.quantity
+    purchased = allocation.purchased_quantity if allocation.purchased_quantity is not None else allocation.quantity
+    borrowable = allocation.quantity - purchased
+    return borrowable if borrowable > 0 else Decimal("0")
 
 
 def _free_up_quantity(
     session, shopping_list: ShoppingList, ingredient_id: int | None, unit: str | None, shortfall: Decimal
 ) -> Decimal:
-    """Reduziert offene (noch nicht gekaufte) Allocations dieser Zutat in ANDEREN Trips, um Platz
-    fuer eine neue/groessere Allocation zu schaffen - deckt den Fall ab, dass eine Zutat schon
-    komplett einem spaeteren Einkauf zugeteilt ist, aber ein Teil davon spontan frueher/anderswo
-    gekauft werden soll: die Gesamtmenge fuer die Woche aendert sich nicht, sie wird nur zwischen
-    den Einkaeufen verschoben (siehe create_shopping_trip/add_allocations_to_trip). Bereits
-    gekaufte Allocations werden nie angetastet - das waere schon real eingekauft.
+    """Reduziert Allocations dieser Zutat in ANDEREN Trips, um Platz fuer eine neue/groessere
+    Allocation zu schaffen - deckt zwei Faelle ab: (1) eine Zutat ist schon komplett einem
+    spaeteren Einkauf zugeteilt, aber ein Teil davon soll spontan frueher/anderswo gekauft
+    werden, (2) bei einem bereits abgeschlossenen Einkauf wurde WENIGER gekauft als geplant - der
+    ungenutzte Rest soll fuer einen anderen Einkauf verfuegbar bleiben, statt unerreichbar
+    liegenzubleiben. Die Gesamtmenge fuer die Woche aendert sich dabei nie, sie wird nur
+    verschoben (siehe create_shopping_trip/add_allocations_to_trip). Tatsaechlich Gekauftes wird
+    nie angetastet - eine gekaufte Allocation faellt hoechstens auf ihre purchased_quantity.
 
     Gibt die tatsaechlich freigemachte Menge zurueck (kann kleiner als `shortfall` sein, wenn
-    nicht genug offene Allocations vorhanden sind - der Aufrufer prueft das selbst)."""
+    nicht genug verschiebbare Menge vorhanden ist - der Aufrufer prueft das selbst)."""
     key = _ingredient_key(ingredient_id, unit)
     candidates = sorted(
         (
             allocation
             for allocation in shopping_list.allocations
-            if _ingredient_key(allocation.ingredient_id, allocation.unit) == key and allocation.status != "gekauft"
+            if _ingredient_key(allocation.ingredient_id, allocation.unit) == key and _borrowable_quantity(allocation) > 0
         ),
         key=_borrow_sort_key,
     )
@@ -614,9 +634,12 @@ def _free_up_quantity(
     for allocation in candidates:
         if freed >= shortfall:
             break
-        take = min(allocation.quantity, shortfall - freed)
+        take = min(_borrowable_quantity(allocation), shortfall - freed)
         new_quantity = allocation.quantity - take
-        if new_quantity <= 0:
+        if allocation.status == "gekauft":
+            # Untergrenze ist immer die tatsaechlich gekaufte Menge, niemals loeschen.
+            allocation.quantity = max(new_quantity, allocation.purchased_quantity or Decimal("0"))
+        elif new_quantity <= 0:
             session.delete(allocation)
         else:
             allocation.quantity = new_quantity
